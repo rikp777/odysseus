@@ -282,10 +282,17 @@ def _is_remote_billable_url(url: str) -> bool:
     return True
 
 
-def _cloud_spend_limit_error(url: str) -> Optional[str]:
+def _cloud_spend_limit_error(url: str, model: str = "", owner: Optional[str] = None) -> Optional[str]:
     """Return a user-facing block reason when the monthly cloud spend limit trips."""
     if not _is_remote_billable_url(url):
         return None
+    try:
+        from src.billing_usage import local_budget_block_reason
+        reason = local_budget_block_reason(url, model=model, owner=owner)
+        if reason:
+            return reason
+    except Exception as exc:
+        logger.warning("Local usage budget check failed before model call: %s", exc)
     try:
         from routes.billing_routes import get_monthly_spend_status
         status = get_monthly_spend_status(refresh=False)
@@ -311,8 +318,8 @@ def _cloud_spend_limit_error(url: str) -> Optional[str]:
     return None
 
 
-def _raise_if_cloud_spend_limited(url: str) -> None:
-    reason = _cloud_spend_limit_error(url)
+def _raise_if_cloud_spend_limited(url: str, model: str = "", owner: Optional[str] = None) -> None:
+    reason = _cloud_spend_limit_error(url, model=model, owner=owner)
     if reason:
         raise HTTPException(402, reason)
 
@@ -577,7 +584,8 @@ def normalize_model_id(endpoint_url: str, requested: str, timeout: int = LLMConf
 
 def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LLMConfig.DEFAULT_TEMPERATURE,
              max_tokens: int = LLMConfig.DEFAULT_MAX_TOKENS, headers: Optional[Dict] = None, 
-             timeout: int = LLMConfig.DEFAULT_TIMEOUT, prompt_type: Optional[str] = None) -> str:
+             timeout: int = LLMConfig.DEFAULT_TIMEOUT, prompt_type: Optional[str] = None,
+             owner: Optional[str] = None) -> str:
     """Synchronous LLM call with optional prompt type enhancement."""
     h = _provider_headers(_detect_provider(url))
     # Tolerate headers that arrive as a JSON string (some sessions stored them
@@ -630,7 +638,7 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
         if max_tokens and max_tokens > 0:
             tok_key = "max_completion_tokens" if _uses_max_completion_tokens(model) else "max_tokens"
             payload[tok_key] = max_tokens
-    _raise_if_cloud_spend_limited(target_url)
+    _raise_if_cloud_spend_limited(target_url, model=model, owner=owner)
     try:
         note_model_activity(target_url, model)
         r = httpx.post(target_url, headers=h, json=payload, timeout=timeout)
@@ -701,7 +709,8 @@ async def llm_call_async(
     headers: Optional[Dict] = None,
     timeout: int = LLMConfig.STREAM_TIMEOUT,
     max_retries: int = LLMConfig.MAX_RETRIES,
-    prompt_type: Optional[str] = None
+    prompt_type: Optional[str] = None,
+    owner: Optional[str] = None,
 ) -> str:
     """Asynchronous LLM call using httpx with connection pooling, timeout, retry logic, and performance logging."""
     provider = _detect_provider(url)
@@ -748,7 +757,7 @@ async def llm_call_async(
             tok_key = "max_completion_tokens" if _uses_max_completion_tokens(model) else "max_tokens"
             payload[tok_key] = max_tokens
 
-    _raise_if_cloud_spend_limited(target_url)
+    _raise_if_cloud_spend_limited(target_url, model=model, owner=owner)
 
     if _is_host_dead(target_url):
         raise HTTPException(503, f"Upstream {_host_key(target_url)} marked unreachable (cooldown active)")
@@ -800,7 +809,7 @@ async def llm_call_async(
 async def stream_llm(url: str, model: str, messages: List[Dict], temperature: float = LLMConfig.DEFAULT_TEMPERATURE,
                      max_tokens: int = LLMConfig.DEFAULT_MAX_TOKENS, headers: Optional[Dict] = None,
                      timeout: int = LLMConfig.STREAM_TIMEOUT, prompt_type: Optional[str] = None,
-                     tools: Optional[List[Dict]] = None):
+                     tools: Optional[List[Dict]] = None, owner: Optional[str] = None):
     """Stream LLM responses with improved error handling.
 
     Yields SSE chunks:
@@ -853,7 +862,7 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
             payload["tools"] = tools
         h = _provider_headers(provider, headers)
 
-    limit_error = _cloud_spend_limit_error(target_url)
+    limit_error = _cloud_spend_limit_error(target_url, model=model, owner=owner)
     if limit_error:
         yield f'event: error\ndata: {json.dumps({"error": limit_error, "status": 402})}\n\n'
         return

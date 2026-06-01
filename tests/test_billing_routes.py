@@ -59,9 +59,32 @@ def _account(account_id="do-main", provider="digitalocean", token="token", label
     }
 
 
+def _empty_local_usage(period="month"):
+    return {
+        "enabled": True,
+        "period": period,
+        "amount": "0.000000",
+        "amount_float": 0.0,
+        "display": "$0.00",
+        "projected": "0.000000",
+        "projected_display": "$0.00",
+        "events": 0,
+        "known_cost_events": 0,
+        "unknown_cost_events": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "total_tokens": 0,
+        "providers": [],
+        "models": [],
+    }
+
+
 @pytest.fixture(autouse=True)
-def clear_billing_cache():
+def clear_billing_cache(monkeypatch):
     _reset_cache()
+    monkeypatch.setattr(billing_routes, "_local_usage_payload", _empty_local_usage)
+    from src import billing_usage
+    monkeypatch.setattr(billing_usage, "local_budget_block_reason", lambda *args, **kwargs: None)
     yield
     _reset_cache()
 
@@ -204,6 +227,39 @@ def test_cloud_monthly_spend_sums_multiple_accounts(monkeypatch):
     assert [item["account_id"] for item in result["accounts"]] == ["do", "example"]
 
 
+def test_cloud_monthly_spend_can_use_local_usage_without_provider_accounts(monkeypatch):
+    monkeypatch.setattr(
+        billing_routes,
+        "_load_settings",
+        lambda: {
+            "cloud_billing_enabled": True,
+            "cloud_billing_accounts": [],
+            "cloud_billing_refresh_seconds": 300,
+            "cloud_billing_monthly_limit_usd": "5",
+            "cloud_billing_usage_ledger_enabled": True,
+        },
+    )
+    monkeypatch.setattr(
+        billing_routes,
+        "_local_usage_payload",
+        lambda period="month": {
+            **_empty_local_usage(period),
+            "amount": "1.250000",
+            "amount_float": 1.25,
+            "display": "$1.25",
+            "events": 2,
+            "known_cost_events": 2,
+        },
+    )
+
+    result = _endpoint()(_request())
+
+    assert result["ok"] is True
+    assert result["provider"] == "local_usage"
+    assert result["amount"] == "1.25"
+    assert result["display"] == "$1.25"
+
+
 def test_cloud_spending_graph_returns_chart_and_records_history(monkeypatch, tmp_path):
     monkeypatch.setattr(billing_routes, "BILLING_HISTORY_FILE", tmp_path / "billing_history.json")
     monkeypatch.setattr(
@@ -298,7 +354,7 @@ async def test_manage_billing_tool_returns_chart_response(monkeypatch):
     monkeypatch.setattr(
         billing_routes,
         "get_spending_graph_status",
-        lambda refresh=False, forced_provider=None: {
+        lambda refresh=False, forced_provider=None, period="month", group_by="provider": {
             "amount": "1.25",
             "chart": chart,
             "markdown": billing_routes.billing_chart_markdown(chart),
@@ -316,6 +372,7 @@ def test_billing_graph_request_is_classified_as_billing_intent():
     from src.action_intents import classify_tool_intent, message_needs_tools
 
     slash_billing = classify_tool_intent("/billing")
+    today_by_model = classify_tool_intent("/billing today by model")
     spend_graph = classify_tool_intent("show me a spending graph")
     monthly_spend = classify_tool_intent("what is my current monthly spend?")
     calendar = classify_tool_intent("show me my calendar")
@@ -324,6 +381,8 @@ def test_billing_graph_request_is_classified_as_billing_intent():
     assert slash_billing.kind == "direct_tool"
     assert slash_billing.tool == "manage_billing"
     assert slash_billing.args == {"action": "spending_graph", "refresh": True}
+    assert today_by_model.args["period"] == "day"
+    assert today_by_model.args["group_by"] == "model"
     assert message_needs_tools("show me a spending graph")
     assert spend_graph is not None
     assert spend_graph.kind == "direct_tool"

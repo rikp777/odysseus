@@ -42,12 +42,43 @@ _BILLING_INTENT_PATTERN_TEXTS = (
     r"^\s*/billing\b",
     r"\b(?:show|draw|create|make|display)\b.{0,80}\b(?:spend|spending|billing|costs?|budget)\b.{0,80}\b(?:graph|chart|plot|breakdown)\b",
     r"\b(?:spend|spending|billing|costs?|budget)\b.{0,80}\b(?:graph|chart|plot|breakdown)\b",
+    r"\b(?:spend|spending|billing|costs?|budget)\b.{0,80}\bforecast\b",
+    r"\bforecast\b.{0,80}\b(?:spend|spending|billing|costs?|budget)\b",
+    r"\b(?:spend|spending|billing|costs?|budget)\b.{0,80}\b(?:by|per)\s+(?:model|provider)\b",
     r"\b(?:current|monthly|month-to-date)\b.{0,80}\b(?:spend|spending|billing|costs?)\b",
 )
 
-_BILLING_INTENT_PATTERNS: tuple[Pattern[str], ...] = tuple(
-    re.compile(pattern, re.I)
-    for pattern in _BILLING_INTENT_PATTERN_TEXTS
+def _compile_patterns(patterns: Iterable[str]) -> tuple[Pattern[str], ...]:
+    return tuple(re.compile(pattern, re.I) for pattern in patterns)
+
+
+_BILLING_INTENT_PATTERNS = _compile_patterns(_BILLING_INTENT_PATTERN_TEXTS)
+
+_BILLING_PERIOD_ARG_PATTERNS = (
+    ("day", _compile_patterns((r"\b(?:today|daily|day)\b",))),
+    ("month", _compile_patterns((r"\b(?:month|monthly|month-to-date|forecast)\b",))),
+)
+
+_BILLING_GROUP_ARG_PATTERNS = (
+    (
+        "model",
+        _compile_patterns((
+            r"\b(?:by|per)\s+model\b",
+            r"\bmodel\s+(?:breakdown|costs?|spend)\b",
+        )),
+    ),
+    (
+        "provider",
+        _compile_patterns((
+            r"\b(?:by|per)\s+provider\b",
+            r"\bprovider\s+(?:breakdown|costs?|spend)\b",
+        )),
+    ),
+)
+
+_BILLING_PROVIDER_PATTERN = re.compile(
+    r"\bprovider\s+(?P<provider>(?!breakdown\b|costs?\b|spend\b|graph\b|chart\b)[a-z0-9_.-]+)\b",
+    re.I,
 )
 
 _AGENT_TOOL_INTENT_PATTERN_TEXTS = (
@@ -108,6 +139,32 @@ def _matches(text: str, patterns: Iterable[Pattern[str]]) -> bool:
     return any(pattern.search(text) for pattern in patterns)
 
 
+def _matching_arg_value(text: str, rules: Iterable[tuple[str, Iterable[Pattern[str]]]]) -> str | None:
+    for value, patterns in rules:
+        if _matches(text, patterns):
+            return value
+    return None
+
+
+def _billing_intent_args(text: str) -> dict[str, Any]:
+    normalized = text.lower()
+    args: dict[str, Any] = {"action": "spending_graph", "refresh": True}
+
+    period = _matching_arg_value(normalized, _BILLING_PERIOD_ARG_PATTERNS)
+    if period:
+        args["period"] = period
+
+    group_by = _matching_arg_value(normalized, _BILLING_GROUP_ARG_PATTERNS)
+    if group_by:
+        args["group_by"] = group_by
+
+    provider_match = _BILLING_PROVIDER_PATTERN.search(normalized)
+    if provider_match:
+        args["provider"] = provider_match.group("provider")
+
+    return args
+
+
 def classify_tool_intent(text: str) -> ToolIntent | None:
     """Return the specific tool intent needed by chat routing, if any."""
     if not text:
@@ -116,7 +173,7 @@ def classify_tool_intent(text: str) -> ToolIntent | None:
         return ToolIntent(
             kind="direct_tool",
             tool="manage_billing",
-            args={"action": "spending_graph", "refresh": True},
+            args=_billing_intent_args(text),
         )
     if _matches(text, _AGENT_TOOL_INTENT_PATTERNS):
         return ToolIntent(kind="agent_tool")

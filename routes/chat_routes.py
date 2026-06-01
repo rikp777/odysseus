@@ -39,6 +39,7 @@ from src.action_intents import (
     classify_tool_intent as _classify_tool_intent,
     ToolIntent,
 )
+from src.billing_usage import record_model_usage_from_metrics
 
 logger = logging.getLogger(__name__)
 
@@ -139,6 +140,28 @@ def _direct_tool_model_name(intent: ToolIntent) -> str:
     return _DIRECT_TOOL_MODELS.get(intent.tool, "odysseus-tool")
 
 
+def _record_model_usage_safe(
+    *,
+    owner: str | None,
+    session_id: str | None,
+    message_id: str | None,
+    endpoint_url: str,
+    model: str,
+    metrics: Dict[str, Any] | None,
+) -> None:
+    try:
+        record_model_usage_from_metrics(
+            owner=owner,
+            session_id=session_id,
+            message_id=message_id,
+            endpoint_url=endpoint_url,
+            model=model,
+            metrics=metrics,
+        )
+    except Exception as exc:
+        logger.warning("Failed to record model usage for billing ledger: %s", exc)
+
+
 def setup_chat_routes(
     session_manager,
     chat_handler,
@@ -198,6 +221,7 @@ def setup_chat_routes(
         )
 
         tool_intent = _classify_tool_intent(message or "")
+        usage_metrics = None
 
         if tool_intent and tool_intent.kind == "direct_tool" and not use_research:
             reply = await _direct_tool_response(tool_intent, request, owner=ctx.user)
@@ -224,9 +248,25 @@ def setup_chat_routes(
                 temperature=ctx.preset.temperature,
                 max_tokens=ctx.preset.max_tokens,
                 prompt_type=preset_id,
+                owner=ctx.user,
             )
+            usage_metrics = {
+                "input_tokens": estimate_tokens(ctx.messages),
+                "output_tokens": len(reply or "") // 4,
+                "model": sess.model,
+                "usage_source": "estimated",
+            }
         _clean_reply, _clean_md = clean_thinking_for_save(reply, {"model": sess.model})
         sess.add_message(ChatMessage("assistant", _clean_reply, metadata=_clean_md))
+        if not (tool_intent and tool_intent.kind == "direct_tool" and not use_research):
+            _record_model_usage_safe(
+                owner=ctx.user,
+                session_id=session,
+                message_id=None,
+                endpoint_url=sess.endpoint_url,
+                model=sess.model,
+                metrics=usage_metrics,
+            )
 
         from core.database import update_session_last_accessed
         update_session_last_accessed(session)
@@ -792,6 +832,7 @@ def setup_chat_routes(
                         max_tokens=ctx.preset.max_tokens,
                         prompt_type=preset_id,
                         tools=None,
+                        owner=_user,
                     ):
                         if chunk.startswith("data: ") and not chunk.startswith("data: [DONE]"):
                             try:
@@ -847,6 +888,14 @@ def setup_chat_routes(
                                 )
                                 if _saved_id:
                                     yield f'data: {json.dumps({"type": "message_saved", "id": _saved_id})}\n\n'
+                                _record_model_usage_safe(
+                                    owner=_user,
+                                    session_id=session,
+                                    message_id=_saved_id,
+                                    endpoint_url=sess.endpoint_url,
+                                    model=sess.model,
+                                    metrics=last_metrics,
+                                )
                                 run_post_response_tasks(
                                     sess, session_manager, session, message, full_response,
                                     last_metrics, ctx.uprefs, memory_manager, memory_vector, webhook_manager,
@@ -930,6 +979,14 @@ def setup_chat_routes(
                                 )
                                 if _saved_id:
                                     yield f'data: {json.dumps({"type": "message_saved", "id": _saved_id})}\n\n'
+                                _record_model_usage_safe(
+                                    owner=_user,
+                                    session_id=session,
+                                    message_id=_saved_id,
+                                    endpoint_url=sess.endpoint_url,
+                                    model=sess.model,
+                                    metrics=last_metrics,
+                                )
                                 run_post_response_tasks(
                                     sess, session_manager, session, message, full_response,
                                     last_metrics, ctx.uprefs, memory_manager, memory_vector, webhook_manager,

@@ -639,6 +639,8 @@ FUNCTION_TOOL_SCHEMAS = [
                 "properties": {
                     "action": {"type": "string", "enum": ["summary", "status", "spending_graph", "graph"], "description": "Use spending_graph/graph when the user asks to show a graph."},
                     "provider": {"type": "string", "description": "Optional provider filter, e.g. digitalocean. Omit for all configured providers."},
+                    "period": {"type": "string", "enum": ["day", "month"], "description": "Use day for /billing today or daily spend; use month for monthly spend or forecast."},
+                    "group_by": {"type": "string", "enum": ["provider", "model", "summary"], "description": "Use model for model cost breakdowns, provider for provider/account breakdowns."},
                     "refresh": {"type": "boolean", "description": "Set true if the user asks for the latest/current graph."}
                 },
                 "required": ["action"]

@@ -1366,10 +1366,13 @@ async function initCloudBillingSettings() {
   if (!enabledToggle) return;
 
   var card = el('cloud-billing-card');
+  var usageLedgerToggle = el('set-cloudBillingUsageLedger');
+  var budgetEnforcedToggle = el('set-cloudBillingBudgetEnforced');
   var toggleBtn = el('set-cloudBillingToggle');
   var summaryEl = el('set-cloudBillingSummary');
   var refreshSelect = el('set-cloudBillingRefresh');
   var warningInput = el('set-cloudBillingWarning');
+  var dailyLimitInput = el('set-cloudBillingDailyLimit');
   var limitInput = el('set-cloudBillingLimit');
   var accountsEl = el('set-cloudBillingAccounts');
   var addProvider = el('set-cloudBillingAddProvider');
@@ -1396,6 +1399,7 @@ async function initCloudBillingSettings() {
   }
 
   function hasConfiguredAccount() {
+    if (usageLedgerToggle && usageLedgerToggle.checked) return true;
     return accounts.some(function(account) {
       return !!(account && (account.api_token_set || (account.api_token || '').trim()));
     });
@@ -1415,8 +1419,10 @@ async function initCloudBillingSettings() {
     }
 
     setDisabled(enabledToggle, !configured);
+    setDisabled(budgetEnforcedToggle, !configured);
     setDisabled(refreshSelect, !configured);
     setDisabled(warningInput, !configured);
+    setDisabled(dailyLimitInput, !configured);
     setDisabled(limitInput, !configured);
     setDisabled(refreshBtn, !configured);
     if (!configured) enabledToggle.checked = false;
@@ -1532,7 +1538,10 @@ async function initCloudBillingSettings() {
     enabledToggle.checked = !!currentSettings.cloud_billing_enabled;
     if (refreshSelect) refreshSelect.value = String(currentSettings.cloud_billing_refresh_seconds || 900);
     if (warningInput) warningInput.value = currentSettings.cloud_billing_monthly_warning_usd || '';
+    if (dailyLimitInput) dailyLimitInput.value = currentSettings.cloud_billing_daily_limit_usd || '';
     if (limitInput) limitInput.value = currentSettings.cloud_billing_monthly_limit_usd || '';
+    if (usageLedgerToggle) usageLedgerToggle.checked = currentSettings.cloud_billing_usage_ledger_enabled !== false;
+    if (budgetEnforcedToggle) budgetEnforcedToggle.checked = currentSettings.cloud_billing_budget_enforcement_enabled !== false;
     accounts = normalizeAccounts(currentSettings.cloud_billing_accounts);
     renderAccounts();
     syncBillingAvailability();
@@ -1605,7 +1614,10 @@ async function initCloudBillingSettings() {
       cloud_billing_accounts: payloadAccounts,
       cloud_billing_refresh_seconds: parseInt(refreshSelect && refreshSelect.value, 10) || 900,
       cloud_billing_monthly_warning_usd: (warningInput && warningInput.value || '').trim(),
+      cloud_billing_daily_limit_usd: (dailyLimitInput && dailyLimitInput.value || '').trim(),
       cloud_billing_monthly_limit_usd: (limitInput && limitInput.value || '').trim(),
+      cloud_billing_budget_enforcement_enabled: budgetEnforcedToggle ? !!budgetEnforcedToggle.checked : true,
+      cloud_billing_usage_ledger_enabled: usageLedgerToggle ? !!usageLedgerToggle.checked : true,
     };
 
     try {
@@ -1661,8 +1673,11 @@ async function initCloudBillingSettings() {
     saveBilling();
   });
   enabledToggle.addEventListener('change', function() { saveBilling(); });
+  if (usageLedgerToggle) usageLedgerToggle.addEventListener('change', function() { saveBilling(); });
+  if (budgetEnforcedToggle) budgetEnforcedToggle.addEventListener('change', function() { saveBilling(); });
   if (refreshSelect) refreshSelect.addEventListener('change', function() { saveBilling(); });
   if (warningInput) warningInput.addEventListener('change', function() { saveBilling(); });
+  if (dailyLimitInput) dailyLimitInput.addEventListener('change', function() { saveBilling(); });
   if (limitInput) limitInput.addEventListener('change', function() { saveBilling(); });
   if (accountsEl) accountsEl.addEventListener('change', function() {
     readAccountsFromDom();

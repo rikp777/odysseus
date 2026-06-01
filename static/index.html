@@ -2111,6 +2111,14 @@
                 <label class="admin-switch" title="Show cloud spend in the sidebar and cost labels in chat"><input type="checkbox" id="set-cloudBillingEnabled"><span class="admin-slider"></span></label>
               </div>
               <div class="settings-row">
+                <label class="settings-label">Usage Ledger</label>
+                <label class="admin-switch" title="Track local model token usage for provider-generic spend graphs and budgets"><input type="checkbox" id="set-cloudBillingUsageLedger"><span class="admin-slider"></span></label>
+              </div>
+              <div class="settings-row">
+                <label class="settings-label">Enforce Budgets</label>
+                <label class="admin-switch" title="Block remote model calls when local spend budgets are reached"><input type="checkbox" id="set-cloudBillingBudgetEnforced"><span class="admin-slider"></span></label>
+              </div>
+              <div class="settings-row">
                 <label class="settings-label">Refresh</label>
                 <select id="set-cloudBillingRefresh" class="settings-select">
                   <option value="300">5 min</option>
@@ -2124,7 +2132,11 @@
                 <input id="set-cloudBillingWarning" type="text" inputmode="decimal" class="settings-input" placeholder="Monthly USD amount, optional">
               </div>
               <div class="settings-row">
-                <label class="settings-label">Limit At</label>
+                <label class="settings-label">Daily Limit</label>
+                <input id="set-cloudBillingDailyLimit" type="text" inputmode="decimal" class="settings-input" placeholder="Block remote models at daily USD amount">
+              </div>
+              <div class="settings-row">
+                <label class="settings-label">Monthly Limit</label>
                 <input id="set-cloudBillingLimit" type="text" inputmode="decimal" class="settings-input" placeholder="Block cloud models at USD amount">
               </div>
               <div id="set-cloudBillingAccounts" class="cloud-billing-accounts"></div>

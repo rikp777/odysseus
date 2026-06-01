@@ -1467,10 +1467,17 @@ async def do_manage_billing(content: str, owner: Optional[str] = None) -> Dict:
 
     provider = str(args.get("provider") or "").strip() or None
     refresh = bool(args.get("refresh", False))
+    period = str(args.get("period") or "month").strip().lower()
+    group_by = str(args.get("group_by") or "provider").strip().lower()
 
     from routes.billing_routes import get_spending_graph_status
 
-    status = get_spending_graph_status(refresh=refresh, forced_provider=provider)
+    status = get_spending_graph_status(
+        refresh=refresh,
+        forced_provider=provider,
+        period=period,
+        group_by=group_by,
+    )
     chart = status.get("chart") or {}
     chart_markdown = status.get("markdown") or ""
 
@@ -1488,7 +1495,7 @@ async def do_manage_billing(content: str, owner: Optional[str] = None) -> Dict:
         response = status.get("error") or "Cloud billing data is unavailable right now."
     else:
         response = (
-            f"Here is the cloud spending graph for {chart.get('subtitle', 'this month')}.\n\n"
+            f"Here is the spending graph for {chart.get('subtitle', 'this month')}.\n\n"
             f"{chart_markdown}\n\n"
             f"Current total: {chart.get('total_display', status.get('display', '--'))}"
         )

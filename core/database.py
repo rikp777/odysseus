@@ -408,6 +408,39 @@ class ApiToken(TimestampMixin, Base):
     last_used_at = Column(DateTime, nullable=True)
 
 
+class ModelUsageEvent(Base):
+    """Provider-generic model usage ledger for billing and budget controls.
+
+    The ledger intentionally stores usage metadata only: model, endpoint,
+    token counts, cost estimate, and ownership. Prompt/response content stays
+    in chat history and is not duplicated here.
+    """
+    __tablename__ = "model_usage_events"
+
+    id = Column(String, primary_key=True, index=True)
+    owner = Column(String, nullable=True, index=True)
+    session_id = Column(String, nullable=True, index=True)
+    message_id = Column(String, nullable=True, index=True)
+    provider = Column(String, nullable=True, index=True)
+    endpoint_url = Column(Text, nullable=True)
+    model = Column(String, nullable=False, index=True)
+    input_tokens = Column(Integer, default=0)
+    output_tokens = Column(Integer, default=0)
+    total_tokens = Column(Integer, default=0)
+    input_cost_usd = Column(String, nullable=True)
+    output_cost_usd = Column(String, nullable=True)
+    total_cost_usd = Column(String, nullable=True, index=True)
+    currency = Column(String, default="USD")
+    source = Column(String, default="estimated")  # real | estimated | unknown
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+
+    __table_args__ = (
+        Index("ix_model_usage_owner_created", "owner", "created_at"),
+        Index("ix_model_usage_provider_created", "provider", "created_at"),
+        Index("ix_model_usage_model_created", "model", "created_at"),
+    )
+
+
 class Webhook(TimestampMixin, Base):
     """Outgoing webhooks fired on events."""
     __tablename__ = "webhooks"

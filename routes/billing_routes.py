@@ -15,6 +15,7 @@ import httpx
 from fastapi import APIRouter, Request
 
 from core.middleware import require_admin
+from src.billing_usage import get_usage_summary
 from src.secret_storage import decrypt as _decrypt_secret
 from src.settings import load_settings as _load_settings
 
@@ -55,6 +56,33 @@ def _decimal_or_none(value: Any) -> Optional[Decimal]:
 
 def _float_money(value: Optional[Decimal]) -> Optional[float]:
     return float(_money(value)) if value is not None else None
+
+
+def _local_usage_payload(period: str = "month") -> Dict[str, Any]:
+    try:
+        summary = dict(get_usage_summary(period=period))
+    except Exception:
+        return {
+            "enabled": False,
+            "period": period,
+            "amount": "0.000000",
+            "amount_float": 0.0,
+            "display": "$0.00",
+            "events": 0,
+            "known_cost_events": 0,
+            "unknown_cost_events": 0,
+            "providers": [],
+            "models": [],
+            "error": "Local usage ledger is unavailable",
+        }
+    summary.pop("amount_decimal", None)
+    summary.pop("projected_decimal", None)
+    return summary
+
+
+def _attach_local_usage(payload: Dict[str, Any], *, period: str = "month") -> Dict[str, Any]:
+    payload["local_usage"] = _local_usage_payload(period)
+    return payload
 
 
 def _clamp_refresh_seconds(value: Any) -> int:
@@ -207,6 +235,50 @@ def _history_for_current_month(*, scope: str, now: Optional[datetime] = None) ->
 
 def _chart_accounts(status: Dict[str, Any]) -> list[Dict[str, Any]]:
     accounts = []
+    local_usage = status.get("local_usage") if isinstance(status.get("local_usage"), dict) else None
+    group_by = str(status.get("group_by") or "provider").lower()
+    if local_usage and local_usage.get("enabled"):
+        if group_by == "model":
+            for item in local_usage.get("models", []):
+                amount = _decimal_or_none(item.get("amount")) or Decimal("0")
+                accounts.append({
+                    "id": item.get("id") or item.get("label") or "model",
+                    "label": item.get("label") or item.get("id") or "Model",
+                    "provider": "local_usage",
+                    "provider_label": "Local usage",
+                    "amount": _float_money(amount) or 0.0,
+                    "display": item.get("display") or f"${_money(amount)}",
+                    "ok": True,
+                    "status": f"{item.get('total_tokens', 0)} tokens",
+                    "error": "",
+                })
+        elif group_by == "provider":
+            for item in local_usage.get("providers", []):
+                amount = _decimal_or_none(item.get("amount")) or Decimal("0")
+                accounts.append({
+                    "id": "usage-" + str(item.get("id") or item.get("label") or "provider"),
+                    "label": str(item.get("label") or item.get("id") or "Provider") + " model usage",
+                    "provider": item.get("id") or "local_usage",
+                    "provider_label": "Local usage",
+                    "amount": _float_money(amount) or 0.0,
+                    "display": item.get("display") or f"${_money(amount)}",
+                    "ok": True,
+                    "status": f"{item.get('total_tokens', 0)} tokens",
+                    "error": "",
+                })
+        elif local_usage.get("events") or not status.get("accounts"):
+            amount = _decimal_or_none(local_usage.get("amount")) or Decimal("0")
+            accounts.append({
+                "id": "local-model-usage",
+                "label": "Tracked model usage",
+                "provider": "local_usage",
+                "provider_label": "Local usage",
+                "amount": _float_money(amount) or 0.0,
+                "display": local_usage.get("display") or f"${_money(amount)}",
+                "ok": True,
+                "status": f"{local_usage.get('total_tokens', 0)} tokens",
+                "error": "",
+            })
     for item in status.get("accounts", []):
         if not isinstance(item, dict):
             continue
@@ -248,19 +320,24 @@ def build_spending_graph_payload(
     now: Optional[datetime] = None,
 ) -> Dict[str, Any]:
     current = now or datetime.now(timezone.utc)
+    period = str(status.get("period") or "month")
     days_in_month = monthrange(current.year, current.month)[1]
     elapsed_days = max(1, current.day)
-    amount = _decimal_or_none(status.get("amount")) or Decimal("0")
+    amount = _decimal_or_none(status.get("amount"))
+    local_usage = status.get("local_usage") if isinstance(status.get("local_usage"), dict) else None
+    if amount is None and local_usage:
+        amount = _decimal_or_none(local_usage.get("amount")) or Decimal("0")
+    amount = amount or Decimal("0")
     warning = _decimal_or_none(status.get("warning_usd"))
     limit = _decimal_or_none(status.get("limit_usd"))
-    projected = (amount / Decimal(elapsed_days)) * Decimal(days_in_month) if amount > 0 else Decimal("0")
+    projected = (amount / Decimal(elapsed_days)) * Decimal(days_in_month) if period == "month" and amount > 0 else amount
     history = _history_for_current_month(scope=_billing_scope(forced_provider), now=current)
 
     return {
         "version": 1,
         "kind": "billing-spend",
-        "title": "Cloud Spend",
-        "subtitle": f"{current.strftime('%B %Y')} month-to-date",
+        "title": "Model Spend" if status.get("provider") == "local_usage" else "Cloud Spend",
+        "subtitle": "Today" if period == "day" else f"{current.strftime('%B %Y')} month-to-date",
         "status": status.get("status") or "",
         "ok": bool(status.get("ok", False)),
         "enabled": bool(status.get("enabled", False)),
@@ -282,6 +359,9 @@ def build_spending_graph_payload(
         "cached": bool(status.get("cached", False)),
         "provider_label": status.get("provider_label") or "Cloud",
         "provider_short_label": status.get("provider_short_label") or "ALL",
+        "period": period,
+        "group_by": status.get("group_by") or "provider",
+        "local_usage": local_usage or {},
         "accounts": _chart_accounts(status),
         "history": history,
         "notice": status.get("error") or "",
@@ -399,6 +479,44 @@ def _empty_payload(
         "provider_short_label": "ALL",
         "provider_token_hint": "Provider billing API token",
         "accounts": accounts or [],
+    }
+
+
+def _local_only_payload(
+    *,
+    period: str,
+    warning_usd: Optional[str],
+    limit_usd: Optional[str],
+    refresh_seconds: int,
+) -> Dict[str, Any]:
+    local_usage = _local_usage_payload(period)
+    amount = _decimal_or_none(local_usage.get("amount")) or Decimal("0")
+    warning = _decimal_or_none(warning_usd)
+    limit = _decimal_or_none(limit_usd)
+    return {
+        "ok": True,
+        "enabled": True,
+        "configured": True,
+        "status": "ok",
+        "error": "",
+        "currency": "USD",
+        "amount": _money(amount),
+        "display": f"${_money(amount)}",
+        "warning_usd": warning_usd,
+        "limit_usd": limit_usd,
+        "over_warning": bool(warning is not None and amount >= warning),
+        "over_limit": bool(limit is not None and amount >= limit),
+        "limit_check_blocked": False,
+        "refresh_seconds": refresh_seconds,
+        "updated_at": _utc_now_iso(),
+        "cached": False,
+        "provider": "local_usage",
+        "provider_label": "Local usage",
+        "provider_short_label": "USG",
+        "provider_token_hint": "Local model usage ledger",
+        "accounts": [],
+        "period": period,
+        "local_usage": local_usage,
     }
 
 
@@ -562,7 +680,7 @@ def get_monthly_spend_status(*, refresh: bool = False, forced_provider: Optional
     ]
 
     if not enabled:
-        return _empty_payload(
+        return _attach_local_usage(_empty_payload(
             enabled=False,
             configured=any(item["configured"] for item in account_summaries),
             warning_usd=warning_usd,
@@ -571,10 +689,17 @@ def get_monthly_spend_status(*, refresh: bool = False, forced_provider: Optional
             status="disabled",
             error="Cloud billing display is disabled",
             accounts=account_summaries,
-        )
+        ))
 
     if not visible_accounts:
-        return _empty_payload(
+        if not forced_provider and settings.get("cloud_billing_usage_ledger_enabled") is not False:
+            return _local_only_payload(
+                period="month",
+                warning_usd=warning_usd,
+                limit_usd=limit_usd,
+                refresh_seconds=refresh_seconds,
+            )
+        return _attach_local_usage(_empty_payload(
             enabled=True,
             configured=False,
             warning_usd=warning_usd,
@@ -583,7 +708,7 @@ def get_monthly_spend_status(*, refresh: bool = False, forced_provider: Optional
             status="missing_account",
             error="No enabled cloud billing accounts are configured",
             accounts=account_summaries,
-        )
+        ))
 
     fingerprint_parts = [
         str(enabled),
@@ -610,6 +735,7 @@ def get_monthly_spend_status(*, refresh: bool = False, forced_provider: Optional
         payload = dict(_CACHE["payload"])
         payload["accounts"] = [dict(item) for item in payload.get("accounts", [])]
         payload["cached"] = True
+        _attach_local_usage(payload)
         return payload
 
     account_results = [
@@ -662,6 +788,7 @@ def get_monthly_spend_status(*, refresh: bool = False, forced_provider: Optional
         "provider_token_hint": "Provider billing API token",
         "accounts": account_results,
     }
+    _attach_local_usage(payload)
     _CACHE.update({
         "fingerprint": fingerprint,
         "expires_at": now + refresh_seconds,
@@ -670,9 +797,31 @@ def get_monthly_spend_status(*, refresh: bool = False, forced_provider: Optional
     return payload
 
 
-def get_spending_graph_status(*, refresh: bool = False, forced_provider: Optional[str] = None) -> Dict[str, Any]:
-    status = get_monthly_spend_status(refresh=refresh, forced_provider=forced_provider)
-    if status.get("amount") is not None:
+def get_spending_graph_status(
+    *,
+    refresh: bool = False,
+    forced_provider: Optional[str] = None,
+    period: str = "month",
+    group_by: str = "provider",
+) -> Dict[str, Any]:
+    normalized_period = "day" if str(period or "").lower() in {"day", "today"} else "month"
+    normalized_group = str(group_by or "provider").strip().lower()
+    if normalized_group not in {"provider", "model", "summary"}:
+        normalized_group = "provider"
+
+    if normalized_period == "day":
+        settings = _load_settings()
+        status = _local_only_payload(
+            period="day",
+            warning_usd=None,
+            limit_usd=str(settings.get("cloud_billing_daily_limit_usd") or "").strip() or None,
+            refresh_seconds=_clamp_refresh_seconds(settings.get("cloud_billing_refresh_seconds")),
+        )
+    else:
+        status = get_monthly_spend_status(refresh=refresh, forced_provider=forced_provider)
+    status["period"] = normalized_period
+    status["group_by"] = normalized_group
+    if normalized_period == "month" and status.get("provider") != "local_usage" and status.get("amount") is not None:
         _record_billing_sample(status, forced_provider=forced_provider)
     chart = build_spending_graph_payload(status, forced_provider=forced_provider)
     return {
@@ -690,10 +839,26 @@ def setup_billing_routes() -> APIRouter:
         return _monthly_spend(request, refresh=refresh)
 
     @router.get("/spending-graph")
-    def spending_graph(request: Request, refresh: bool = False, provider: str = "") -> Dict[str, Any]:
+    def spending_graph(
+        request: Request,
+        refresh: bool = False,
+        provider: str = "",
+        period: str = "month",
+        group_by: str = "provider",
+    ) -> Dict[str, Any]:
         require_admin(request)
         forced_provider = provider.strip() if provider else None
-        return get_spending_graph_status(refresh=refresh, forced_provider=forced_provider)
+        return get_spending_graph_status(
+            refresh=refresh,
+            forced_provider=forced_provider,
+            period=period,
+            group_by=group_by,
+        )
+
+    @router.get("/usage-summary")
+    def usage_summary(request: Request, period: str = "month") -> Dict[str, Any]:
+        require_admin(request)
+        return _local_usage_payload(period)
 
     @router.get("/{provider}/monthly-spend")
     def provider_monthly_spend(provider: str, request: Request, refresh: bool = False) -> Dict[str, Any]:

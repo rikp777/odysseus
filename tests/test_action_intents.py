@@ -45,6 +45,22 @@ def test_tool_intent_classifier_returns_specific_intent():
     assert classify_tool_intent("How do I add an entry to my calendar?") is None
 
 
+def test_direct_billing_intent_argument_rules():
+    today_by_model = classify_tool_intent("/billing today by model")
+    provider_specific = classify_tool_intent("show monthly spend for provider digitalocean")
+    provider_breakdown = classify_tool_intent("/billing provider breakdown")
+
+    assert today_by_model is not None
+    assert today_by_model.args["period"] == "day"
+    assert today_by_model.args["group_by"] == "model"
+    assert provider_specific is not None
+    assert provider_specific.args["period"] == "month"
+    assert provider_specific.args["provider"] == "digitalocean"
+    assert provider_breakdown is not None
+    assert provider_breakdown.args["group_by"] == "provider"
+    assert "provider" not in provider_breakdown.args
+
+
 def test_explanatory_calendar_questions_stay_plain_chat():
     assert not message_needs_tools("How do I add an entry to my calendar?")
     assert not message_needs_tools("What about the built-in Odysseus calendar, is that linked to email?")
