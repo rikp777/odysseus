@@ -111,6 +111,77 @@ def test_secret_storage_key_created_with_safe_mode(tmp_path, monkeypatch):
     assert mode == 0o600, f"expected 0o600, got 0o{mode:o}"
 
 
+# ── secure-by-default deployment + integration storage ─────────
+
+def test_docker_compose_binds_web_ui_to_loopback_by_default():
+    compose = Path("docker-compose.yml").read_text(encoding="utf-8")
+    assert "${APP_BIND:-127.0.0.1}:${APP_PORT:-7000}:7000" in compose
+    assert '"${APP_PORT:-7000}:7000"' not in compose
+
+
+def test_readme_native_quickstart_uses_loopback():
+    readme = Path("README.md").read_text(encoding="utf-8")
+    assert "python -m uvicorn app:app --host 127.0.0.1 --port 7000" in readme
+    assert "Use `--host 0.0.0.0` only when you intentionally want" in readme
+
+
+def _import_integrations(tmp_path, monkeypatch):
+    """Import src.integrations with data + encryption key redirected to tmp."""
+    _import_secret_storage(tmp_path, monkeypatch)
+    sys.modules.pop("src.integrations", None)
+    from src import integrations  # noqa: WPS433
+    monkeypatch.setattr(integrations, "DATA_FILE", str(tmp_path / "integrations.json"))
+    return integrations
+
+
+def test_integrations_api_keys_are_encrypted_at_rest(tmp_path, monkeypatch):
+    integrations = _import_integrations(tmp_path, monkeypatch)
+
+    integrations.save_integrations([
+        {
+            "id": "miniflux",
+            "name": "Miniflux",
+            "base_url": "https://rss.example",
+            "auth_type": "bearer",
+            "api_key": "secret-token",
+        }
+    ])
+
+    raw_text = (tmp_path / "integrations.json").read_text(encoding="utf-8")
+    raw = json.loads(raw_text)
+    assert raw[0]["api_key"].startswith("enc:")
+    assert "secret-token" not in raw_text
+
+    loaded = integrations.load_integrations()
+    assert loaded[0]["api_key"] == "secret-token"
+    assert integrations.mask_integration_secret(loaded[0])["api_key"] == "secr****"
+
+
+def test_integrations_plaintext_keys_migrate_on_load(tmp_path, monkeypatch):
+    integrations = _import_integrations(tmp_path, monkeypatch)
+    data_file = tmp_path / "integrations.json"
+    data_file.write_text(
+        json.dumps([
+            {
+                "id": "legacy",
+                "name": "Legacy API",
+                "base_url": "https://api.example",
+                "auth_type": "header",
+                "api_key": "legacy-secret",
+            }
+        ]),
+        encoding="utf-8",
+    )
+
+    loaded = integrations.load_integrations()
+
+    assert loaded[0]["api_key"] == "legacy-secret"
+    migrated_text = data_file.read_text(encoding="utf-8")
+    migrated = json.loads(migrated_text)
+    assert migrated[0]["api_key"].startswith("enc:")
+    assert "legacy-secret" not in migrated_text
+
+
 # ── _q IMAP mailbox quoter ─────────────────────────────────────
 
 def _import_q():
@@ -296,15 +367,85 @@ def test_chat_preprocess_does_not_surface_cross_owner_attachment(tmp_path, monke
 
 
 def test_document_upload_lookup_rejects_cross_owner_marker(tmp_path, monkeypatch):
+    from src.upload_handler import UploadHandler
+
     sys.modules.pop("routes.document_helpers", None)
     _stub_core_database_for_route_imports(monkeypatch)
     from routes.document_helpers import _locate_upload
 
     upload_dir, _alice_id, bob_id = _make_upload_store(tmp_path)
+    handler = UploadHandler(str(tmp_path), str(upload_dir))
 
-    assert _locate_upload(str(upload_dir), bob_id, owner="alice") is None
-    assert _locate_upload(str(upload_dir), bob_id, owner="bob").endswith(bob_id)
+    assert _locate_upload(str(upload_dir), bob_id, owner="alice", upload_handler=handler) is None
+    assert _locate_upload(str(upload_dir), bob_id, owner="bob", upload_handler=handler).endswith(bob_id)
     sys.modules.pop("routes.document_helpers", None)
+
+
+def test_find_source_upload_id_rejects_path_traversal_marker():
+    from src.pdf_form_doc import find_source_upload_id
+
+    content = '<!-- pdf_source upload_id="../../etc/passwd" -->\n\n# x\n'
+    assert find_source_upload_id(content) is None
+
+
+def test_pdf_marker_write_rejects_cross_owner_upload(tmp_path, monkeypatch):
+    """Saving a doc whose front-matter points at another user's upload must 400."""
+    from src.upload_handler import UploadHandler
+
+    sys.modules.pop("routes.document_helpers", None)
+    _stub_core_database_for_route_imports(monkeypatch)
+    from fastapi import HTTPException
+    from routes.document_helpers import _assert_pdf_marker_upload_owned
+
+    upload_dir, _alice_id, bob_id = _make_upload_store(tmp_path)
+    handler = UploadHandler(str(tmp_path), str(upload_dir))
+
+    class _AuthMgr:
+        is_configured = True
+
+        @staticmethod
+        def is_admin(_user):
+            return False
+
+    class _AppState:
+        auth_manager = _AuthMgr()
+
+    class _App:
+        state = _AppState()
+
+    class _Req:
+        app = _App()
+
+    marker = f'<!-- pdf_source upload_id="{bob_id}" -->\n\n# Notes\n'
+    with pytest.raises(HTTPException) as exc:
+        _assert_pdf_marker_upload_owned(_Req(), marker, "alice", handler)
+    assert exc.value.status_code == 400
+
+    # Own upload is allowed
+    own_marker = f'<!-- pdf_source upload_id="{_alice_id}" -->\n\n# Notes\n'
+    _assert_pdf_marker_upload_owned(_Req(), own_marker, "alice", handler)
+
+    sys.modules.pop("routes.document_helpers", None)
+
+
+def test_pdf_marker_render_lookup_denies_cross_owner_without_doc_leak(tmp_path):
+    """Read path: cross-owner marker resolves to None (404 at route layer)."""
+    from src.upload_handler import UploadHandler
+
+    upload_dir, alice_id, bob_id = _make_upload_store(tmp_path)
+    handler = UploadHandler(str(tmp_path), str(upload_dir))
+
+    class _AuthMgr:
+        is_configured = True
+
+        @staticmethod
+        def is_admin(_user):
+            return False
+
+    assert handler.resolve_upload(bob_id, owner="alice", auth_manager=_AuthMgr()) is None
+    resolved = handler.resolve_upload(alice_id, owner="alice", auth_manager=_AuthMgr())
+    assert resolved is not None
+    assert resolved["path"].endswith(alice_id)
 
 
 # ── require_user dependency rejects anon callers ────────────────

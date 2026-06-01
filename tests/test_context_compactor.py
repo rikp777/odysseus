@@ -5,6 +5,7 @@ import sys
 from unittest.mock import MagicMock
 
 # Mock heavy dependencies before importing
+_stubbed_modules = {}
 for mod in [
     'sqlalchemy', 'sqlalchemy.orm', 'sqlalchemy.ext', 'sqlalchemy.ext.declarative',
     'sqlalchemy.ext.hybrid', 'sqlalchemy.sql', 'sqlalchemy.sql.expression',
@@ -12,7 +13,9 @@ for mod in [
     'core.models', 'core.database',
 ]:
     if mod not in sys.modules:
-        sys.modules[mod] = MagicMock()
+        stub = MagicMock()
+        _stubbed_modules[mod] = stub
+        sys.modules[mod] = stub
 
 from src.context_compactor import (
     COMPACT_THRESHOLD,
@@ -20,6 +23,14 @@ from src.context_compactor import (
     SUMMARY_MAX_TOKENS,
     trim_for_context,
 )
+
+for mod, stub in _stubbed_modules.items():
+    sys.modules.pop(mod, None)
+    if "." in mod:
+        parent_name, _, child_name = mod.rpartition(".")
+        parent = sys.modules.get(parent_name)
+        if parent is not None and getattr(parent, child_name, None) is stub:
+            delattr(parent, child_name)
 
 
 class TestCompactThreshold:
