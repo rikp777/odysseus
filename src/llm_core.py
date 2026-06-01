@@ -260,6 +260,63 @@ def _provider_label(url: str) -> str:
         return "provider"
 
 
+def _is_remote_billable_url(url: str) -> bool:
+    """Return True for remote model APIs that should obey cloud spend limits."""
+    try:
+        parsed = urlparse(url or "")
+        host = (parsed.hostname or "").lower()
+    except Exception:
+        return False
+    if not host:
+        return False
+    if host in {"localhost", "127.0.0.1", "0.0.0.0", "::1"} or host.endswith(".local"):
+        return False
+    try:
+        import ipaddress
+        ip = ipaddress.ip_address(host)
+        tailscale = ipaddress.ip_network("100.64.0.0/10")
+        if ip.is_loopback or ip.is_private or ip.is_link_local or ip in tailscale:
+            return False
+    except ValueError:
+        pass
+    return True
+
+
+def _cloud_spend_limit_error(url: str) -> Optional[str]:
+    """Return a user-facing block reason when the monthly cloud spend limit trips."""
+    if not _is_remote_billable_url(url):
+        return None
+    try:
+        from routes.billing_routes import get_monthly_spend_status
+        status = get_monthly_spend_status(refresh=False)
+    except Exception as exc:
+        logger.warning("Cloud spend limit check failed before model call: %s", exc)
+        return None
+
+    limit = status.get("limit_usd")
+    if not limit:
+        return None
+    if status.get("over_limit"):
+        display = status.get("display") or "unknown spend"
+        return (
+            f"Cloud spend limit reached: current month-to-date spend is {display}, "
+            f"limit is ${limit}. Cloud model calls are blocked until the limit is raised "
+            "or the billing period resets."
+        )
+    if status.get("limit_check_blocked"):
+        return (
+            f"Cloud spend limit is set to ${limit}, but Odysseus could not verify current "
+            "provider spend. Cloud model calls are blocked to avoid accidental overspend."
+        )
+    return None
+
+
+def _raise_if_cloud_spend_limited(url: str) -> None:
+    reason = _cloud_spend_limit_error(url)
+    if reason:
+        raise HTTPException(402, reason)
+
+
 def _format_upstream_error(status: int, body: bytes | str, url: str) -> str:
     """Turn an upstream HTTP error into a user-readable sentence.
 
@@ -573,6 +630,7 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
         if max_tokens and max_tokens > 0:
             tok_key = "max_completion_tokens" if _uses_max_completion_tokens(model) else "max_tokens"
             payload[tok_key] = max_tokens
+    _raise_if_cloud_spend_limited(target_url)
     try:
         note_model_activity(target_url, model)
         r = httpx.post(target_url, headers=h, json=payload, timeout=timeout)
@@ -690,6 +748,8 @@ async def llm_call_async(
             tok_key = "max_completion_tokens" if _uses_max_completion_tokens(model) else "max_tokens"
             payload[tok_key] = max_tokens
 
+    _raise_if_cloud_spend_limited(target_url)
+
     if _is_host_dead(target_url):
         raise HTTPException(503, f"Upstream {_host_key(target_url)} marked unreachable (cooldown active)")
 
@@ -792,6 +852,11 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
         if tools:
             payload["tools"] = tools
         h = _provider_headers(provider, headers)
+
+    limit_error = _cloud_spend_limit_error(target_url)
+    if limit_error:
+        yield f'event: error\ndata: {json.dumps({"error": limit_error, "status": 402})}\n\n'
+        return
 
     # Short connect timeout: a reachable peer answers SYN in <100ms even on
     # Tailscale. 3s is plenty; 30s let one dead upstream wedge the UI.

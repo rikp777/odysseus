@@ -12,8 +12,8 @@ import json
 import logging
 from typing import Optional
 
-from src.agent_tools import ToolBlock, TOOL_TAGS
 from src.tool_parsing import _TOOL_NAME_MAP
+from src.tool_types import ToolBlock, TOOL_TAGS
 
 logger = logging.getLogger(__name__)
 
@@ -632,6 +632,22 @@ FUNCTION_TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
+            "name": "manage_billing",
+            "description": "Show cloud billing status or a spending graph. Use when the user asks for billing, cloud spend, monthly spend, cost graph, budget graph, spending graph, provider spend, or current cloud costs. The response contains a ready-to-show billing-chart markdown block; preserve that block exactly in the final answer.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {"type": "string", "enum": ["summary", "status", "spending_graph", "graph"], "description": "Use spending_graph/graph when the user asks to show a graph."},
+                    "provider": {"type": "string", "description": "Optional provider filter, e.g. digitalocean. Omit for all configured providers."},
+                    "refresh": {"type": "boolean", "description": "Set true if the user asks for the latest/current graph."}
+                },
+                "required": ["action"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "download_model",
             "description": "Download a HuggingFace model to a server. If `host` is omitted, defaults to the cookbook's currently-selected server (NOT localhost) — call list_cookbook_servers first if you're unsure where it should go.",
             "parameters": {
@@ -1175,7 +1191,8 @@ def function_call_to_tool_block(name: str, arguments: str) -> Optional[ToolBlock
             content = action
     elif tool_type in ("manage_tasks", "manage_skills", "api_call",
                         "manage_endpoints", "manage_mcp", "manage_webhooks",
-                        "manage_tokens", "manage_documents", "manage_settings"):
+                        "manage_tokens", "manage_documents", "manage_settings",
+                        "manage_billing"):
         content = json.dumps(args)
     elif tool_type == "ask_teacher":
         content = args.get("model", "auto") + "\n" + args.get("problem", "")

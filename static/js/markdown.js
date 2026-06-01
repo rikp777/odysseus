@@ -34,6 +34,135 @@ function linkHtml(text, url) {
   return `<a href="${escapeHtml(safeUrl)}" target="_blank" rel="noopener noreferrer">${safeText}</a>`;
 }
 
+function _billingChartNumber(value) {
+  const n = Number(value);
+  return Number.isFinite(n) ? Math.max(0, n) : 0;
+}
+
+function _billingChartMoney(value, fallback) {
+  if (fallback) return escapeHtml(String(fallback));
+  const n = _billingChartNumber(value);
+  return '$' + (n < 1 ? n.toFixed(2) : n.toFixed(2).replace(/\.00$/, ''));
+}
+
+function _billingChartDateLabel(value) {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+
+function _billingChartSvg(history, maxY) {
+  if (!Array.isArray(history) || history.length < 2) return '';
+  const points = history
+    .filter(item => item && Number.isFinite(Number(item.amount)))
+    .slice(-30);
+  if (points.length < 2) return '';
+
+  const w = 520;
+  const h = 150;
+  const padX = 22;
+  const padY = 18;
+  const usableW = w - (padX * 2);
+  const usableH = h - (padY * 2);
+  const safeMax = Math.max(0.01, maxY);
+  const coords = points.map((item, idx) => {
+    const x = padX + (idx * usableW / Math.max(1, points.length - 1));
+    const y = h - padY - ((_billingChartNumber(item.amount) / safeMax) * usableH);
+    return [Number(x.toFixed(2)), Number(y.toFixed(2))];
+  });
+  const line = coords.map(pair => pair.join(',')).join(' ');
+  const area = `${padX},${h - padY} ${line} ${coords[coords.length - 1][0]},${h - padY}`;
+  const firstLabel = _billingChartDateLabel(points[0]?.timestamp);
+  const lastLabel = _billingChartDateLabel(points[points.length - 1]?.timestamp);
+  return `
+    <div class="billing-chart-plot">
+      <svg viewBox="0 0 ${w} ${h}" role="img" aria-label="Billing spend history">
+        <line class="billing-chart-axis" x1="${padX}" y1="${h - padY}" x2="${w - padX}" y2="${h - padY}"></line>
+        <line class="billing-chart-axis" x1="${padX}" y1="${padY}" x2="${padX}" y2="${h - padY}"></line>
+        <polygon class="billing-chart-area" points="${area}"></polygon>
+        <polyline class="billing-chart-line" points="${line}"></polyline>
+        ${coords.map(pair => `<circle class="billing-chart-dot" cx="${pair[0]}" cy="${pair[1]}" r="3"></circle>`).join('')}
+      </svg>
+      <div class="billing-chart-axis-labels"><span>${escapeHtml(firstLabel)}</span><span>${escapeHtml(lastLabel)}</span></div>
+    </div>
+  `;
+}
+
+function _billingChartHtml(raw) {
+  let chart;
+  try {
+    chart = JSON.parse(raw || '{}');
+  } catch (_) {
+    return '<pre><code class="language-json">Invalid billing chart data</code></pre>';
+  }
+  if (!chart || typeof chart !== 'object' || chart.kind !== 'billing-spend') {
+    return '<pre><code class="language-json">Unsupported billing chart data</code></pre>';
+  }
+
+  const accounts = Array.isArray(chart.accounts) ? chart.accounts : [];
+  const history = Array.isArray(chart.history) ? chart.history : [];
+  const total = _billingChartNumber(chart.total);
+  const projected = _billingChartNumber(chart.projected);
+  const limit = chart.limit == null ? null : _billingChartNumber(chart.limit);
+  const warning = chart.warning == null ? null : _billingChartNumber(chart.warning);
+  const maxAccount = Math.max(0.01, ...accounts.map(item => _billingChartNumber(item && item.amount)));
+  const maxY = Math.max(0.01, total, projected, limit || 0, warning || 0, ...history.map(item => _billingChartNumber(item && item.amount)));
+  const budgetTarget = limit || warning || maxY;
+  const budgetPct = Math.max(0, Math.min(100, (total / Math.max(0.01, budgetTarget)) * 100));
+  const budgetClass = limit && total >= limit ? ' over-limit' : warning && total >= warning ? ' over-warning' : '';
+  const title = escapeHtml(chart.title || 'Cloud Spend');
+  const subtitle = escapeHtml(chart.subtitle || '');
+  const notice = chart.notice ? `<div class="billing-chart-notice">${escapeHtml(chart.notice)}</div>` : '';
+  const updated = chart.updated_at ? `<span>Updated ${escapeHtml(_billingChartDateLabel(chart.updated_at) || chart.updated_at)}</span>` : '';
+
+  const statItems = [
+    ['Current', _billingChartMoney(total, chart.total_display)],
+    ['Projected', _billingChartMoney(projected, chart.projected_display)],
+  ];
+  if (limit != null) statItems.push(['Limit', _billingChartMoney(limit, chart.limit_display)]);
+  else if (warning != null) statItems.push(['Warn At', _billingChartMoney(warning, chart.warning_display)]);
+
+  const accountRows = accounts.length
+    ? accounts.map(item => {
+      const amount = _billingChartNumber(item && item.amount);
+      const width = Math.max(2, Math.min(100, (amount / maxAccount) * 100));
+      const label = escapeHtml(item?.label || item?.provider_label || 'Cloud');
+      const provider = item?.provider_label ? `<span>${escapeHtml(item.provider_label)}</span>` : '';
+      const error = item?.ok === false && item?.error ? `<span class="billing-chart-row-error">${escapeHtml(item.error)}</span>` : '';
+      return `
+        <div class="billing-chart-row">
+          <div class="billing-chart-row-top"><span>${label}</span><span>${_billingChartMoney(amount, item?.display)}</span></div>
+          <div class="billing-chart-bar"><span style="width:${width.toFixed(2)}%"></span></div>
+          <div class="billing-chart-row-meta">${provider}${error}</div>
+        </div>
+      `;
+    }).join('')
+    : '<div class="billing-chart-empty">No provider spend is available yet.</div>';
+
+  return `
+    <div class="billing-chart-card">
+      <div class="billing-chart-head">
+        <div>
+          <div class="billing-chart-title">${title}</div>
+          <div class="billing-chart-subtitle">${subtitle}</div>
+        </div>
+        <div class="billing-chart-total">${_billingChartMoney(total, chart.total_display)}</div>
+      </div>
+      <div class="billing-chart-stats">
+        ${statItems.map(([label, value]) => `<div><span>${escapeHtml(label)}</span><strong>${value}</strong></div>`).join('')}
+      </div>
+      <div class="billing-chart-budget${budgetClass}">
+        <div class="billing-chart-budget-track"><span style="width:${budgetPct.toFixed(2)}%"></span></div>
+        <div class="billing-chart-budget-labels"><span>${budgetPct.toFixed(0)}% of ${limit != null ? 'limit' : warning != null ? 'warning' : 'current scale'}</span>${updated}</div>
+      </div>
+      ${_billingChartSvg(history, maxY)}
+      <div class="billing-chart-accounts">${accountRows}</div>
+      ${notice}
+    </div>
+  `;
+}
+
 /**
  * Check if text has unclosed think tag
  */
@@ -375,12 +504,20 @@ export function mdToHtml(src) {
   // CRITICAL: Extract code blocks and replace with placeholders
   const codeBlocks = [];
   const mermaidBlocks = [];
-  s = s.replace(/```(\w+)?\n([\s\S]*?)```/g, (_, lang, code) => {
+  const billingChartBlocks = [];
+  s = s.replace(/```([\w-]+)?\n([\s\S]*?)```/g, (_, lang, code) => {
     const cleaned = code
       .replace(/\r\n/g, '\n')
       .replace(/[ \t]+$/gm, '')
       .replace(/^\s*\n+/, '')
       .replace(/\n+\s*$/g, '');
+
+    if (lang && lang.toLowerCase() === 'billing-chart') {
+      const raw = cleaned.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+      const placeholder = `___BILLING_CHART_BLOCK_${billingChartBlocks.length}___`;
+      billingChartBlocks.push(_billingChartHtml(raw));
+      return placeholder;
+    }
 
     // Mermaid diagrams: render as diagram instead of code block
     if (lang && lang.toLowerCase() === 'mermaid') {
@@ -512,11 +649,11 @@ export function mdToHtml(src) {
     `<blockquote>${m.trim().replace(/<\/?bq>/g, (t) => t === '<bq>' ? '<p>' : '</p>')}</blockquote>`);
 
   // Paragraphs - but NOT for code block placeholders or allowed HTML
-  s = s.replace(/^(?!<h\d|<ul>|<ol>|<li>|<oli>|<pre>|<blockquote>|<bq>|<hr>|___CODE_BLOCK_|___ALLOWED_HTML_|___MATH_BLOCK_|___MERMAID_BLOCK_)([^\n]+)$/gm, '<p>$1</p>');
+  s = s.replace(/^(?!<h\d|<ul>|<ol>|<li>|<oli>|<pre>|<blockquote>|<bq>|<hr>|___CODE_BLOCK_|___ALLOWED_HTML_|___MATH_BLOCK_|___MERMAID_BLOCK_|___BILLING_CHART_BLOCK_)([^\n]+)$/gm, '<p>$1</p>');
 
   // Line breaks within paragraphs
   s = s.replace(/<p>([\s\S]*?)<\/p>/g, (match, content) => {
-    if (content.includes('___CODE_BLOCK_') || content.includes('___ALLOWED_HTML_') || content.includes('___MATH_BLOCK_') || content.includes('___MERMAID_BLOCK_')) return match;
+    if (content.includes('___CODE_BLOCK_') || content.includes('___ALLOWED_HTML_') || content.includes('___MATH_BLOCK_') || content.includes('___MERMAID_BLOCK_') || content.includes('___BILLING_CHART_BLOCK_')) return match;
     const withLineBreaks = content.replace(/\n{2,}/g, '</p><p>').replace(/\n/g, '<br>');
     return `<p>${withLineBreaks}</p>`;
   });
@@ -537,6 +674,10 @@ export function mdToHtml(src) {
   // Restore mermaid diagram blocks
   mermaidBlocks.forEach((block, index) => {
     s = s.replace(`___MERMAID_BLOCK_${index}___`, block);
+  });
+
+  billingChartBlocks.forEach((block, index) => {
+    s = s.replace(`___BILLING_CHART_BLOCK_${index}___`, block);
   });
 
   // CRITICAL: Restore code blocks at the end

@@ -1,8 +1,32 @@
 """Regression tests for task-result delivery into chat sessions (issue #326)."""
 import asyncio
+import sys
 import types as _types
+from unittest.mock import MagicMock
 
 import pytest
+
+for _name in (
+    "sqlalchemy",
+    "sqlalchemy.orm",
+    "sqlalchemy.types",
+    "sqlalchemy.ext",
+    "sqlalchemy.ext.declarative",
+    "sqlalchemy.ext.hybrid",
+    "sqlalchemy.sql",
+    "sqlalchemy.sql.expression",
+    "core.database",
+    "core.models",
+):
+    _mod = sys.modules.get(_name)
+    if isinstance(_mod, MagicMock) or (_name.startswith("core.") and _mod is not None and not getattr(_mod, "__file__", "")):
+        sys.modules.pop(_name, None)
+
+_core_pkg = sys.modules.get("core")
+if _core_pkg is not None:
+    for _child in ("database", "models"):
+        if isinstance(getattr(_core_pkg, _child, None), MagicMock):
+            delattr(_core_pkg, _child)
 
 sqlalchemy = pytest.importorskip("sqlalchemy")
 if not isinstance(sqlalchemy, _types.ModuleType):

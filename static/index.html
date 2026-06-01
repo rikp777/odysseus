@@ -677,6 +677,10 @@
         <span class="sidebar-brand-title">Odysseus</span>
       </div>
     </div>
+    <button type="button" class="billing-spend-pill admin-only hidden" id="billing-spend-pill" title="Cloud month-to-date spend">
+      <span class="billing-spend-provider" id="billing-spend-provider">--</span>
+      <span class="billing-spend-value" id="billing-spend-value">--</span>
+    </button>
     <div class="sidebar-inner">
       <div class="list-item" id="sidebar-new-chat-btn" title="New chat">
         <svg class="sidebar-action-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="position:relative;left:-2px;"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
@@ -2049,6 +2053,7 @@
                   <option value="">Custom URL</option>
                   <option value="https://api.anthropic.com" data-logo="anthropic">Anthropic</option>
                   <option value="https://api.deepseek.com/v1" data-logo="deepseek" selected>DeepSeek</option>
+                  <option value="https://inference.do-ai.run/v1" data-logo="digitalocean">DigitalOcean Inference</option>
                   <option value="https://api.openai.com/v1" data-logo="openai">OpenAI</option>
                   <option value="https://openrouter.ai/api/v1" data-logo="openrouter">OpenRouter</option>
                   <option value="https://ollama.com/api" data-logo="ollama">Ollama Cloud</option>
@@ -2090,6 +2095,54 @@
                 <span>API</span>
               </div>
               <div id="adm-epList-api"></div>
+            </div>
+          </div>
+          <div class="admin-card admin-only cloud-billing-card collapsed" id="cloud-billing-card">
+            <button type="button" class="cloud-billing-toggle" id="set-cloudBillingToggle" aria-expanded="false">
+              <span class="cloud-billing-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7H14.5a3.5 3.5 0 0 1 0 7H6"/></svg>Cloud Spend</span>
+              <span class="cloud-billing-summary" id="set-cloudBillingSummary">Optional</span>
+              <svg class="cloud-billing-caret" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+            </button>
+            <div class="cloud-billing-body" id="set-cloudBillingBody">
+              <div class="admin-toggle-sub" style="margin-bottom:10px">Enable cloud spend tracking, chat cost labels, and model price badges.</div>
+              <div class="settings-col">
+              <div class="settings-row">
+                <label class="settings-label">Enabled</label>
+                <label class="admin-switch" title="Show cloud spend in the sidebar and cost labels in chat"><input type="checkbox" id="set-cloudBillingEnabled"><span class="admin-slider"></span></label>
+              </div>
+              <div class="settings-row">
+                <label class="settings-label">Refresh</label>
+                <select id="set-cloudBillingRefresh" class="settings-select">
+                  <option value="300">5 min</option>
+                  <option value="900">15 min</option>
+                  <option value="1800">30 min</option>
+                  <option value="3600">1 hour</option>
+                </select>
+              </div>
+              <div class="settings-row">
+                <label class="settings-label">Warn At</label>
+                <input id="set-cloudBillingWarning" type="text" inputmode="decimal" class="settings-input" placeholder="Monthly USD amount, optional">
+              </div>
+              <div class="settings-row">
+                <label class="settings-label">Limit At</label>
+                <input id="set-cloudBillingLimit" type="text" inputmode="decimal" class="settings-input" placeholder="Block cloud models at USD amount">
+              </div>
+              <div id="set-cloudBillingAccounts" class="cloud-billing-accounts"></div>
+              <div class="cloud-billing-add-row">
+                <select id="set-cloudBillingAddProvider" class="settings-select" title="Provider">
+                  <option value="digitalocean">DigitalOcean</option>
+                </select>
+                <input id="set-cloudBillingAddLabel" type="text" class="settings-input" placeholder="Label">
+                <input id="set-cloudBillingAddToken" type="password" class="settings-input" placeholder="Provider billing API token">
+                <button type="button" class="admin-btn-sm" id="set-cloudBillingAdd">Add</button>
+              </div>
+              <div class="settings-row" style="margin-top:4px">
+                <button type="button" class="admin-btn-sm" id="set-cloudBillingSave">Save</button>
+                <button type="button" class="admin-btn-sm" id="set-cloudBillingRefreshNow">Refresh</button>
+                <span id="set-cloudBillingMsg" style="font-size:11px"></span>
+              </div>
+              <div id="set-cloudBillingStatus" class="billing-settings-status"></div>
+            </div>
             </div>
           </div>
         </div>

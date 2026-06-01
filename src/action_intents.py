@@ -54,6 +54,12 @@ _TOOL_INTENT_PATTERNS: tuple[Pattern[str], ...] = tuple(
         rf"{_PLEASE}(?:open|show|bring\s+up)\s+(?:me\s+)?(?:my\s+|the\s+)?{_PANEL}\b",
         r"\b(?:disable|enable|turn\s+(?:on|off))\s+(?:the\s+)?(?:shell|search|web|browser|documents?|memory|skills|images?|calendar|email|mail|research|incognito)\b",
 
+        # Billing/spend charts are live account data, so plain chat should
+        # promote to the agent and use the billing tool.
+        r"\b(?:show|draw|create|make|display)\b.{0,80}\b(?:spend|spending|billing|costs?|budget)\b.{0,80}\b(?:graph|chart|plot|breakdown)\b",
+        r"\b(?:spend|spending|billing|costs?|budget)\b.{0,80}\b(?:graph|chart|plot|breakdown)\b",
+        r"\b(?:current|monthly|month-to-date)\b.{0,80}\b(?:spend|spending|billing|costs?)\b",
+
         # Deep research jobs, not quick conceptual mentions of research.
         rf"{_PLEASE}(?:research|deep\s+dive|look\s+into|investigate)\s+.+",
         rf"{_ACTION_QUESTION}(?:research|do\s+research|deep\s+dive|look\s+into|investigate)\s+.+",

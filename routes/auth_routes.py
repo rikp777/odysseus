@@ -385,13 +385,75 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
         prefs. Secrets (search-provider keys, IMAP/SMTP passwords) must NOT
         be exposed to non-admin callers.
         """
-        scrubbed = {}
-        for k, v in (settings or {}).items():
-            if _is_secret_key(k) and isinstance(v, str) and v:
-                scrubbed[k] = ""  # presence preserved, value blanked
-            else:
-                scrubbed[k] = v
+        def scrub_value(key, value):
+            if isinstance(value, dict):
+                return {k: scrub_value(k, v) for k, v in value.items()}
+            if isinstance(value, list):
+                return [scrub_value("", item) for item in value]
+            if _is_secret_key(key) and isinstance(value, str) and value:
+                return ""  # presence preserved, value blanked
+            return value
+
+        return {k: scrub_value(k, v) for k, v in (settings or {}).items()}
+
+    def _scrub_cloud_billing_accounts(accounts) -> list:
+        scrubbed = []
+        for account in accounts if isinstance(accounts, list) else []:
+            if not isinstance(account, dict):
+                continue
+            item = dict(account)
+            token = str(item.get("api_token") or "")
+            item["api_token_set"] = bool(token.strip())
+            item["api_token"] = ""
+            item.pop("api_token_clear", None)
+            scrubbed.append(item)
         return scrubbed
+
+    def _prepare_cloud_billing_accounts(incoming, existing) -> list:
+        from src.secret_storage import encrypt as _encrypt_secret
+        import uuid
+
+        existing_by_id = {
+            str(account.get("id")): account
+            for account in existing
+            if isinstance(account, dict) and account.get("id")
+        } if isinstance(existing, list) else {}
+
+        prepared = []
+        for account in incoming if isinstance(incoming, list) else []:
+            if not isinstance(account, dict):
+                continue
+            account_id = str(account.get("id") or uuid.uuid4().hex[:12]).strip()[:80]
+            provider = str(account.get("provider") or "digitalocean").strip().lower() or "digitalocean"
+            label = str(account.get("label") or "").strip()
+            raw_token = str(account.get("api_token") or "").strip()
+            existing_token = str((existing_by_id.get(account_id) or {}).get("api_token") or "").strip()
+            if raw_token:
+                token = _encrypt_secret(raw_token)
+            elif account.get("api_token_clear"):
+                token = ""
+            else:
+                token = existing_token
+            prepared.append({
+                "id": account_id,
+                "provider": provider,
+                "label": label,
+                "enabled": bool(account.get("enabled", True)),
+                "api_token": token,
+            })
+        return prepared
+
+    def _admin_settings_response(settings: dict) -> dict:
+        """Return admin settings without exposing cloud billing tokens."""
+        response = dict(settings or {})
+        response["cloud_billing_accounts"] = _scrub_cloud_billing_accounts(
+            response.get("cloud_billing_accounts")
+        )
+        response["cloud_billing_api_token_set"] = bool(
+            (response.get("cloud_billing_api_token") or "").strip()
+        )
+        response["cloud_billing_api_token"] = ""
+        return response
 
     @router.get("/settings")
     async def get_settings(request: Request):
@@ -401,7 +463,7 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
         user = _get_current_user(request)
         settings = _load_settings()
         if user and auth_manager.is_admin(user):
-            return settings
+            return _admin_settings_response(settings)
         return _scrub_settings(settings)
 
     @router.post("/settings")
@@ -414,9 +476,12 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
         current = _load_settings()
         for key in DEFAULT_SETTINGS:
             if key in body:
-                current[key] = body[key]
+                if key == "cloud_billing_accounts":
+                    current[key] = _prepare_cloud_billing_accounts(body[key], current.get(key))
+                else:
+                    current[key] = body[key]
         _save_settings(current)
-        return current
+        return _admin_settings_response(current)
 
     # ---- Integrations CRUD ----
 

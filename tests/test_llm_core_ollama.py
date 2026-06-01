@@ -25,6 +25,7 @@ def test_llm_call_posts_native_ollama_payload(monkeypatch):
         )
 
     monkeypatch.setattr(llm_core.httpx, "post", fake_post)
+    monkeypatch.setattr(llm_core, "_cloud_spend_limit_error", lambda url: None)
 
     result = llm_core.llm_call(
         "https://ollama.com/api",

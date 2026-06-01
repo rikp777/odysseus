@@ -25,6 +25,8 @@ import calendarModule from './js/calendar.js';
 import notesModule from './js/notes.js';
 import adminModule from './js/admin.js';
 import settingsModule from './js/settings.js';
+
+import { initBillingSpend } from './js/billing.js';
 // Eagerly bind unified minimize/restore behavior across all tool modals.
 import './js/modalManager.js';
 // Desktop window tiling — drag a modal near an edge/corner to snap.
@@ -50,6 +52,7 @@ window.sessionModule = sessionModule;
 window.uiModule = uiModule;
 window.adminModule = adminModule;
 window.cookbookModule = cookbookModule;
+window.settingsModule = settingsModule;
 
 // Redirect to login on 401 from any fetch
 const _origFetch = window.fetch;
@@ -1080,6 +1083,10 @@ function initializeEventListeners() {
     .then(r => r.json())
     .then(d => {
       window._isAdmin = !!d.is_admin;
+      initBillingSpend({
+        isAdmin: !!d.is_admin,
+        openSettings: (tab) => settingsModule.open(tab || 'services'),
+      });
       if (d.is_admin && userBarAdmin) userBarAdmin.style.display = '';
       const userBarName = el('user-bar-name');
       const userBarAvatar = el('user-bar-avatar');

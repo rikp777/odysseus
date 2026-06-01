@@ -83,6 +83,13 @@ DEFAULT_SETTINGS = {
     # Ordered fallback chain for the Utility model (summarization, naming,
     # tidy actions, etc.).
     "utility_model_fallbacks": [],
+    # Cloud billing status shown in the sidebar. The provider token should be
+    # narrowly scoped for billing reads and is never returned to the frontend.
+    "cloud_billing_enabled": False,
+    "cloud_billing_accounts": [],
+    "cloud_billing_refresh_seconds": 900,
+    "cloud_billing_monthly_warning_usd": "",
+    "cloud_billing_monthly_limit_usd": "",
     "teacher_model": "",
     "teacher_enabled": False,
     # Skills: minimum self-reported confidence for an auto-written (LLM-authored)

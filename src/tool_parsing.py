@@ -10,7 +10,7 @@ import json
 import logging
 from typing import List, Optional
 
-from src.agent_tools import ToolBlock, TOOL_TAGS
+from src.tool_types import ToolBlock, TOOL_TAGS
 
 logger = logging.getLogger(__name__)
 
@@ -165,6 +165,11 @@ _TOOL_NAME_MAP = {
     "manage_settings": "manage_settings",
     "settings": "manage_settings",
     "preferences": "manage_settings",
+    "manage_billing": "manage_billing",
+    "billing": "manage_billing",
+    "spending": "manage_billing",
+    "spend": "manage_billing",
+    "costs": "manage_billing",
     "manage_notes": "manage_notes",
     "notes": "manage_notes",
     "todo": "manage_notes",

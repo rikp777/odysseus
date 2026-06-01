@@ -15,6 +15,10 @@ const _PROVIDERS = [
   [/openrouter|open router/i,
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="12" r="2.5"/><circle cx="19" cy="6" r="2.5"/><circle cx="19" cy="18" r="2.5"/><path d="M7.5 12h4.5c2 0 2.5-6 4.5-6"/><path d="M12 12c2 0 2.5 6 4.5 6"/></svg>'],
 
+  // DigitalOcean Serverless Inference
+  [/digitalocean|do-ai|inference\.do-ai\.run/i,
+    '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12.01 24v-4.64c4.92 0 8.73-4.88 6.84-10.05a7.27 7.27 0 0 0-4.23-4.23C9.45 3.2 4.57 7 4.57 11.93H0C0 4.12 7.56-1.97 15.75.58a11.83 11.83 0 0 1 7.69 7.69C25.98 16.45 19.82 24 12.01 24z"/><path d="M12.03 19.37H7.42v-4.61h4.61v4.61zM7.42 22.91H3.88v-3.54h3.54v3.54zM3.88 19.37H.91v-2.98h2.97v2.98z"/></svg>'],
+
   // Ollama / Ollama Cloud
   [/ollama/i,
     '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M7.4 10.2a4.8 4.8 0 0 1 9.1-1.9 4.1 4.1 0 0 1 1 .1A4.8 4.8 0 0 1 17 18H7.4a3.9 3.9 0 0 1 0-7.8Zm0 2a1.9 1.9 0 0 0 0 3.8H17a2.8 2.8 0 0 0 .2-5.6 2.7 2.7 0 0 0-1.3.2l-.9.4-.4-.9a2.8 2.8 0 0 0-5.4 1.1v1H7.4Z"/></svg>'],

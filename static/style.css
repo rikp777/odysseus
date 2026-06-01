@@ -506,6 +506,369 @@ body.bg-pattern-sparkles {
       display: none;
     }
 
+    .billing-spend-pill {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      min-height: 28px;
+      margin: 8px 10px 4px;
+      padding: 0 10px;
+      border: 1px solid color-mix(in srgb, var(--border) 76%, transparent);
+      border-radius: 7px;
+      background: color-mix(in srgb, var(--fg) 4%, transparent);
+      color: var(--fg);
+      cursor: pointer;
+      font: inherit;
+      flex-shrink: 0;
+      overflow: hidden;
+      transition: background 0.12s, border-color 0.12s, opacity 0.12s;
+    }
+
+    .billing-spend-pill:hover {
+      background: color-mix(in srgb, var(--fg) 7%, transparent);
+      border-color: color-mix(in srgb, var(--accent) 32%, var(--border));
+    }
+
+    .billing-spend-provider {
+      color: var(--accent);
+      font-size: 9px;
+      font-weight: 700;
+      letter-spacing: 0;
+      flex-shrink: 0;
+    }
+
+    .billing-spend-value {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 11px;
+      font-variant-numeric: tabular-nums;
+      opacity: 0.86;
+    }
+
+    .billing-spend-pill.billing-warning {
+      border-color: color-mix(in srgb, var(--accent-error, #e06c75) 42%, var(--border));
+      background: color-mix(in srgb, var(--accent-error, #e06c75) 10%, transparent);
+    }
+
+    .billing-spend-pill.billing-error .billing-spend-value {
+      color: var(--accent-error, #e06c75);
+    }
+
+    .sidebar.hidden .billing-spend-pill {
+      display: none;
+    }
+
+    .cloud-billing-toggle {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      width: 100%;
+      min-height: 30px;
+      margin: 0 0 8px;
+      padding: 0 0 6px;
+      border: 0;
+      border-bottom: 1px solid color-mix(in srgb, var(--border) 40%, transparent);
+      background: transparent;
+      color: var(--fg);
+      cursor: pointer;
+      font: inherit;
+      text-align: left;
+    }
+
+    .cloud-billing-toggle:hover .cloud-billing-title {
+      color: var(--accent);
+    }
+
+    .cloud-billing-title {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      min-width: 0;
+      font-size: 14px;
+      font-weight: 600;
+      letter-spacing: 0;
+    }
+
+    .cloud-billing-title svg {
+      flex-shrink: 0;
+      opacity: 0.6;
+    }
+
+    .cloud-billing-summary {
+      min-width: 0;
+      margin-left: auto;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      color: color-mix(in srgb, var(--fg) 55%, transparent);
+      font-size: 11px;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .cloud-billing-caret {
+      flex-shrink: 0;
+      opacity: 0.55;
+      transition: transform 0.16s ease;
+    }
+
+    .cloud-billing-card.collapsed .cloud-billing-body {
+      display: none;
+    }
+
+    .cloud-billing-card.collapsed .cloud-billing-caret {
+      transform: rotate(-90deg);
+    }
+
+    .cloud-billing-card:not(.billing-configured) .cloud-billing-summary {
+      color: color-mix(in srgb, var(--fg) 42%, transparent);
+    }
+
+    .billing-settings-status {
+      font-size: 11px;
+      color: color-mix(in srgb, var(--fg) 58%, transparent);
+      min-height: 16px;
+    }
+
+    .billing-settings-status.billing-warning {
+      color: var(--accent-error, #e06c75);
+    }
+
+    .cloud-billing-accounts {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .cloud-billing-account {
+      display: grid;
+      grid-template-columns: minmax(108px, 0.9fr) minmax(110px, 1fr) minmax(140px, 1.4fr) auto auto;
+      gap: 6px;
+      align-items: center;
+      padding: 8px;
+      border: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
+      border-radius: 7px;
+      background: color-mix(in srgb, var(--fg) 3%, transparent);
+    }
+
+    .cloud-billing-add-row {
+      display: grid;
+      grid-template-columns: minmax(108px, 0.9fr) minmax(110px, 1fr) minmax(140px, 1.4fr) auto;
+      gap: 6px;
+      align-items: center;
+    }
+
+    .cloud-billing-account-status {
+      grid-column: 1 / -1;
+      font-size: 11px;
+      color: color-mix(in srgb, var(--fg) 58%, transparent);
+      min-height: 14px;
+    }
+
+    .cloud-billing-account-status.billing-warning {
+      color: var(--accent-error, #e06c75);
+    }
+
+    .billing-chart-card {
+      margin: 10px 0;
+      padding: 12px;
+      border: 1px solid color-mix(in srgb, var(--border) 74%, transparent);
+      border-radius: 7px;
+      background: color-mix(in srgb, var(--panel) 86%, var(--bg));
+      color: var(--fg);
+      max-width: min(620px, 100%);
+      box-sizing: border-box;
+    }
+
+    .billing-chart-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 10px;
+    }
+
+    .billing-chart-title {
+      font-size: 13px;
+      font-weight: 650;
+      letter-spacing: 0;
+    }
+
+    .billing-chart-subtitle,
+    .billing-chart-budget-labels,
+    .billing-chart-row-meta {
+      color: color-mix(in srgb, var(--fg) 52%, transparent);
+      font-size: 11px;
+    }
+
+    .billing-chart-total {
+      font-size: 20px;
+      font-weight: 720;
+      line-height: 1;
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+    }
+
+    .billing-chart-stats {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 6px;
+      margin-bottom: 10px;
+    }
+
+    .billing-chart-stats > div {
+      min-width: 0;
+      padding: 7px 8px;
+      border: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+      border-radius: 6px;
+      background: color-mix(in srgb, var(--fg) 3%, transparent);
+    }
+
+    .billing-chart-stats span,
+    .billing-chart-stats strong {
+      display: block;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .billing-chart-stats span {
+      color: color-mix(in srgb, var(--fg) 52%, transparent);
+      font-size: 10px;
+      margin-bottom: 2px;
+    }
+
+    .billing-chart-stats strong {
+      font-size: 12px;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .billing-chart-budget {
+      margin: 2px 0 10px;
+    }
+
+    .billing-chart-budget-track,
+    .billing-chart-bar {
+      position: relative;
+      height: 7px;
+      overflow: hidden;
+      border-radius: 999px;
+      background: color-mix(in srgb, var(--fg) 9%, transparent);
+    }
+
+    .billing-chart-budget-track span,
+    .billing-chart-bar span {
+      position: absolute;
+      inset: 0 auto 0 0;
+      border-radius: inherit;
+      background: color-mix(in srgb, var(--accent-primary, var(--red)) 72%, var(--fg));
+    }
+
+    .billing-chart-budget.over-warning .billing-chart-budget-track span {
+      background: color-mix(in srgb, #d69e2e 76%, var(--fg));
+    }
+
+    .billing-chart-row-error {
+      color: var(--accent-error, #e06c75);
+    }
+
+    .billing-chart-budget.over-limit .billing-chart-budget-track span {
+      background: var(--accent-error, #e06c75);
+    }
+
+    .billing-chart-budget-labels,
+    .billing-chart-axis-labels,
+    .billing-chart-row-top,
+    .billing-chart-row-meta {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    .billing-chart-plot {
+      margin: 8px 0 10px;
+    }
+
+    .billing-chart-plot svg {
+      display: block;
+      width: 100%;
+      height: auto;
+    }
+
+    .billing-chart-axis {
+      stroke: color-mix(in srgb, var(--fg) 18%, transparent);
+      stroke-width: 1;
+    }
+
+    .billing-chart-area {
+      fill: color-mix(in srgb, var(--accent-primary, var(--red)) 18%, transparent);
+    }
+
+    .billing-chart-line {
+      fill: none;
+      stroke: var(--accent-primary, var(--red));
+      stroke-width: 3;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
+    .billing-chart-dot {
+      fill: var(--panel);
+      stroke: var(--accent-primary, var(--red));
+      stroke-width: 2;
+    }
+
+    .billing-chart-axis-labels {
+      color: color-mix(in srgb, var(--fg) 42%, transparent);
+      font-size: 10px;
+      margin-top: -2px;
+    }
+
+    .billing-chart-accounts {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .billing-chart-row-top {
+      font-size: 12px;
+      margin-bottom: 4px;
+    }
+
+    .billing-chart-row-top span:last-child {
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+    }
+
+    .billing-chart-row-meta {
+      margin-top: 3px;
+    }
+
+    .billing-chart-notice,
+    .billing-chart-empty {
+      margin-top: 8px;
+      color: color-mix(in srgb, var(--fg) 55%, transparent);
+      font-size: 11px;
+    }
+
+    @media (max-width: 760px) {
+      .cloud-billing-account,
+      .cloud-billing-add-row {
+        grid-template-columns: 1fr;
+      }
+
+      .billing-chart-stats {
+        grid-template-columns: 1fr;
+      }
+
+      .billing-chart-head {
+        align-items: stretch;
+        flex-direction: column;
+      }
+    }
+
     /* Sticky sidebar header — logo, never scrolls */
     .sidebar-header {
       display: flex;
@@ -2533,6 +2896,13 @@ body.bg-pattern-sparkles {
       user-select: none;
       margin-right: 2px;
     }
+    .billing-costs-hidden .metric-cost-part,
+    .billing-costs-hidden .billing-cost-only,
+    .billing-costs-hidden .model-picker-cost-current,
+    .billing-costs-hidden .model-switch-price,
+    .billing-costs-hidden .session-cost-display {
+      display: none !important;
+    }
     /* Model picker — input bar drop-up */
     .model-picker-wrap {
       position: relative;
@@ -2561,9 +2931,29 @@ body.bg-pattern-sparkles {
       color: var(--fg);
     }
     .model-picker-btn #model-picker-label {
-      max-width: 120px;
+      max-width: 132px;
+      min-width: 0;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
       overflow: hidden;
       text-overflow: ellipsis;
+    }
+    .model-picker-name {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .model-picker-cost-current {
+      display: none;
+      flex-shrink: 0;
+      max-width: 58px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      color: color-mix(in srgb, var(--fg) 58%, transparent);
+      font-size: 10px;
+      font-variant-numeric: tabular-nums;
     }
     .model-picker-btn svg {
       flex-shrink: 0;
@@ -2692,9 +3082,41 @@ body.bg-pattern-sparkles {
       font-size: 0.82em;
       color: var(--fg);
       gap: 6px;
+      min-width: 0;
     }
     .model-picker-list .model-switch-item:hover {
       background: color-mix(in srgb, var(--red) 8%, transparent);
+    }
+    .model-switch-name {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .model-switch-meta {
+      margin-left: auto;
+      min-width: 0;
+      display: inline-flex;
+      flex-direction: column;
+      align-items: flex-end;
+      justify-content: flex-end;
+      gap: 1px;
+      flex-shrink: 0;
+      max-width: 46%;
+      line-height: 1.15;
+    }
+    .model-switch-price,
+    .model-switch-ep {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      color: color-mix(in srgb, var(--fg) 48%, transparent);
+      font-size: 10px;
+      font-variant-numeric: tabular-nums;
+    }
+    .model-switch-price {
+      color: color-mix(in srgb, var(--fg) 62%, transparent);
     }
     .model-picker-list .model-switch-empty {
       display: flex;
@@ -2710,6 +3132,14 @@ body.bg-pattern-sparkles {
       letter-spacing: 0.05em;
       opacity: 0.4;
       padding: 6px 8px 2px;
+    }
+    @container chatbar (min-width: 560px) {
+      .model-picker-btn #model-picker-label {
+        max-width: 190px;
+      }
+      .model-picker-cost-current {
+        display: inline-block;
+      }
     }
     /* Overflow "+" menu */
     .overflow-wrapper {

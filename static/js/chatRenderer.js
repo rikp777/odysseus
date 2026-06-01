@@ -678,6 +678,10 @@ function _billableCost(model, inputTokens, outputTokens) {
   return getModelCost(model, inputTokens, outputTokens);
 }
 
+function _costDisplayEnabled() {
+  return window.__odysseusBillingDisplayEnabled !== false;
+}
+
 export function getImageCost(model, quality, size) {
   if (!model) return null;
   const m = model.toLowerCase();
@@ -719,6 +723,10 @@ export function resetSessionCost(sessionId) {
 export function updateSessionCostUI() {
   const el = document.getElementById('session-cost-display');
   if (!el) return;
+  if (!_costDisplayEnabled()) {
+    el.style.display = 'none';
+    return;
+  }
   // Local model? It's free — hide the badge and clear any stale cost that a
   // previous (buggy) cloud-rate billing left in localStorage for this session.
   const _url = (window.sessionModule && window.sessionModule.getCurrentEndpointUrl)
@@ -742,6 +750,12 @@ export function updateSessionCostUI() {
   } else {
     el.style.display = 'none';
   }
+}
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('odysseus-billing-visibility-changed', () => {
+    updateSessionCostUI();
+  });
 }
 
 /** Create a timestamp span for role labels.
@@ -1188,9 +1202,18 @@ export function buildImageBubble(imageUrl, prompt, model, size, quality, imageId
   if (model) parts.push(model.split('/').pop());
   if (size) parts.push(size);
   if (quality) parts.push(quality);
+  parts.forEach((part, idx) => {
+    if (idx) metrics.appendChild(document.createTextNode(' \u00B7 '));
+    metrics.appendChild(document.createTextNode(part));
+  });
   const cost = getImageCost(model, quality, size);
-  if (cost !== null) parts.push('$' + (cost < 0.01 ? cost.toFixed(4) : cost.toFixed(3)));
-  metrics.textContent = parts.join(' \u00B7 ');
+  if (cost !== null) {
+    if (metrics.childNodes.length) metrics.appendChild(document.createTextNode(' \u00B7 '));
+    const costSpan = document.createElement('span');
+    costSpan.className = 'metric-cost-part';
+    costSpan.textContent = '$' + (cost < 0.01 ? cost.toFixed(4) : cost.toFixed(3));
+    metrics.appendChild(costSpan);
+  }
   footer.appendChild(metrics);
 
   wrap.appendChild(footer);
@@ -1594,7 +1617,7 @@ export function displayMetrics(messageElement, metrics) {
   // Accumulate session cost (only on fresh metrics, not history reload)
   if (!metrics._fromHistory) {
     const _sid = window.sessionModule && window.sessionModule.getCurrentSessionId();
-    if (_sid && cost !== null) {
+    if (_sid && cost !== null && _costDisplayEnabled()) {
       try {
         const _costs = JSON.parse(localStorage.getItem(_COST_KEY) || '{}');
         _costs[_sid] = (_costs[_sid] || 0) + cost;
@@ -1606,17 +1629,24 @@ export function displayMetrics(messageElement, metrics) {
 
   // Default: show tok/s if available, else fall back to other stats
   const costStr0 = cost !== null ? `$${cost < 0.01 ? cost.toFixed(4) : cost.toFixed(3)}` : null;
-  const metricsLabel = tps != null && tps !== 'undefined'
+  const hasSpeed = tps != null && tps !== 'undefined';
+  const baseLabel = hasSpeed
     ? `${tps} tok/s`
-    : costStr0
-      ? `${outputTokens} tok · ${costStr0}`
-      : outputTokens
-        ? `${outputTokens} tok · ${responseTime != null ? responseTime + 's' : ''}`
-        : responseTime != null
-          ? `${responseTime}s`
-          : '';
-  if (!metricsLabel) return;
-  metricsContainer.textContent = metricsLabel;
+    : outputTokens
+      ? `${outputTokens} tok`
+      : responseTime != null
+        ? `${responseTime}s`
+        : '';
+  if (!baseLabel) return;
+  metricsContainer.appendChild(document.createTextNode(baseLabel));
+  if (!hasSpeed && costStr0) {
+    const costSpan = document.createElement('span');
+    costSpan.className = 'metric-cost-part';
+    costSpan.textContent = ` · ${costStr0}`;
+    metricsContainer.appendChild(costSpan);
+  } else if (!hasSpeed && outputTokens && responseTime != null) {
+    metricsContainer.appendChild(document.createTextNode(` · ${responseTime}s`));
+  }
   metricsContainer.style.cursor = 'pointer';
   metricsContainer.title = 'Click for details';
   const metricsDivider = document.createElement('span');
@@ -1642,7 +1672,7 @@ export function displayMetrics(messageElement, metrics) {
     let sessionCostStr = '';
     const sc = getSessionCost();
     if (sc > 0) {
-      sessionCostStr = `<div><span class="ctx-label">Session</span> $${sc < 0.01 ? sc.toFixed(4) : sc.toFixed(3)}</div>`;
+      sessionCostStr = `<div class="billing-cost-only"><span class="ctx-label">Session</span> $${sc < 0.01 ? sc.toFixed(4) : sc.toFixed(3)}</div>`;
     }
 
     const popup = document.createElement('div');
@@ -1657,7 +1687,7 @@ export function displayMetrics(messageElement, metrics) {
       <div><span class="ctx-label">Time</span> ${responseTime}s</div>
       ${prepTime != null ? `<div><span class="ctx-label">Prep</span> ${prepTime}s</div>` : ''}
       ${modelWaitTime != null ? `<div><span class="ctx-label">Model wait</span> ${modelWaitTime}s</div>` : ''}
-      <div><span class="ctx-label">Cost</span> ${costStr}</div>
+      <div class="billing-cost-only"><span class="ctx-label">Cost</span> ${costStr}</div>
       ${sessionCostStr}
       ${prepDetails ? `<div style="margin-top:6px;padding-top:6px;border-top:1px solid var(--border);font-size:0.85em;opacity:0.8;">
         <div style="font-weight:600;margin-bottom:4px;color:var(--fg);">Agent prep</div>

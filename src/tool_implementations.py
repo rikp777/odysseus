@@ -1454,6 +1454,59 @@ async def do_manage_documents(content: str, owner: Optional[str] = None) -> Dict
 # Settings/preferences management tool
 # ---------------------------------------------------------------------------
 
+async def do_manage_billing(content: str, owner: Optional[str] = None) -> Dict:
+    """Read billing status and build chart-ready spending output."""
+    try:
+        args = _parse_tool_args(content)
+    except ValueError:
+        return {"error": "Invalid JSON arguments", "exit_code": 1}
+
+    action = str(args.get("action") or "spending_graph").strip().lower()
+    if action not in {"summary", "status", "spending_graph", "graph"}:
+        return {"error": f"Unsupported billing action: {action}", "exit_code": 1}
+
+    provider = str(args.get("provider") or "").strip() or None
+    refresh = bool(args.get("refresh", False))
+
+    from routes.billing_routes import get_spending_graph_status
+
+    status = get_spending_graph_status(refresh=refresh, forced_provider=provider)
+    chart = status.get("chart") or {}
+    chart_markdown = status.get("markdown") or ""
+
+    if not chart.get("enabled"):
+        response = (
+            "Cloud billing display is disabled. Enable Cloud Spend in Settings before "
+            "asking for a spending graph."
+        )
+    elif not chart.get("configured"):
+        response = (
+            "Cloud billing is not configured yet. Add at least one provider billing token "
+            "in Settings before asking for a spending graph."
+        )
+    elif status.get("amount") is None:
+        response = status.get("error") or "Cloud billing data is unavailable right now."
+    else:
+        response = (
+            f"Here is the cloud spending graph for {chart.get('subtitle', 'this month')}.\n\n"
+            f"{chart_markdown}\n\n"
+            f"Current total: {chart.get('total_display', status.get('display', '--'))}"
+        )
+        if chart.get("limit_display"):
+            response += f" of {chart['limit_display']} limit"
+        if chart.get("projected_display"):
+            response += f"; projected month-end spend is {chart['projected_display']}."
+        else:
+            response += "."
+
+    return {
+        "response": response,
+        "chart": chart,
+        "markdown": chart_markdown,
+        "exit_code": 0,
+    }
+
+
 async def do_manage_settings(content: str, owner: Optional[str] = None) -> Dict:
     """Manage user settings and preferences."""
     try:

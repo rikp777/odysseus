@@ -1360,6 +1360,325 @@ var _SEARCH_PROVIDER_LOGOS = {
   disabled:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><line x1="6" y1="6" x2="18" y2="18"/></svg>',
 };
 
+/* ── Cloud Billing (Services tab) ── */
+async function initCloudBillingSettings() {
+  var enabledToggle = el('set-cloudBillingEnabled');
+  if (!enabledToggle) return;
+
+  var card = el('cloud-billing-card');
+  var toggleBtn = el('set-cloudBillingToggle');
+  var summaryEl = el('set-cloudBillingSummary');
+  var refreshSelect = el('set-cloudBillingRefresh');
+  var warningInput = el('set-cloudBillingWarning');
+  var limitInput = el('set-cloudBillingLimit');
+  var accountsEl = el('set-cloudBillingAccounts');
+  var addProvider = el('set-cloudBillingAddProvider');
+  var addLabel = el('set-cloudBillingAddLabel');
+  var addToken = el('set-cloudBillingAddToken');
+  var addBtn = el('set-cloudBillingAdd');
+  var saveBtn = el('set-cloudBillingSave');
+  var refreshBtn = el('set-cloudBillingRefreshNow');
+  var msg = el('set-cloudBillingMsg');
+  var status = el('set-cloudBillingStatus');
+  var currentSettings = {};
+  var accounts = [];
+  var providerHints = {
+    digitalocean: 'DigitalOcean token with billing:read',
+  };
+  var providerLabels = {
+    digitalocean: 'DigitalOcean',
+  };
+
+  function setCollapsed(collapsed) {
+    if (!card) return;
+    card.classList.toggle('collapsed', !!collapsed);
+    if (toggleBtn) toggleBtn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+  }
+
+  function hasConfiguredAccount() {
+    return accounts.some(function(account) {
+      return !!(account && (account.api_token_set || (account.api_token || '').trim()));
+    });
+  }
+
+  function setDisabled(node, disabled) {
+    if (node) node.disabled = !!disabled;
+  }
+
+  function syncBillingAvailability(statusData) {
+    var configured = statusData && typeof statusData.configured === 'boolean'
+      ? !!statusData.configured
+      : hasConfiguredAccount();
+    if (card) {
+      card.classList.toggle('billing-configured', configured);
+      card.classList.toggle('billing-unconfigured', !configured);
+    }
+
+    setDisabled(enabledToggle, !configured);
+    setDisabled(refreshSelect, !configured);
+    setDisabled(warningInput, !configured);
+    setDisabled(limitInput, !configured);
+    setDisabled(refreshBtn, !configured);
+    if (!configured) enabledToggle.checked = false;
+
+    if (summaryEl) {
+      if (!configured) summaryEl.textContent = 'Optional';
+      else if (statusData && statusData.ok && statusData.display) summaryEl.textContent = statusData.display;
+      else if (statusData && statusData.enabled === false) summaryEl.textContent = 'Configured';
+      else if (statusData && statusData.error) summaryEl.textContent = 'Needs attention';
+      else summaryEl.textContent = 'Configured';
+    }
+  }
+
+  function setMsg(text, isError) {
+    if (!msg) return;
+    msg.textContent = text || '';
+    msg.style.color = isError ? 'var(--red)' : 'var(--fg)';
+  }
+
+  function setStatus(text, isWarning) {
+    if (!status) return;
+    status.textContent = text || '';
+    status.classList.toggle('billing-warning', !!isWarning);
+  }
+
+  function providerOptions(selected) {
+    return Object.keys(providerLabels).map(function(provider) {
+      return '<option value="' + esc(provider) + '"' + (provider === selected ? ' selected' : '') + '>' + esc(providerLabels[provider]) + '</option>';
+    }).join('');
+  }
+
+  function providerHint(provider) {
+    return providerHints[provider] || 'Provider billing API token';
+  }
+
+  function normalizeAccounts(raw) {
+    if (!Array.isArray(raw)) return [];
+    return raw.filter(function(account) { return account && typeof account === 'object'; }).map(function(account, idx) {
+      var provider = account.provider || 'digitalocean';
+      return {
+        id: account.id || ('acct-' + Date.now().toString(36) + '-' + idx),
+        provider: provider,
+        label: account.label || '',
+        enabled: account.enabled !== false,
+        api_token_set: !!account.api_token_set,
+        api_token: account.api_token || '',
+      };
+    });
+  }
+
+  function accountStatusText(result) {
+    if (!result) return '';
+    if (result.ok) return (result.display || '--') + ' this month';
+    return result.error || result.status || '';
+  }
+
+  function renderAccounts(statusData) {
+    if (!accountsEl) return;
+    var results = {};
+    if (statusData && Array.isArray(statusData.accounts)) {
+      statusData.accounts.forEach(function(item) { results[item.account_id] = item; });
+    }
+    if (!accounts.length) {
+      accountsEl.innerHTML = '<div class="admin-empty">No cloud billing accounts yet.</div>';
+      syncBillingAvailability(statusData);
+      return;
+    }
+    accountsEl.innerHTML = accounts.map(function(account) {
+      var result = results[account.id];
+      var resultWarning = result && (!result.ok || result.over_warning || result.over_limit);
+      var tokenPlaceholder = account.api_token_set ? 'Key stored; enter new key to replace' : providerHint(account.provider);
+      return '<div class="cloud-billing-account" data-account-id="' + esc(account.id) + '">' +
+        '<select class="settings-select" data-field="provider">' + providerOptions(account.provider) + '</select>' +
+        '<input class="settings-input" data-field="label" type="text" placeholder="Label" value="' + esc(account.label || '') + '">' +
+        '<input class="settings-input" data-field="api_token" type="password" placeholder="' + esc(tokenPlaceholder) + '">' +
+        '<label class="admin-switch" title="Include this account in the spend total"><input type="checkbox" data-field="enabled" ' + (account.enabled ? 'checked' : '') + '><span class="admin-slider"></span></label>' +
+        '<button type="button" class="admin-btn-sm" data-action="remove">Remove</button>' +
+        '<div class="cloud-billing-account-status' + (resultWarning ? ' billing-warning' : '') + '">' + esc(accountStatusText(result)) + '</div>' +
+      '</div>';
+    }).join('');
+    syncBillingAvailability(statusData);
+  }
+
+  function readAccountsFromDom() {
+    if (!accountsEl) return accounts.slice();
+    var rows = accountsEl.querySelectorAll('.cloud-billing-account');
+    accounts = Array.from(rows).map(function(row) {
+      var provider = row.querySelector('[data-field="provider"]');
+      var label = row.querySelector('[data-field="label"]');
+      var token = row.querySelector('[data-field="api_token"]');
+      var enabled = row.querySelector('[data-field="enabled"]');
+      var prev = accounts.find(function(account) { return account.id === row.dataset.accountId; }) || {};
+      var providerValue = provider ? provider.value : (prev.provider || 'digitalocean');
+      var next = {
+        id: row.dataset.accountId,
+        provider: providerValue,
+        label: label ? label.value.trim() : (prev.label || ''),
+        enabled: enabled ? !!enabled.checked : prev.enabled !== false,
+        api_token_set: !!prev.api_token_set,
+      };
+      if (token && token.value.trim()) next.api_token = token.value.trim();
+      else if (prev.provider && providerValue !== prev.provider) {
+        next.api_token_clear = true;
+        next.api_token_set = false;
+      }
+      return next;
+    });
+    return accounts.slice();
+  }
+
+  function applySettings(settings) {
+    currentSettings = settings || {};
+    enabledToggle.checked = !!currentSettings.cloud_billing_enabled;
+    if (refreshSelect) refreshSelect.value = String(currentSettings.cloud_billing_refresh_seconds || 900);
+    if (warningInput) warningInput.value = currentSettings.cloud_billing_monthly_warning_usd || '';
+    if (limitInput) limitInput.value = currentSettings.cloud_billing_monthly_limit_usd || '';
+    accounts = normalizeAccounts(currentSettings.cloud_billing_accounts);
+    renderAccounts();
+    syncBillingAvailability();
+  }
+
+  async function loadSettings() {
+    try {
+      var res = await fetch('/api/auth/settings', { credentials: 'same-origin' });
+      if (!res.ok) throw new Error('settings unavailable');
+      applySettings(await res.json());
+    } catch (e) {
+      setMsg('Failed to load', true);
+    }
+  }
+
+  async function refreshStatus(force) {
+    if (!hasConfiguredAccount()) {
+      setStatus('Add a provider billing token to enable spend tracking.', false);
+      syncBillingAvailability({ enabled: false, configured: false });
+      return null;
+    }
+    try {
+      var url = '/api/billing/monthly-spend' + (force ? '?refresh=true' : '');
+      var res = await fetch(url, { credentials: 'same-origin' });
+      if (res.status === 403) {
+        setStatus('Admin only', true);
+        return null;
+      }
+      var data = await res.json();
+      if (!data.enabled) {
+        setStatus('Disabled', false);
+      } else if (!data.configured) {
+        setStatus('Add a provider billing token and save.', true);
+      } else if (data.ok) {
+        var parts = ['Current: ' + (data.display || '--') + ' this month'];
+        if (data.provider_label) parts.unshift(data.provider_label);
+        if (data.warning_usd) parts.push('warn at $' + data.warning_usd);
+        if (data.limit_usd) parts.push('limit $' + data.limit_usd);
+        if (data.cached) parts.push('cached');
+        setStatus(parts.join(' · '), !!(data.over_warning || data.over_limit));
+      } else if (data.over_limit) {
+        setStatus(data.error || 'Cloud spend limit reached.', true);
+      } else {
+        setStatus(data.error || 'Cloud billing status unavailable', true);
+      }
+      renderAccounts(data);
+      syncBillingAvailability(data);
+      return data;
+    } catch (e) {
+      setStatus('Cloud billing status unavailable', true);
+      syncBillingAvailability({ enabled: true, configured: hasConfiguredAccount(), error: 'Cloud billing status unavailable' });
+      return null;
+    }
+  }
+
+  function notifyBillingChanged() {
+    try {
+      window.dispatchEvent(new CustomEvent('odysseus-billing-settings-changed'));
+    } catch (_) {}
+  }
+
+  async function saveBilling(options) {
+    options = options || {};
+    var payloadAccounts = readAccountsFromDom();
+    var configured = payloadAccounts.some(function(account) {
+      return !!(account && (account.api_token_set || (account.api_token || '').trim()));
+    });
+    var payload = {
+      cloud_billing_enabled: configured && !!enabledToggle.checked,
+      cloud_billing_accounts: payloadAccounts,
+      cloud_billing_refresh_seconds: parseInt(refreshSelect && refreshSelect.value, 10) || 900,
+      cloud_billing_monthly_warning_usd: (warningInput && warningInput.value || '').trim(),
+      cloud_billing_monthly_limit_usd: (limitInput && limitInput.value || '').trim(),
+    };
+
+    try {
+      setMsg('Saving...', false);
+      var res = await fetch('/api/auth/settings', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) throw new Error('save failed');
+      applySettings(await res.json());
+      setMsg('Saved', false);
+      setTimeout(function() { setMsg('', false); }, 1800);
+      notifyBillingChanged();
+      await refreshStatus(true);
+    } catch (e) {
+      setMsg('Failed to save', true);
+    }
+  }
+
+  if (saveBtn) saveBtn.addEventListener('click', function() { saveBilling(); });
+  if (refreshBtn) refreshBtn.addEventListener('click', async function() {
+    if (!hasConfiguredAccount()) return;
+    setMsg('Refreshing...', false);
+    await refreshStatus(true);
+    notifyBillingChanged();
+    setMsg('', false);
+  });
+  if (addBtn) addBtn.addEventListener('click', function() {
+    accounts = readAccountsFromDom();
+    var provider = (addProvider && addProvider.value) || 'digitalocean';
+    accounts.push({
+      id: 'acct-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 7),
+      provider: provider,
+      label: (addLabel && addLabel.value.trim()) || providerLabels[provider] || provider,
+      enabled: true,
+      api_token: (addToken && addToken.value.trim()) || '',
+      api_token_set: false,
+    });
+    if (addLabel) addLabel.value = '';
+    if (addToken) addToken.value = '';
+    renderAccounts();
+    saveBilling();
+  });
+  if (accountsEl) accountsEl.addEventListener('click', function(e) {
+    var removeBtn = e.target.closest('[data-action="remove"]');
+    if (!removeBtn) return;
+    var row = removeBtn.closest('.cloud-billing-account');
+    if (!row) return;
+    accounts = readAccountsFromDom().filter(function(account) { return account.id !== row.dataset.accountId; });
+    renderAccounts();
+    saveBilling();
+  });
+  enabledToggle.addEventListener('change', function() { saveBilling(); });
+  if (refreshSelect) refreshSelect.addEventListener('change', function() { saveBilling(); });
+  if (warningInput) warningInput.addEventListener('change', function() { saveBilling(); });
+  if (limitInput) limitInput.addEventListener('change', function() { saveBilling(); });
+  if (accountsEl) accountsEl.addEventListener('change', function() {
+    readAccountsFromDom();
+    syncBillingAvailability();
+    setMsg('Unsaved changes', false);
+  });
+  if (toggleBtn) {
+    toggleBtn.addEventListener('click', function() {
+      setCollapsed(!(card && card.classList.contains('collapsed')));
+    });
+  }
+
+  await loadSettings();
+  await refreshStatus(false);
+}
+
 /* ── Deep Research Model (AI tab) ── */
 async function initResearchSettings() {
   var epSel = el('set-researchEndpoint');
@@ -2105,6 +2424,7 @@ function initAll() {
   initTtsSettings();
   initSttSettings();
   initSearchSettings();
+  initCloudBillingSettings();
   initResearchSettings();
   initResearchSearchSettings();
   initAgentSettings();
