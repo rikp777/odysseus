@@ -312,10 +312,25 @@ async def test_manage_billing_tool_returns_chart_response(monkeypatch):
     assert "Current total: $1.25" in result["response"]
 
 
-def test_billing_graph_request_promotes_plain_chat_to_agent():
-    from src.action_intents import message_needs_tools
+def test_billing_graph_request_is_classified_as_billing_intent():
+    from src.action_intents import classify_tool_intent, message_needs_tools
 
+    slash_billing = classify_tool_intent("/billing")
+    spend_graph = classify_tool_intent("show me a spending graph")
+    monthly_spend = classify_tool_intent("what is my current monthly spend?")
+    calendar = classify_tool_intent("show me my calendar")
+
+    assert slash_billing is not None
+    assert slash_billing.kind == "direct_tool"
+    assert slash_billing.tool == "manage_billing"
+    assert slash_billing.args == {"action": "spending_graph", "refresh": True}
     assert message_needs_tools("show me a spending graph")
+    assert spend_graph is not None
+    assert spend_graph.kind == "direct_tool"
+    assert monthly_spend is not None
+    assert monthly_spend.kind == "direct_tool"
+    assert calendar is not None
+    assert calendar.kind == "agent_tool"
 
 
 def test_manage_billing_function_call_converts_to_tool_block():

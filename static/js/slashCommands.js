@@ -1715,6 +1715,57 @@ Uploads:   ${d.uploads || '?'}</pre>`);
   return true;
 }
 
+// ── Billing ──
+
+function _billingProviderArg(args) {
+  const raw = (args || []).join(' ').trim().toLowerCase();
+  if (!raw || raw === 'all' || raw === 'cloud') return '';
+  const compact = raw.replace(/[\s_-]+/g, '');
+  if (compact === 'do' || compact === 'digitalocean') return 'digitalocean';
+  return raw;
+}
+
+function _billingResponseFromStatus(data) {
+  const chart = data?.chart || {};
+  if (!chart.enabled) {
+    return 'Cloud billing display is disabled. Enable Cloud Spend in Settings before asking for a spending graph.';
+  }
+  if (!chart.configured) {
+    return 'Cloud billing is not configured yet. Add at least one provider billing token in Settings before asking for a spending graph.';
+  }
+  if (data?.amount == null) {
+    return data?.error || chart.notice || 'Cloud billing data is unavailable right now.';
+  }
+  let response = `Here is the cloud spending graph for ${chart.subtitle || 'this month'}.\n\n`;
+  response += data.markdown || '';
+  response += `\n\nCurrent total: ${chart.total_display || data.display || '--'}`;
+  if (chart.limit_display) response += ` of ${chart.limit_display} limit`;
+  if (chart.projected_display) response += `; projected month-end spend is ${chart.projected_display}.`;
+  else response += '.';
+  return response;
+}
+
+async function _cmdBilling(args, ctx) {
+  try {
+    const provider = _billingProviderArg(args);
+    let url = `${API_BASE}/api/billing/spending-graph?refresh=true`;
+    if (provider) url += `&provider=${encodeURIComponent(provider)}`;
+    const res = await fetch(url, { credentials: 'same-origin' });
+    if (!res.ok) {
+      if (res.status === 403) slashReply('Only an admin can view cloud billing spend.');
+      else slashReply('Failed to load billing data.');
+      return true;
+    }
+    const data = await res.json();
+    const response = _billingResponseFromStatus(data);
+    _addMessage('assistant', response, 'odysseus-billing', { source: 'slash', model: 'odysseus-billing' });
+    _persistMsg('assistant', response, { source: 'slash', model: 'odysseus-billing' });
+  } catch (e) {
+    slashReply('Billing data is unavailable: ' + ctx.esc(e.message || String(e)));
+  }
+  return true;
+}
+
 // ── Context compaction ──
 
 async function _cmdCompact(args, ctx) {
@@ -5583,6 +5634,13 @@ const COMMANDS = {
     help: 'Database statistics',
     handler: _cmdStats,
     usage: '/stats'
+  },
+  billing: {
+    alias: ['spend', 'costs'],
+    category: 'Utility',
+    help: 'Show cloud billing spend graph',
+    handler: _cmdBilling,
+    usage: '/billing [provider]'
   },
   compact: {
     alias: [],

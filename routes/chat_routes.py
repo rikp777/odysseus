@@ -5,7 +5,7 @@ import json
 import time
 import logging
 from datetime import datetime
-from typing import Dict, Any, AsyncGenerator, List
+from typing import Awaitable, Callable, Dict, Any, AsyncGenerator, List
 
 from fastapi import APIRouter, Request, HTTPException, Form, Query
 from fastapi.responses import StreamingResponse
@@ -35,7 +35,10 @@ from routes.chat_helpers import (
     clean_thinking_for_save,
     _enforce_chat_privileges,
 )
-from src.action_intents import message_needs_tools as _message_needs_tools
+from src.action_intents import (
+    classify_tool_intent as _classify_tool_intent,
+    ToolIntent,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -96,6 +99,46 @@ def _clear_orphaned_session_endpoint(sess) -> bool:
         db.close()
 
 
+async def _run_direct_manage_billing(args: Dict[str, Any], request: Request, owner: str | None = None) -> str:
+    """Return the chart-ready billing response without asking the LLM to choose a tool."""
+    from core.middleware import require_admin
+    from src.tool_implementations import do_manage_billing
+
+    try:
+        require_admin(request)
+    except HTTPException:
+        return "Only an admin can view cloud billing spend."
+    result = await do_manage_billing(
+        json.dumps(args),
+        owner=owner,
+    )
+    if result.get("exit_code", 0) != 0:
+        return str(result.get("error") or "Cloud billing data is unavailable right now.")
+    return str(result.get("response") or "Cloud billing data is unavailable right now.")
+
+
+_DIRECT_TOOL_RUNNERS: Dict[str, Callable[[Dict[str, Any], Request, str | None], Awaitable[str]]] = {
+    "manage_billing": _run_direct_manage_billing,
+}
+
+_DIRECT_TOOL_MODELS: Dict[str, str] = {
+    "manage_billing": "odysseus-billing",
+}
+
+
+async def _direct_tool_response(intent: ToolIntent, request: Request, owner: str | None = None) -> str:
+    if intent.kind != "direct_tool" or not intent.tool:
+        return "This request cannot be handled directly."
+    runner = _DIRECT_TOOL_RUNNERS.get(intent.tool)
+    if not runner:
+        return f"Direct tool '{intent.tool}' is not available."
+    return await runner(dict(intent.args), request, owner)
+
+
+def _direct_tool_model_name(intent: ToolIntent) -> str:
+    return _DIRECT_TOOL_MODELS.get(intent.tool, "odysseus-tool")
+
+
 def setup_chat_routes(
     session_manager,
     chat_handler,
@@ -154,29 +197,34 @@ def setup_chat_routes(
             webhook_manager=webhook_manager,
         )
 
-        # Research injection
-        if use_research:
-            try:
-                _r_ep, _r_model, _r_headers = _resolve_research_endpoint(sess)
-                research_ctx = await research_handler.call_research_service(
-                    message, _r_ep, _r_model, llm_headers=_r_headers
-                )
-                ctx.messages.insert(
-                    len(ctx.preface),
-                    untrusted_context_message("research context", research_ctx),
-                )
-            except Exception as e:
-                logger.error(f"Research failed: {e}")
+        tool_intent = _classify_tool_intent(message or "")
 
-        reply = await llm_call_async(
-            sess.endpoint_url,
-            sess.model,
-            ctx.messages,
-            headers=sess.headers,
-            temperature=ctx.preset.temperature,
-            max_tokens=ctx.preset.max_tokens,
-            prompt_type=preset_id,
-        )
+        if tool_intent and tool_intent.kind == "direct_tool" and not use_research:
+            reply = await _direct_tool_response(tool_intent, request, owner=ctx.user)
+        else:
+            # Research injection
+            if use_research:
+                try:
+                    _r_ep, _r_model, _r_headers = _resolve_research_endpoint(sess)
+                    research_ctx = await research_handler.call_research_service(
+                        message, _r_ep, _r_model, llm_headers=_r_headers
+                    )
+                    ctx.messages.insert(
+                        len(ctx.preface),
+                        untrusted_context_message("research context", research_ctx),
+                    )
+                except Exception as e:
+                    logger.error(f"Research failed: {e}")
+
+            reply = await llm_call_async(
+                sess.endpoint_url,
+                sess.model,
+                ctx.messages,
+                headers=sess.headers,
+                temperature=ctx.preset.temperature,
+                max_tokens=ctx.preset.max_tokens,
+                prompt_type=preset_id,
+            )
         _clean_reply, _clean_md = clean_thinking_for_save(reply, {"model": sess.model})
         sess.add_message(ChatMessage("assistant", _clean_reply, metadata=_clean_md))
 
@@ -237,19 +285,24 @@ def setup_chat_routes(
         compare_mode = str(form_data.get("compare_mode", "")).lower() == "true"
         incognito = str(form_data.get("incognito", "")).lower() == "true"
         chat_mode = str(form_data.get("mode", "")).lower()  # 'chat' or 'agent'
+        tool_intent = _classify_tool_intent(message) if isinstance(message, str) else None
+        direct_tool_intent = tool_intent if tool_intent and tool_intent.kind == "direct_tool" else None
         # Did the USER explicitly pick agent mode? (vs. us auto-escalating
         # below). Skill extraction should only learn from real agent sessions,
         # not chats we quietly promoted for a notes/calendar intent.
         user_requested_agent = (chat_mode == "agent")
-        # Intent auto-escalation: if the user is clearly asking the assistant
-        # to create a todo, reminder, or calendar event, promote chat → agent
-        # for this turn so the LLM has access to manage_notes / manage_calendar.
-        # This is a LIGHT promotion — see the disabled_tools block below, which
-        # withholds shell/code/file tools so the model doesn't try to `bash`
-        # its way through a plain chat request (and fail, especially with the
-        # shell disabled).
+        # Intent routing has two paths:
+        #   1. direct_tool: deterministic app data/actions that should not rely
+        #      on model tool-choice. These run later in this request, bypassing
+        #      the LLM agent loop but still stream/save like a normal reply.
+        #   2. agent_tool: actions that benefit from model planning. These
+        #      promote chat → agent for this turn so manager tools are available.
+        #
+        # Skill extraction should only learn from real agent sessions, not from
+        # these quiet one-turn promotions, so user_requested_agent is captured
+        # before this block.
         auto_escalated = False
-        if chat_mode == "chat" and isinstance(message, str) and _message_needs_tools(message):
+        if chat_mode == "chat" and isinstance(message, str) and tool_intent and tool_intent.kind == "agent_tool":
             chat_mode = "agent"
             auto_escalated = True
             logger.info("chat→agent auto-escalation: message matched tool-intent pattern")
@@ -428,10 +481,11 @@ def setup_chat_routes(
             disabled_tools.update(_global_disabled)
 
         # Light auto-escalation: the user is in chat mode and just expressed a
-        # notes/calendar/email intent. Grant the relevant managers but withhold
-        # the heavy "do things on the computer" tools — otherwise the model
-        # tries to shell out for a request that never needed it, then fails
-        # (and looks broken when the shell is disabled).
+        # manager-tool intent such as notes/calendar/email/settings. Grant those
+        # managers, but withhold high-risk "do things on the computer" tools
+        # unless their explicit UI toggles allow them. Otherwise the model may
+        # try to shell/file/browser its way through a plain app request, fail
+        # when those toggles are off, and make a simple chat action look broken.
         if auto_escalated:
             disabled_tools.update({
                 "bash", "python", "read_file", "write_file", "builtin_browser",
@@ -631,6 +685,41 @@ def setup_chat_routes(
             if ctx.preset.character_name:
                 _model_info["character_name"] = ctx.preset.character_name
             yield f'data: {json.dumps(_model_info)}\n\n'
+
+            # Direct tools are for deterministic app data/actions, not model
+            # reasoning. They avoid extra LLM spend and avoid the model choosing
+            # the wrong tool, while preserving the normal streaming, metrics,
+            # and session-save behavior expected by the frontend.
+            if direct_tool_intent and not do_research and not compare_mode:
+                _direct_start = time.time()
+                full_response = await _direct_tool_response(direct_tool_intent, request, owner=_user)
+                direct_model = _direct_tool_model_name(direct_tool_intent)
+                last_metrics = {
+                    "response_time": round(time.time() - _direct_start, 2),
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                    "tokens_per_second": 0,
+                    "model": direct_model,
+                    "usage_source": "local_tool",
+                }
+                _stream_set(session, partial=full_response)
+                yield f'data: {json.dumps({"delta": full_response})}\n\n'
+                _saved_id = save_assistant_response(
+                    sess, session_manager, session, full_response, last_metrics,
+                    character_name=ctx.preset.character_name,
+                    web_sources=web_sources,
+                    rag_sources=ctx.rag_sources,
+                    research_sources=research_sources,
+                    used_memories=ctx.used_memories,
+                    incognito=incognito,
+                )
+                if _saved_id:
+                    yield f'data: {json.dumps({"type": "message_saved", "id": _saved_id})}\n\n'
+                yield f'data: {json.dumps({"type": "metrics", "data": last_metrics})}\n\n'
+                _stream_set(session, status="done")
+                yield "data: [DONE]\n\n"
+                _active_streams.pop(session, None)
+                return
 
             # Detect image models and route directly to image generation
             _IMAGE_MODEL_PREFIXES = ("gpt-image", "dall-e", "chatgpt-image")

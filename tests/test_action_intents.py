@@ -1,4 +1,4 @@
-from src.action_intents import message_needs_tools
+from src.action_intents import classify_tool_intent, message_needs_tools
 
 
 def test_calendar_entry_request_promotes_to_agent():
@@ -27,6 +27,22 @@ def test_email_and_ui_actions_promote_to_agent():
 def test_research_action_promotes_to_agent():
     assert message_needs_tools("research cost effective local models")
     assert message_needs_tools("can you look into GPU hosting options")
+
+
+def test_tool_intent_classifier_returns_specific_intent():
+    billing = classify_tool_intent("show me a spending graph")
+    slash_billing = classify_tool_intent("/billing")
+    calendar = classify_tool_intent("add lunch with Sam to my calendar tomorrow at noon")
+
+    assert billing is not None
+    assert billing.kind == "direct_tool"
+    assert billing.tool == "manage_billing"
+    assert billing.args == {"action": "spending_graph", "refresh": True}
+    assert slash_billing is not None
+    assert slash_billing.kind == "direct_tool"
+    assert calendar is not None
+    assert calendar.kind == "agent_tool"
+    assert classify_tool_intent("How do I add an entry to my calendar?") is None
 
 
 def test_explanatory_calendar_questions_stay_plain_chat():
