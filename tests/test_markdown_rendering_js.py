@@ -20,7 +20,7 @@ def node_available():
 
 def _run_markdown_case(markdown: str) -> str:
     script = textwrap.dedent(
-        """
+        r"""
         import fs from 'node:fs';
 
         globalThis.window = { location: { origin: 'http://localhost' }, katex: null };
@@ -32,15 +32,18 @@ def _run_markdown_case(markdown: str) -> str:
 
         let source = fs.readFileSync('./static/js/markdown.js', 'utf8');
         source = source.replace(
-          /import uiModule from '\\.\\/ui\\.js';\\r?\\nimport \\{ splitTableRow \\} from '\\.\\/markdown\\/tableRow\\.js';\\r?\\n\\r?\\nvar escapeHtml = uiModule\\.esc;/,
+          /import uiModule from ['"]\.\/ui\.js['"];/,
+          ''
+        );
+        source = source.replace(
+          /import \{ splitTableRow \} from ['"]\.\/markdown\/tableRow\.js['"];/,
           `function splitTableRow(row) {
-              return (row || '')
-                .replace(/^\\s*\\|/, '')
-                .replace(/\\|\\s*$/, '')
-                .split('|')
-                .map((cell) => cell.trim());
-            }
-            var escapeHtml = (value) => String(value ?? '')
+            return (row || '').replace(/^\\s*\\|/, '').replace(/\\|\\s*$/, '').split('|').map(c => c.trim());
+          }`
+        );
+        source = source.replace(
+          /var escapeHtml = uiModule\.esc;/,
+          `var escapeHtml = (value) => String(value ?? '')
             .replace(/&/g, '&amp;')
             .replace(/</g, '&lt;')
             .replace(/>/g, '&gt;')
@@ -138,3 +141,12 @@ def test_billing_chart_renders_usage_breakdown(node_available):
     assert "42 tokens" in html
     assert "2 calls" in html
     assert "1 unpriced" in html
+
+
+def test_table_separator_row_not_rendered_as_data(node_available):
+    html = _run_markdown_case("| A | B |\n|---|---|\n| 1 | 2 |")
+
+    assert html.count("<tr>") == 2
+    assert "<th" in html
+    assert "<td" in html
+    assert "---" not in html
