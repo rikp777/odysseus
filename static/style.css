@@ -58,6 +58,11 @@
   --color-save-green: var(--color-success);
   --color-link-hover: #66c7ff;
   --color-subheader: #6b8a94;
+  --select-bg: var(--bg);
+  --select-fg: var(--fg);
+  --select-option-bg: color-mix(in srgb, var(--panel) 74%, var(--bg));
+  --select-option-fg: var(--fg);
+  --select-option-active-bg: color-mix(in srgb, var(--accent, var(--red)) 24%, var(--panel));
   /* Warm accent — used by the Goals/Today UI in Notes. Lives as a token so
      themes can override without touching the goal CSS. */
   --accent-warm: #d19a66;
@@ -78,6 +83,11 @@
   --hl-builtin: #0070a0;
   --hl-variable: #383a42;
   --hl-params: #4a4f5c;
+  --select-bg: #eaeaea;
+  --select-fg: var(--fg);
+  --select-option-bg: var(--panel);
+  --select-option-fg: var(--fg);
+  --select-option-active-bg: color-mix(in srgb, var(--red) 16%, var(--panel));
 }
 
 /* ── Reset & Base ── */
@@ -1191,7 +1201,7 @@ body.bg-pattern-sparkles {
     #tile-ghost.visible { opacity: 1; transform: scale(1); }
     /* Bottom dock — chip per minimized modal */
     #minimized-dock {
-      position: fixed; bottom: 12px; left: 50%; transform: translateX(-50%);
+      position: fixed; bottom: var(--composer-clearance, 12px); left: 50%; transform: translateX(-50%);
       display: flex; gap: 6px; flex-wrap: wrap;
       max-width: calc(100vw - 24px);
       padding: 4px;
@@ -2086,7 +2096,22 @@ body.bg-pattern-sparkles {
     textarea { width:100%; min-height:32px; height:auto; max-height:30lh; overflow-y:auto; resize:none; }
     button { height:32px; padding:0 10px; }
     #chat-form button[type="submit"] { height:38px; }
-    select { height:32px; color-scheme: dark; }
+    select {
+      height:32px;
+      color-scheme: dark;
+      background-color: var(--select-bg);
+      color: var(--select-fg);
+    }
+    select option,
+    select optgroup {
+      background-color: var(--select-option-bg);
+      color: var(--select-option-fg);
+    }
+    select option:checked {
+      background-color: var(--select-option-active-bg);
+      color: var(--select-option-fg);
+    }
+    :root.light select { color-scheme: light; }
     .chat-container {
       flex:1;
       display:flex;
@@ -2530,12 +2555,12 @@ body.bg-pattern-sparkles {
       background: transparent;
       border: none;
       outline: none;
-      resize: none;
+      resize: vertical;
       font-size: 14px;
       line-height: 1.5;
       color: var(--fg);
       min-height: 24px;
-      max-height: 200px;
+      max-height: min(60vh, 600px);
       padding: 0;
       font-family: inherit;
       transition: height 0.12s ease-out;
@@ -5306,7 +5331,7 @@ body.bg-pattern-sparkles {
     /* Bottom dock for minimized modals */
     #modal-dock {
       position:fixed;
-      bottom:0;
+      bottom:var(--composer-clearance, 0px);
       left:0;
       right:0;
       display:flex;
@@ -14982,6 +15007,7 @@ body:has(.doc-version-panel:not(.hidden)) .hamburger-btn {
     z-index: 260 !important;
     margin-top: 0 !important;
     transform: none !important;
+    border-left: none !important;
   }
 }
 
@@ -15278,6 +15304,7 @@ body.left-dock-active {
 /* Cookbook's cached-model list should scale with viewport height, not be capped at 400px */
 .hwfit-cached-list {
   max-height: min(75vh, 900px) !important;
+  overflow-y: auto;
 }
 /* Drag-and-drop visual hint for the email compose pane. Subtle accent
    outline + tinted overlay so it's obvious files will attach if dropped. */
@@ -33534,7 +33561,7 @@ button.cal-view-btn {
   line-height: 11px;
   padding: 0 4px;
   border-radius: 3px;
-  color: #fff;
+  color: var(--cal-event-fg, #fff);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -33760,7 +33787,7 @@ button.cal-view-btn {
   font-weight: 500;
   padding: 2px 5px;
   border-radius: 3px;
-  color: var(--fg);
+  color: var(--cal-event-fg, var(--fg));
   cursor: pointer;
   white-space: nowrap;
   overflow: hidden;
