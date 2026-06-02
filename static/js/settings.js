@@ -1508,10 +1508,33 @@ async function initCloudBillingSettings() {
     });
   }
 
-  function accountStatusText(result) {
-    if (!result) return '';
+  function accountStatusState(account, result) {
+    if (account && account.enabled === false) return { label: 'Disabled', tone: 'muted' };
+    if (account && !account.api_token_set && !(account.api_token || '').trim()) {
+      return { label: 'Token missing', tone: 'warning' };
+    }
+    if (result) {
+      if (result.over_limit) return { label: 'Over limit', tone: 'danger' };
+      if (result.over_warning) return { label: 'Warning', tone: 'warning' };
+      if (result.ok) return { label: 'Connected', tone: 'ok' };
+      if (result.status === 'missing_token') return { label: 'Token missing', tone: 'warning' };
+      if (result.status === 'unsupported_provider') return { label: 'Unsupported', tone: 'danger' };
+      return { label: 'Attention', tone: 'danger' };
+    }
+    return account && account.api_token_set
+      ? { label: 'Saved', tone: 'muted' }
+      : { label: 'Unsaved', tone: 'muted' };
+  }
+
+  function accountStatusText(account, result) {
+    if (account && account.enabled === false) return 'Excluded from spend total.';
+    if (!result) {
+      return account && account.api_token_set
+        ? 'Saved token; refresh to check spend.'
+        : 'Add a billing token, then save.';
+    }
     if (result.ok) return (result.display || '--') + ' this month';
-    return result.error || result.status || '';
+    return result.error || result.status || 'Could not refresh billing.';
   }
 
   function renderAccounts(statusData) {
@@ -1527,7 +1550,8 @@ async function initCloudBillingSettings() {
     }
     accountsEl.innerHTML = accounts.map(function(account) {
       var result = results[account.id];
-      var resultWarning = result && (!result.ok || result.over_warning || result.over_limit);
+      var state = accountStatusState(account, result);
+      var resultWarning = state.tone === 'warning' || state.tone === 'danger';
       var tokenPlaceholder = account.api_token_set ? 'Key stored; enter new key to replace' : providerHint(account.provider);
       return '<div class="cloud-billing-account" data-account-id="' + esc(account.id) + '">' +
         '<select class="settings-select" data-field="provider">' + providerOptions(account.provider) + '</select>' +
@@ -1535,7 +1559,10 @@ async function initCloudBillingSettings() {
         '<input class="settings-input" data-field="api_token" type="password" placeholder="' + esc(tokenPlaceholder) + '">' +
         '<label class="admin-switch" title="Include this account in the spend total"><input type="checkbox" data-field="enabled" ' + (account.enabled ? 'checked' : '') + '><span class="admin-slider"></span></label>' +
         '<button type="button" class="admin-btn-sm" data-action="remove">Remove</button>' +
-        '<div class="cloud-billing-account-status' + (resultWarning ? ' billing-warning' : '') + '">' + esc(accountStatusText(result)) + '</div>' +
+        '<div class="cloud-billing-account-status' + (resultWarning ? ' billing-warning' : '') + '">' +
+          '<span class="cloud-billing-account-badge billing-account-' + state.tone + '">' + esc(state.label) + '</span>' +
+          '<span class="cloud-billing-account-status-text">' + esc(accountStatusText(account, result)) + '</span>' +
+        '</div>' +
       '</div>';
     }).join('');
     syncBillingAvailability(statusData);

@@ -123,8 +123,26 @@ def _chart_usage_payload(local_usage: Any) -> Dict[str, Any]:
         "projected": local_usage.get("projected"),
         "projected_display": local_usage.get("projected_display") or "",
         "source": "local_model_usage_ledger",
+        "source_kind": "usage_ledger",
+        "source_label": "Usage ledger",
     })
     return usage
+
+
+def _chart_source_note(status: Dict[str, Any], usage: Dict[str, Any]) -> str:
+    provider_accounts = status.get("accounts", [])
+    has_provider_billing = any(
+        isinstance(item, dict) and item.get("amount") is not None
+        for item in provider_accounts
+    )
+    has_usage_estimates = bool(usage)
+    if has_provider_billing and has_usage_estimates:
+        return "Provider billing totals with usage ledger estimates"
+    if has_usage_estimates:
+        return "Usage ledger estimates"
+    if has_provider_billing:
+        return "Provider billing totals"
+    return ""
 
 
 def _local_usage_payload(period: str = "month") -> Dict[str, Any]:
@@ -330,6 +348,8 @@ def _chart_accounts(status: Dict[str, Any]) -> list[Dict[str, Any]]:
                     "status": _usage_status(usage),
                     "error": "",
                     "usage": usage,
+                    "source_kind": "usage_ledger",
+                    "source_label": "Usage estimate",
                 })
         elif group_by == "provider":
             for item in local_usage.get("providers", []):
@@ -346,6 +366,8 @@ def _chart_accounts(status: Dict[str, Any]) -> list[Dict[str, Any]]:
                     "status": _usage_status(usage),
                     "error": "",
                     "usage": usage,
+                    "source_kind": "usage_ledger",
+                    "source_label": "Usage estimate",
                 })
         elif local_usage.get("events") or not status.get("accounts"):
             amount = _decimal_or_none(local_usage.get("amount")) or Decimal("0")
@@ -361,6 +383,8 @@ def _chart_accounts(status: Dict[str, Any]) -> list[Dict[str, Any]]:
                 "status": _usage_status(usage),
                 "error": "",
                 "usage": usage,
+                "source_kind": "usage_ledger",
+                "source_label": "Usage estimate",
             })
     for item in status.get("accounts", []):
         if not isinstance(item, dict):
@@ -381,6 +405,8 @@ def _chart_accounts(status: Dict[str, Any]) -> list[Dict[str, Any]]:
             "status": item.get("status") or "",
             "error": item.get("error") or "",
             "usage": usage,
+            "source_kind": "provider_billing",
+            "source_label": "Provider billing",
         })
 
     if not accounts and status.get("amount") is not None:
@@ -395,6 +421,8 @@ def _chart_accounts(status: Dict[str, Any]) -> list[Dict[str, Any]]:
             "ok": bool(status.get("ok", False)),
             "status": status.get("status") or "",
             "error": status.get("error") or "",
+            "source_kind": "provider_billing",
+            "source_label": "Provider billing",
         })
     return accounts
 
@@ -419,6 +447,7 @@ def build_spending_graph_payload(
     projected = (amount / Decimal(elapsed_days)) * Decimal(days_in_month) if period == "month" and amount > 0 else amount
     history = _history_for_current_month(scope=_billing_scope(forced_provider), now=current)
     group_by = str(status.get("group_by") or "provider").lower()
+    usage_payload = _chart_usage_payload(local_usage)
     title = "Model Spend" if status.get("provider") == "local_usage" else "Cloud Spend"
     if group_by == "model":
         title += " by Model"
@@ -454,7 +483,8 @@ def build_spending_graph_payload(
         "period": period,
         "group_by": group_by,
         "local_usage": local_usage or {},
-        "usage": _chart_usage_payload(local_usage),
+        "usage": usage_payload,
+        "source_note": _chart_source_note(status, usage_payload),
         "accounts": _chart_accounts(status),
         "history": history,
         "notice": status.get("error") or "",

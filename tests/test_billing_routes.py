@@ -298,7 +298,9 @@ def test_cloud_spending_graph_returns_chart_and_records_history(monkeypatch, tmp
     assert result["chart"]["kind"] == "billing-spend"
     assert result["chart"]["total_display"] == "$3.75"
     assert result["chart"]["limit_display"] == "$5.00"
+    assert result["chart"]["source_note"] == "Provider billing totals"
     assert [item["label"] for item in result["chart"]["accounts"]] == ["DigitalOcean", "Example"]
+    assert [item["source_label"] for item in result["chart"]["accounts"]] == ["Provider billing", "Provider billing"]
     assert result["markdown"].startswith("```billing-chart\n")
     history_text = (tmp_path / "billing_history.json").read_text(encoding="utf-8")
     assert "do-token" not in history_text
@@ -365,10 +367,13 @@ def test_spending_graph_model_group_includes_usage_breakdown(monkeypatch):
 
     chart = result["chart"]
     assert chart["title"] == "Model Spend by Model"
+    assert chart["source_note"] == "Usage ledger estimates"
+    assert chart["usage"]["source_label"] == "Usage ledger"
     assert chart["usage"]["events"] == 3
     assert chart["usage"]["total_tokens"] == 1500
     assert chart["usage"]["unknown_cost_events"] == 1
     assert chart["accounts"][0]["label"] == "gpt-4o"
+    assert chart["accounts"][0]["source_label"] == "Usage estimate"
     assert chart["accounts"][0]["usage"]["input_tokens"] == 1000
     assert chart["accounts"][0]["usage"]["output_tokens"] == 250
     assert chart["accounts"][1]["usage"]["unknown_cost_events"] == 1

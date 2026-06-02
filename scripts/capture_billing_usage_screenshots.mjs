@@ -119,7 +119,10 @@ function buildCharts(balance) {
       amount: localLedgerAmount,
       amount_display: money(localLedgerAmount),
       source: 'local_model_usage_ledger',
+      source_kind: 'usage_ledger',
+      source_label: 'Usage ledger',
     },
+    source_note: 'Provider billing totals with usage ledger estimates',
     history: [
       { timestamp: '2026-06-01T08:00:00Z', amount: total * 0.22, display: money(total * 0.22) },
       { timestamp: '2026-06-08T08:00:00Z', amount: total * 0.48, display: money(total * 0.48) },
@@ -145,6 +148,8 @@ function buildCharts(balance) {
         display: '$1.48',
         ok: true,
         usage: usage(11, 960000, 141000, 10),
+        source_kind: 'usage_ledger',
+        source_label: 'Usage estimate',
       },
       {
         id: 'claude-3-5-sonnet',
@@ -156,6 +161,8 @@ function buildCharts(balance) {
         display: '$0.74',
         ok: true,
         usage: usage(7, 520000, 71000, 5),
+        source_kind: 'usage_ledger',
+        source_label: 'Usage estimate',
       },
       {
         id: 'digitalocean-main',
@@ -168,6 +175,8 @@ function buildCharts(balance) {
         ok: true,
         status: 'ok',
         usage: providerUsage,
+        source_kind: 'provider_billing',
+        source_label: 'Provider billing',
       },
     ],
   };
@@ -188,6 +197,8 @@ function buildCharts(balance) {
         display: money(localLedgerAmount),
         ok: true,
         usage: providerUsage,
+        source_kind: 'usage_ledger',
+        source_label: 'Usage estimate',
       },
       {
         id: 'digitalocean-main',
@@ -200,6 +211,8 @@ function buildCharts(balance) {
         ok: true,
         status: 'ok',
         usage: {},
+        source_kind: 'provider_billing',
+        source_label: 'Provider billing',
       },
     ],
   };
@@ -402,6 +415,35 @@ function fillBillingPill() {
   pill.title = 'DigitalOcean month-to-date spend: ' + (data.billingStatus.display || charts.model.total_display);
 }
 
+function accountStatusState(account, result) {
+  if (account && account.enabled === false) return { label: 'Disabled', tone: 'muted' };
+  if (account && !account.api_token_set && !(account.api_token || '').trim()) {
+    return { label: 'Token missing', tone: 'warning' };
+  }
+  if (result) {
+    if (result.over_limit) return { label: 'Over limit', tone: 'danger' };
+    if (result.over_warning) return { label: 'Warning', tone: 'warning' };
+    if (result.ok) return { label: 'Connected', tone: 'ok' };
+    if (result.status === 'missing_token') return { label: 'Token missing', tone: 'warning' };
+    if (result.status === 'unsupported_provider') return { label: 'Unsupported', tone: 'danger' };
+    return { label: 'Attention', tone: 'danger' };
+  }
+  return account && account.api_token_set
+    ? { label: 'Saved', tone: 'muted' }
+    : { label: 'Unsaved', tone: 'muted' };
+}
+
+function accountStatusText(account, result) {
+  if (account && account.enabled === false) return 'Excluded from spend total.';
+  if (!result) {
+    return account && account.api_token_set
+      ? 'Saved token; refresh to check spend.'
+      : 'Add a billing token, then save.';
+  }
+  if (result.ok) return (result.display || '--') + ' this month';
+  return result.error || result.status || 'Could not refresh billing.';
+}
+
 function prepareSidebar() {
   document.documentElement.style.setProperty('--icon-rail-w', '0px');
   document.documentElement.style.setProperty('--sidebar-w', '240px');
@@ -472,14 +514,24 @@ function fillSettingsCard() {
   if (accounts) {
     const results = new Map((status.accounts || []).map((item) => [item.account_id, item]));
     accounts.innerHTML = settings.cloud_billing_accounts.map((account) => (
+      (() => {
+        const result = results.get(account.id);
+        const state = accountStatusState(account, result);
+        const warning = state.tone === 'warning' || state.tone === 'danger';
+        return (
       '<div class="cloud-billing-account" data-account-id="' + esc(account.id) + '">' +
         '<select class="settings-select" data-field="provider"><option value="digitalocean" selected>DigitalOcean</option></select>' +
         '<input class="settings-input" data-field="label" type="text" placeholder="Label" value="' + esc(account.label || '') + '">' +
         '<input class="settings-input" data-field="api_token" type="password" placeholder="Key stored; enter new key to replace">' +
         '<label class="admin-switch" title="Include this account in the spend total"><input type="checkbox" data-field="enabled" checked><span class="admin-slider"></span></label>' +
         '<button type="button" class="admin-btn-sm" data-action="remove">Remove</button>' +
-        '<div class="cloud-billing-account-status">' + esc((results.get(account.id) || {}).display || '--') + ' this month</div>' +
+        '<div class="cloud-billing-account-status' + (warning ? ' billing-warning' : '') + '">' +
+          '<span class="cloud-billing-account-badge billing-account-' + state.tone + '">' + esc(state.label) + '</span>' +
+          '<span class="cloud-billing-account-status-text">' + esc(accountStatusText(account, result)) + '</span>' +
+        '</div>' +
       '</div>'
+        );
+      })()
     )).join('');
   }
 
@@ -538,8 +590,7 @@ function renderChat() {
   addMessage(
     'assistant',
     'Here is the spending graph with model usage for this month.\\n\\n' +
-      chartBlock(charts.chat) +
-      '\\n\\nCurrent total: ' + charts.chat.total_display + ' of $35.00 monthly limit.',
+      chartBlock(charts.chat),
     'Odysseus',
     { source: 'slash', timestamp: '2026-06-02T15:21:00Z' },
   );

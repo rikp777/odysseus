@@ -70,6 +70,31 @@ function _billingChartUsageMeta(usage) {
   return parts.join(' | ');
 }
 
+function _billingChartSourceKind(item) {
+  if (!item || typeof item !== 'object') return '';
+  const explicit = String(item.source_kind || '').toLowerCase();
+  if (explicit) return explicit;
+  const provider = String(item.provider || '').toLowerCase();
+  const providerLabel = String(item.provider_label || '').toLowerCase();
+  if (provider === 'local_usage' || providerLabel === 'local usage') return 'usage_ledger';
+  return provider ? 'provider_billing' : '';
+}
+
+function _billingChartSourceNote(chart, accounts, usage) {
+  const explicit = String(chart?.source_note || '').trim();
+  if (explicit) return explicit;
+  const hasUsage = !!(
+    _billingChartWhole(usage?.events) ||
+    _billingChartWhole(usage?.total_tokens) ||
+    accounts.some(item => _billingChartSourceKind(item) === 'usage_ledger')
+  );
+  const hasProvider = accounts.some(item => _billingChartSourceKind(item) === 'provider_billing');
+  if (hasProvider && hasUsage) return 'Provider billing totals with usage ledger estimates';
+  if (hasUsage) return 'Usage ledger estimates';
+  if (hasProvider) return 'Provider billing totals';
+  return '';
+}
+
 function _billingChartDateLabel(value) {
   if (!value) return '';
   const date = new Date(value);
@@ -141,6 +166,7 @@ function _billingChartHtml(raw) {
   const budgetClass = limit && total >= limit ? ' over-limit' : warning && total >= warning ? ' over-warning' : '';
   const title = escapeHtml(chart.title || 'Cloud Spend');
   const subtitle = escapeHtml(chart.subtitle || '');
+  const sourceNote = _billingChartSourceNote(chart, accounts, usage);
   const notice = chart.notice ? `<div class="billing-chart-notice">${escapeHtml(chart.notice)}</div>` : '';
   const updated = chart.updated_at ? `<span>Updated ${escapeHtml(_billingChartDateLabel(chart.updated_at) || chart.updated_at)}</span>` : '';
 
@@ -160,6 +186,9 @@ function _billingChartHtml(raw) {
       const label = escapeHtml(item?.label || item?.provider_label || 'Cloud');
       const metaParts = [];
       if (item?.provider_label) metaParts.push(`<span>${escapeHtml(item.provider_label)}</span>`);
+      if (item?.source_label && item.source_label !== item?.provider_label) {
+        metaParts.push(`<span class="billing-chart-source-chip">${escapeHtml(item.source_label)}</span>`);
+      }
       const usageMeta = _billingChartUsageMeta(item?.usage || item);
       if (usageMeta) metaParts.push(`<span>${escapeHtml(usageMeta)}</span>`);
       const error = item?.ok === false && item?.error ? `<span class="billing-chart-row-error">${escapeHtml(item.error)}</span>` : '';
@@ -172,7 +201,7 @@ function _billingChartHtml(raw) {
         </div>
       `;
     }).join('')
-    : '<div class="billing-chart-empty">No provider spend is available yet.</div>';
+    : '<div class="billing-chart-empty">No provider spend or usage has been recorded yet.</div>';
 
   return `
     <div class="billing-chart-card">
@@ -180,6 +209,7 @@ function _billingChartHtml(raw) {
         <div>
           <div class="billing-chart-title">${title}</div>
           <div class="billing-chart-subtitle">${subtitle}</div>
+          ${sourceNote ? `<div class="billing-chart-source-note">${escapeHtml(sourceNote)}</div>` : ''}
         </div>
         <div class="billing-chart-total">${_billingChartMoney(total, chart.total_display)}</div>
       </div>

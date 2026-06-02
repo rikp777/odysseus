@@ -104,6 +104,7 @@ def test_billing_chart_renders_usage_breakdown(node_available):
         "total_display": "$0.65",
         "projected": 0.65,
         "projected_display": "$0.65",
+        "source_note": "Usage ledger estimates",
         "usage": {
             "events": 2,
             "input_tokens": 30,
@@ -111,6 +112,7 @@ def test_billing_chart_renders_usage_breakdown(node_available):
             "total_tokens": 42,
             "known_cost_events": 1,
             "unknown_cost_events": 1,
+            "source_label": "Usage ledger",
         },
         "accounts": [
             {
@@ -119,6 +121,7 @@ def test_billing_chart_renders_usage_breakdown(node_available):
                 "amount": 0.65,
                 "display": "$0.65",
                 "ok": True,
+                "source_label": "Usage estimate",
                 "usage": {
                     "events": 2,
                     "input_tokens": 30,
@@ -135,6 +138,8 @@ def test_billing_chart_renders_usage_breakdown(node_available):
     html = _run_markdown_case("```billing-chart\n" + json.dumps(chart) + "\n```")
 
     assert "Model Spend by Model" in html
+    assert "Usage ledger estimates" in html
+    assert "Usage estimate" in html
     assert "Tokens" in html
     assert "Calls" in html
     assert "gpt-4o" in html

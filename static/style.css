@@ -678,6 +678,10 @@ body.bg-pattern-sparkles {
 
     .cloud-billing-account-status {
       grid-column: 1 / -1;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: wrap;
       font-size: 11px;
       color: color-mix(in srgb, var(--fg) 58%, transparent);
       min-height: 14px;
@@ -685,6 +689,45 @@ body.bg-pattern-sparkles {
 
     .cloud-billing-account-status.billing-warning {
       color: var(--accent-error, #e06c75);
+    }
+
+    .cloud-billing-account-status-text {
+      min-width: 0;
+      overflow-wrap: anywhere;
+    }
+
+    .cloud-billing-account-badge {
+      display: inline-flex;
+      align-items: center;
+      min-height: 18px;
+      padding: 0 6px;
+      border: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
+      border-radius: 4px;
+      background: color-mix(in srgb, var(--fg) 4%, transparent);
+      color: color-mix(in srgb, var(--fg) 68%, transparent);
+      font-size: 10px;
+      font-weight: 650;
+      line-height: 1;
+      letter-spacing: 0;
+      white-space: nowrap;
+    }
+
+    .cloud-billing-account-badge.billing-account-ok {
+      border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
+      color: var(--accent);
+      background: color-mix(in srgb, var(--accent) 10%, transparent);
+    }
+
+    .cloud-billing-account-badge.billing-account-warning {
+      border-color: color-mix(in srgb, #d69e2e 42%, var(--border));
+      color: #d69e2e;
+      background: color-mix(in srgb, #d69e2e 10%, transparent);
+    }
+
+    .cloud-billing-account-badge.billing-account-danger {
+      border-color: color-mix(in srgb, var(--accent-error, #e06c75) 42%, var(--border));
+      color: var(--accent-error, #e06c75);
+      background: color-mix(in srgb, var(--accent-error, #e06c75) 10%, transparent);
     }
 
     .billing-chart-card {
@@ -713,10 +756,17 @@ body.bg-pattern-sparkles {
     }
 
     .billing-chart-subtitle,
+    .billing-chart-source-note,
     .billing-chart-budget-labels,
     .billing-chart-row-meta {
       color: color-mix(in srgb, var(--fg) 52%, transparent);
       font-size: 11px;
+    }
+
+    .billing-chart-source-note {
+      margin-top: 2px;
+      color: color-mix(in srgb, var(--fg) 46%, transparent);
+      font-size: 10px;
     }
 
     .billing-chart-total {
@@ -866,6 +916,15 @@ body.bg-pattern-sparkles {
 
     .billing-chart-row-meta span {
       min-width: 0;
+    }
+
+    .billing-chart-row-meta .billing-chart-source-chip {
+      padding: 1px 5px;
+      border: 1px solid color-mix(in srgb, var(--border) 64%, transparent);
+      border-radius: 4px;
+      color: color-mix(in srgb, var(--fg) 68%, transparent);
+      background: color-mix(in srgb, var(--fg) 4%, transparent);
+      line-height: 1.3;
     }
 
     .billing-chart-notice,
