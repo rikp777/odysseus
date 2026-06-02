@@ -46,6 +46,30 @@ function _billingChartMoney(value, fallback) {
   return '$' + (n < 1 ? n.toFixed(2) : n.toFixed(2).replace(/\.00$/, ''));
 }
 
+function _billingChartWhole(value) {
+  const n = Number(value);
+  return Number.isFinite(n) ? Math.max(0, Math.round(n)) : 0;
+}
+
+function _billingChartCompact(value) {
+  const n = _billingChartWhole(value);
+  if (n >= 1000000) return (n / 1000000).toFixed(n >= 10000000 ? 0 : 1).replace(/\.0$/, '') + 'M';
+  if (n >= 1000) return (n / 1000).toFixed(n >= 10000 ? 0 : 1).replace(/\.0$/, '') + 'K';
+  return String(n);
+}
+
+function _billingChartUsageMeta(usage) {
+  if (!usage || typeof usage !== 'object') return '';
+  const totalTokens = _billingChartWhole(usage.total_tokens);
+  const events = _billingChartWhole(usage.events);
+  const unknownCostEvents = _billingChartWhole(usage.unknown_cost_events);
+  const parts = [];
+  if (totalTokens) parts.push(`${_billingChartCompact(totalTokens)} tokens`);
+  if (events) parts.push(`${events} ${events === 1 ? 'call' : 'calls'}`);
+  if (unknownCostEvents) parts.push(`${unknownCostEvents} unpriced`);
+  return parts.join(' | ');
+}
+
 function _billingChartDateLabel(value) {
   if (!value) return '';
   const date = new Date(value);
@@ -103,6 +127,9 @@ function _billingChartHtml(raw) {
 
   const accounts = Array.isArray(chart.accounts) ? chart.accounts : [];
   const history = Array.isArray(chart.history) ? chart.history : [];
+  const usage = chart.usage && typeof chart.usage === 'object' ? chart.usage : {};
+  const usageTokens = _billingChartWhole(usage.total_tokens);
+  const usageEvents = _billingChartWhole(usage.events);
   const total = _billingChartNumber(chart.total);
   const projected = _billingChartNumber(chart.projected);
   const limit = chart.limit == null ? null : _billingChartNumber(chart.limit);
@@ -123,19 +150,25 @@ function _billingChartHtml(raw) {
   ];
   if (limit != null) statItems.push(['Limit', _billingChartMoney(limit, chart.limit_display)]);
   else if (warning != null) statItems.push(['Warn At', _billingChartMoney(warning, chart.warning_display)]);
+  if (usageTokens) statItems.push(['Tokens', _billingChartCompact(usageTokens)]);
+  if (usageEvents) statItems.push(['Calls', String(usageEvents)]);
 
   const accountRows = accounts.length
     ? accounts.map(item => {
       const amount = _billingChartNumber(item && item.amount);
       const width = Math.max(2, Math.min(100, (amount / maxAccount) * 100));
       const label = escapeHtml(item?.label || item?.provider_label || 'Cloud');
-      const provider = item?.provider_label ? `<span>${escapeHtml(item.provider_label)}</span>` : '';
+      const metaParts = [];
+      if (item?.provider_label) metaParts.push(`<span>${escapeHtml(item.provider_label)}</span>`);
+      const usageMeta = _billingChartUsageMeta(item?.usage || item);
+      if (usageMeta) metaParts.push(`<span>${escapeHtml(usageMeta)}</span>`);
       const error = item?.ok === false && item?.error ? `<span class="billing-chart-row-error">${escapeHtml(item.error)}</span>` : '';
+      if (error) metaParts.push(error);
       return `
         <div class="billing-chart-row">
           <div class="billing-chart-row-top"><span>${label}</span><span>${_billingChartMoney(amount, item?.display)}</span></div>
           <div class="billing-chart-bar"><span style="width:${width.toFixed(2)}%"></span></div>
-          <div class="billing-chart-row-meta">${provider}${error}</div>
+          <div class="billing-chart-row-meta">${metaParts.join('')}</div>
         </div>
       `;
     }).join('')

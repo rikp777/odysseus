@@ -729,7 +729,7 @@ body.bg-pattern-sparkles {
 
     .billing-chart-stats {
       display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
+      grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
       gap: 6px;
       margin-bottom: 10px;
     }
@@ -861,6 +861,11 @@ body.bg-pattern-sparkles {
 
     .billing-chart-row-meta {
       margin-top: 3px;
+      flex-wrap: wrap;
+    }
+
+    .billing-chart-row-meta span {
+      min-width: 0;
     }
 
     .billing-chart-notice,

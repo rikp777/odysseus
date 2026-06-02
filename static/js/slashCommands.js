@@ -1761,6 +1761,26 @@ function _billingProviderArg(args) {
   return raw;
 }
 
+function _billingCommandArgs(args) {
+  const raw = (args || []).join(' ').trim().toLowerCase();
+  const period = /\b(today|daily|day)\b/.test(raw) ? 'day'
+    : /\b(month|monthly|month-to-date|forecast)\b/.test(raw) ? 'month'
+      : '';
+  const groupBy = /\b(by|per)\s+model\b|\bmodel\s+(breakdown|costs?|spend|usage)\b/.test(raw) ? 'model'
+    : /\b(by|per)\s+provider\b|\bprovider\s+(breakdown|costs?|spend|usage)\b/.test(raw) ? 'provider'
+      : '';
+  const providerText = raw
+    .replace(/\b(today|daily|day|month|monthly|month-to-date|forecast)\b/g, ' ')
+    .replace(/\b(by|per|model|provider|breakdown|usage|spend|spending|cost|costs|graph|chart)\b/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return {
+    provider: _billingProviderArg(providerText ? [providerText] : []),
+    period,
+    groupBy,
+  };
+}
+
 function _billingResponseFromStatus(data) {
   const chart = data?.chart || {};
   if (!chart.enabled) {
@@ -1783,9 +1803,11 @@ function _billingResponseFromStatus(data) {
 
 async function _cmdBilling(args, ctx) {
   try {
-    const provider = _billingProviderArg(args);
+    const billingArgs = _billingCommandArgs(args);
     let url = `${API_BASE}/api/billing/spending-graph?refresh=true`;
-    if (provider) url += `&provider=${encodeURIComponent(provider)}`;
+    if (billingArgs.provider) url += `&provider=${encodeURIComponent(billingArgs.provider)}`;
+    if (billingArgs.period) url += `&period=${encodeURIComponent(billingArgs.period)}`;
+    if (billingArgs.groupBy) url += `&group_by=${encodeURIComponent(billingArgs.groupBy)}`;
     const res = await fetch(url, { credentials: 'same-origin' });
     if (!res.ok) {
       if (res.status === 403) slashReply('Only an admin can view cloud billing spend.');
@@ -5723,7 +5745,7 @@ const COMMANDS = {
     category: 'Utility',
     help: 'Show cloud billing spend graph',
     handler: _cmdBilling,
-    usage: '/billing [provider]'
+    usage: '/billing [today] [by model|by provider] [provider]'
   },
   compact: {
     alias: [],

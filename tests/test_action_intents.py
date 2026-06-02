@@ -47,12 +47,15 @@ def test_tool_intent_classifier_returns_specific_intent():
 
 def test_direct_billing_intent_argument_rules():
     today_by_model = classify_tool_intent("/billing today by model")
+    usage_by_model = classify_tool_intent("show billing usage by model")
     provider_specific = classify_tool_intent("show monthly spend for provider digitalocean")
     provider_breakdown = classify_tool_intent("/billing provider breakdown")
 
     assert today_by_model is not None
     assert today_by_model.args["period"] == "day"
     assert today_by_model.args["group_by"] == "model"
+    assert usage_by_model is not None
+    assert usage_by_model.args["group_by"] == "model"
     assert provider_specific is not None
     assert provider_specific.args["period"] == "month"
     assert provider_specific.args["provider"] == "digitalocean"

@@ -58,6 +58,75 @@ def _float_money(value: Optional[Decimal]) -> Optional[float]:
     return float(_money(value)) if value is not None else None
 
 
+def _int_or_zero(value: Any) -> int:
+    try:
+        return max(int(value or 0), 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _usage_breakdown(source: Any) -> Dict[str, Any]:
+    if not isinstance(source, dict):
+        return {}
+    events = _int_or_zero(source.get("events"))
+    input_tokens = _int_or_zero(source.get("input_tokens"))
+    output_tokens = _int_or_zero(source.get("output_tokens"))
+    total_tokens = _int_or_zero(source.get("total_tokens")) or input_tokens + output_tokens
+    known_cost_events = _int_or_zero(source.get("known_cost_events"))
+    raw_unknown = source.get("unknown_cost_events")
+    unknown_cost_events = (
+        _int_or_zero(raw_unknown)
+        if raw_unknown is not None
+        else max(events - known_cost_events, 0)
+    )
+    if not any((events, input_tokens, output_tokens, total_tokens, known_cost_events, unknown_cost_events)):
+        return {}
+    return {
+        "events": events,
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "total_tokens": total_tokens,
+        "known_cost_events": known_cost_events,
+        "unknown_cost_events": unknown_cost_events,
+        "priced_percent": round((known_cost_events / events) * 100, 1) if events else None,
+    }
+
+
+def _usage_status(usage: Dict[str, Any]) -> str:
+    if not usage:
+        return ""
+    parts = []
+    total_tokens = _int_or_zero(usage.get("total_tokens"))
+    events = _int_or_zero(usage.get("events"))
+    unknown_cost_events = _int_or_zero(usage.get("unknown_cost_events"))
+    if total_tokens:
+        parts.append(f"{total_tokens} tokens")
+    if events:
+        parts.append(f"{events} model calls")
+    if unknown_cost_events:
+        parts.append(f"{unknown_cost_events} unpriced")
+    return " | ".join(parts)
+
+
+def _chart_usage_payload(local_usage: Any) -> Dict[str, Any]:
+    if not isinstance(local_usage, dict):
+        return {}
+    usage = _usage_breakdown(local_usage)
+    if not usage:
+        return {}
+    usage.update({
+        "enabled": bool(local_usage.get("enabled", False)),
+        "period": local_usage.get("period") or "",
+        "currency": local_usage.get("currency") or "USD",
+        "amount": local_usage.get("amount_float", local_usage.get("amount")),
+        "amount_display": local_usage.get("display") or "",
+        "projected": local_usage.get("projected"),
+        "projected_display": local_usage.get("projected_display") or "",
+        "source": "local_model_usage_ledger",
+    })
+    return usage
+
+
 def _local_usage_payload(period: str = "month") -> Dict[str, Any]:
     try:
         summary = dict(get_usage_summary(period=period))
@@ -237,10 +306,19 @@ def _chart_accounts(status: Dict[str, Any]) -> list[Dict[str, Any]]:
     accounts = []
     local_usage = status.get("local_usage") if isinstance(status.get("local_usage"), dict) else None
     group_by = str(status.get("group_by") or "provider").lower()
+    local_provider_usage: Dict[str, Dict[str, Any]] = {}
+    if local_usage and local_usage.get("enabled"):
+        for item in local_usage.get("providers", []):
+            if not isinstance(item, dict):
+                continue
+            key = str(item.get("id") or item.get("label") or "").strip().lower()
+            if key:
+                local_provider_usage[key] = _usage_breakdown(item)
     if local_usage and local_usage.get("enabled"):
         if group_by == "model":
             for item in local_usage.get("models", []):
                 amount = _decimal_or_none(item.get("amount")) or Decimal("0")
+                usage = _usage_breakdown(item)
                 accounts.append({
                     "id": item.get("id") or item.get("label") or "model",
                     "label": item.get("label") or item.get("id") or "Model",
@@ -249,12 +327,14 @@ def _chart_accounts(status: Dict[str, Any]) -> list[Dict[str, Any]]:
                     "amount": _float_money(amount) or 0.0,
                     "display": item.get("display") or f"${_money(amount)}",
                     "ok": True,
-                    "status": f"{item.get('total_tokens', 0)} tokens",
+                    "status": _usage_status(usage),
                     "error": "",
+                    "usage": usage,
                 })
         elif group_by == "provider":
             for item in local_usage.get("providers", []):
                 amount = _decimal_or_none(item.get("amount")) or Decimal("0")
+                usage = _usage_breakdown(item)
                 accounts.append({
                     "id": "usage-" + str(item.get("id") or item.get("label") or "provider"),
                     "label": str(item.get("label") or item.get("id") or "Provider") + " model usage",
@@ -263,11 +343,13 @@ def _chart_accounts(status: Dict[str, Any]) -> list[Dict[str, Any]]:
                     "amount": _float_money(amount) or 0.0,
                     "display": item.get("display") or f"${_money(amount)}",
                     "ok": True,
-                    "status": f"{item.get('total_tokens', 0)} tokens",
+                    "status": _usage_status(usage),
                     "error": "",
+                    "usage": usage,
                 })
         elif local_usage.get("events") or not status.get("accounts"):
             amount = _decimal_or_none(local_usage.get("amount")) or Decimal("0")
+            usage = _usage_breakdown(local_usage)
             accounts.append({
                 "id": "local-model-usage",
                 "label": "Tracked model usage",
@@ -276,8 +358,9 @@ def _chart_accounts(status: Dict[str, Any]) -> list[Dict[str, Any]]:
                 "amount": _float_money(amount) or 0.0,
                 "display": local_usage.get("display") or f"${_money(amount)}",
                 "ok": True,
-                "status": f"{local_usage.get('total_tokens', 0)} tokens",
+                "status": _usage_status(usage),
                 "error": "",
+                "usage": usage,
             })
     for item in status.get("accounts", []):
         if not isinstance(item, dict):
@@ -285,6 +368,8 @@ def _chart_accounts(status: Dict[str, Any]) -> list[Dict[str, Any]]:
         amount = _decimal_or_none(item.get("amount")) or Decimal("0")
         label = str(item.get("account_label") or item.get("label") or item.get("provider_label") or "Cloud").strip()
         provider_label = str(item.get("provider_label") or item.get("provider") or "").strip()
+        provider_key = str(item.get("provider") or "").strip().lower()
+        usage = (local_provider_usage.get(provider_key) or {}) if group_by != "provider" else {}
         accounts.append({
             "id": item.get("account_id") or item.get("id") or "",
             "label": label or "Cloud",
@@ -295,6 +380,7 @@ def _chart_accounts(status: Dict[str, Any]) -> list[Dict[str, Any]]:
             "ok": bool(item.get("ok", False)),
             "status": item.get("status") or "",
             "error": item.get("error") or "",
+            "usage": usage,
         })
 
     if not accounts and status.get("amount") is not None:
@@ -332,11 +418,17 @@ def build_spending_graph_payload(
     limit = _decimal_or_none(status.get("limit_usd"))
     projected = (amount / Decimal(elapsed_days)) * Decimal(days_in_month) if period == "month" and amount > 0 else amount
     history = _history_for_current_month(scope=_billing_scope(forced_provider), now=current)
+    group_by = str(status.get("group_by") or "provider").lower()
+    title = "Model Spend" if status.get("provider") == "local_usage" else "Cloud Spend"
+    if group_by == "model":
+        title += " by Model"
+    elif group_by == "provider":
+        title += " by Provider"
 
     return {
         "version": 1,
         "kind": "billing-spend",
-        "title": "Model Spend" if status.get("provider") == "local_usage" else "Cloud Spend",
+        "title": title,
         "subtitle": "Today" if period == "day" else f"{current.strftime('%B %Y')} month-to-date",
         "status": status.get("status") or "",
         "ok": bool(status.get("ok", False)),
@@ -360,8 +452,9 @@ def build_spending_graph_payload(
         "provider_label": status.get("provider_label") or "Cloud",
         "provider_short_label": status.get("provider_short_label") or "ALL",
         "period": period,
-        "group_by": status.get("group_by") or "provider",
+        "group_by": group_by,
         "local_usage": local_usage or {},
+        "usage": _chart_usage_payload(local_usage),
         "accounts": _chart_accounts(status),
         "history": history,
         "notice": status.get("error") or "",

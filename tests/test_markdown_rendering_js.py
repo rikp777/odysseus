@@ -32,8 +32,15 @@ def _run_markdown_case(markdown: str) -> str:
 
         let source = fs.readFileSync('./static/js/markdown.js', 'utf8');
         source = source.replace(
-          "import uiModule from './ui.js';\\n\\nvar escapeHtml = uiModule.esc;",
-          `var escapeHtml = (value) => String(value ?? '')
+          /import uiModule from '\\.\\/ui\\.js';\\r?\\nimport \\{ splitTableRow \\} from '\\.\\/markdown\\/tableRow\\.js';\\r?\\n\\r?\\nvar escapeHtml = uiModule\\.esc;/,
+          `function splitTableRow(row) {
+              return (row || '')
+                .replace(/^\\s*\\|/, '')
+                .replace(/\\|\\s*$/, '')
+                .split('|')
+                .map((cell) => cell.trim());
+            }
+            var escapeHtml = (value) => String(value ?? '')
             .replace(/&/g, '&amp;')
             .replace(/</g, '&lt;')
             .replace(/>/g, '&gt;')
@@ -80,3 +87,54 @@ def test_ordered_lists_render_as_one_unwrapped_ol(node_available):
     assert "<p><li>" not in html
     assert "<p>Before</p>" in html
     assert "<p>After</p>" in html
+
+
+def test_billing_chart_renders_usage_breakdown(node_available):
+    chart = {
+        "version": 1,
+        "kind": "billing-spend",
+        "title": "Model Spend by Model",
+        "subtitle": "Today",
+        "enabled": True,
+        "configured": True,
+        "total": 0.65,
+        "total_display": "$0.65",
+        "projected": 0.65,
+        "projected_display": "$0.65",
+        "usage": {
+            "events": 2,
+            "input_tokens": 30,
+            "output_tokens": 12,
+            "total_tokens": 42,
+            "known_cost_events": 1,
+            "unknown_cost_events": 1,
+        },
+        "accounts": [
+            {
+                "label": "gpt-4o",
+                "provider_label": "Local usage",
+                "amount": 0.65,
+                "display": "$0.65",
+                "ok": True,
+                "usage": {
+                    "events": 2,
+                    "input_tokens": 30,
+                    "output_tokens": 12,
+                    "total_tokens": 42,
+                    "known_cost_events": 1,
+                    "unknown_cost_events": 1,
+                },
+            }
+        ],
+        "history": [],
+    }
+
+    html = _run_markdown_case("```billing-chart\n" + json.dumps(chart) + "\n```")
+
+    assert "Model Spend by Model" in html
+    assert "Tokens" in html
+    assert "Calls" in html
+    assert "gpt-4o" in html
+    assert "42 tokens" in html
+    assert "2 calls" in html
+    assert "1 unpriced" in html

@@ -45,6 +45,8 @@ _BILLING_INTENT_PATTERN_TEXTS = (
     r"\b(?:spend|spending|billing|costs?|budget)\b.{0,80}\bforecast\b",
     r"\bforecast\b.{0,80}\b(?:spend|spending|billing|costs?|budget)\b",
     r"\b(?:spend|spending|billing|costs?|budget)\b.{0,80}\b(?:by|per)\s+(?:model|provider)\b",
+    r"\b(?:billing|spend|spending|costs?|budget)\b.{0,80}\busage\b",
+    r"\busage\b.{0,80}\b(?:billing|spend|spending|costs?|budget)\b",
     r"\b(?:current|monthly|month-to-date)\b.{0,80}\b(?:spend|spending|billing|costs?)\b",
 )
 
@@ -64,14 +66,14 @@ _BILLING_GROUP_ARG_PATTERNS = (
         "model",
         _compile_patterns((
             r"\b(?:by|per)\s+model\b",
-            r"\bmodel\s+(?:breakdown|costs?|spend)\b",
+            r"\bmodel\s+(?:breakdown|costs?|spend|usage)\b",
         )),
     ),
     (
         "provider",
         _compile_patterns((
             r"\b(?:by|per)\s+provider\b",
-            r"\bprovider\s+(?:breakdown|costs?|spend)\b",
+            r"\bprovider\s+(?:breakdown|costs?|spend|usage)\b",
         )),
     ),
 )

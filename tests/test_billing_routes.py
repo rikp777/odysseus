@@ -305,6 +305,75 @@ def test_cloud_spending_graph_returns_chart_and_records_history(monkeypatch, tmp
     assert "ex-token" not in history_text
 
 
+def test_spending_graph_model_group_includes_usage_breakdown(monkeypatch):
+    monkeypatch.setattr(
+        billing_routes,
+        "_load_settings",
+        lambda: {
+            "cloud_billing_enabled": True,
+            "cloud_billing_accounts": [],
+            "cloud_billing_refresh_seconds": 300,
+            "cloud_billing_daily_limit_usd": "2",
+            "cloud_billing_usage_ledger_enabled": True,
+        },
+    )
+    monkeypatch.setattr(
+        billing_routes,
+        "_local_usage_payload",
+        lambda period="month": {
+            **_empty_local_usage(period),
+            "amount": "0.700000",
+            "amount_float": 0.7,
+            "display": "$0.70",
+            "projected": "0.700000",
+            "projected_display": "$0.70",
+            "events": 3,
+            "known_cost_events": 2,
+            "unknown_cost_events": 1,
+            "input_tokens": 1200,
+            "output_tokens": 300,
+            "total_tokens": 1500,
+            "models": [
+                {
+                    "id": "gpt-4o",
+                    "label": "gpt-4o",
+                    "events": 2,
+                    "input_tokens": 1000,
+                    "output_tokens": 250,
+                    "total_tokens": 1250,
+                    "amount": 0.65,
+                    "display": "$0.65",
+                    "known_cost_events": 2,
+                },
+                {
+                    "id": "unknown-model",
+                    "label": "unknown-model",
+                    "events": 1,
+                    "input_tokens": 200,
+                    "output_tokens": 50,
+                    "total_tokens": 250,
+                    "amount": 0.0,
+                    "display": "$0.00",
+                    "known_cost_events": 0,
+                },
+            ],
+            "providers": [],
+        },
+    )
+
+    result = billing_routes.get_spending_graph_status(period="day", group_by="model")
+
+    chart = result["chart"]
+    assert chart["title"] == "Model Spend by Model"
+    assert chart["usage"]["events"] == 3
+    assert chart["usage"]["total_tokens"] == 1500
+    assert chart["usage"]["unknown_cost_events"] == 1
+    assert chart["accounts"][0]["label"] == "gpt-4o"
+    assert chart["accounts"][0]["usage"]["input_tokens"] == 1000
+    assert chart["accounts"][0]["usage"]["output_tokens"] == 250
+    assert chart["accounts"][1]["usage"]["unknown_cost_events"] == 1
+
+
 def test_cloud_monthly_spend_uses_success_cache(monkeypatch):
     calls = []
     monkeypatch.setattr(
@@ -373,6 +442,7 @@ def test_billing_graph_request_is_classified_as_billing_intent():
 
     slash_billing = classify_tool_intent("/billing")
     today_by_model = classify_tool_intent("/billing today by model")
+    billing_usage_by_model = classify_tool_intent("show billing usage by model")
     spend_graph = classify_tool_intent("show me a spending graph")
     monthly_spend = classify_tool_intent("what is my current monthly spend?")
     calendar = classify_tool_intent("show me my calendar")
@@ -383,6 +453,8 @@ def test_billing_graph_request_is_classified_as_billing_intent():
     assert slash_billing.args == {"action": "spending_graph", "refresh": True}
     assert today_by_model.args["period"] == "day"
     assert today_by_model.args["group_by"] == "model"
+    assert billing_usage_by_model is not None
+    assert billing_usage_by_model.args["group_by"] == "model"
     assert message_needs_tools("show me a spending graph")
     assert spend_graph is not None
     assert spend_graph.kind == "direct_tool"

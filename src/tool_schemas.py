@@ -668,14 +668,14 @@ FUNCTION_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "manage_billing",
-            "description": "Show cloud billing status or a spending graph. Use when the user asks for billing, cloud spend, monthly spend, cost graph, budget graph, spending graph, provider spend, or current cloud costs. The response contains a ready-to-show billing-chart markdown block; preserve that block exactly in the final answer.",
+            "description": "Show cloud billing status, spending graphs, and billing-linked usage breakdowns. Use when the user asks for billing, cloud spend, monthly spend, cost graph, budget graph, spending graph, provider/model spend, billing usage, or current cloud costs. The response contains a ready-to-show billing-chart markdown block; preserve that block exactly in the final answer.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "action": {"type": "string", "enum": ["summary", "status", "spending_graph", "graph"], "description": "Use spending_graph/graph when the user asks to show a graph."},
                     "provider": {"type": "string", "description": "Optional provider filter, e.g. digitalocean. Omit for all configured providers."},
                     "period": {"type": "string", "enum": ["day", "month"], "description": "Use day for /billing today or daily spend; use month for monthly spend or forecast."},
-                    "group_by": {"type": "string", "enum": ["provider", "model", "summary"], "description": "Use model for model cost breakdowns, provider for provider/account breakdowns."},
+                    "group_by": {"type": "string", "enum": ["provider", "model", "summary"], "description": "Use model for model cost and usage breakdowns, provider for provider/account spend and usage breakdowns."},
                     "refresh": {"type": "boolean", "description": "Set true if the user asks for the latest/current graph."}
                 },
                 "required": ["action"]
