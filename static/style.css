@@ -565,12 +565,12 @@ body.bg-pattern-sparkles {
     }
 
     .billing-spend-pill.billing-warning {
-      border-color: color-mix(in srgb, var(--accent-error, #e06c75) 42%, var(--border));
-      background: color-mix(in srgb, var(--accent-error, #e06c75) 10%, transparent);
+      border-color: color-mix(in srgb, var(--accent-error, var(--red)) 42%, var(--border));
+      background: color-mix(in srgb, var(--accent-error, var(--red)) 10%, transparent);
     }
 
     .billing-spend-pill.billing-error .billing-spend-value {
-      color: var(--accent-error, #e06c75);
+      color: var(--accent-error, var(--red));
     }
 
     .sidebar.hidden .billing-spend-pill {
@@ -649,7 +649,7 @@ body.bg-pattern-sparkles {
     }
 
     .billing-settings-status.billing-warning {
-      color: var(--accent-error, #e06c75);
+      color: var(--accent-error, var(--red));
     }
 
     .cloud-billing-accounts {
@@ -688,7 +688,7 @@ body.bg-pattern-sparkles {
     }
 
     .cloud-billing-account-status.billing-warning {
-      color: var(--accent-error, #e06c75);
+      color: var(--accent-error, var(--red));
     }
 
     .cloud-billing-account-status-text {
@@ -719,15 +719,15 @@ body.bg-pattern-sparkles {
     }
 
     .cloud-billing-account-badge.billing-account-warning {
-      border-color: color-mix(in srgb, #d69e2e 42%, var(--border));
-      color: #d69e2e;
-      background: color-mix(in srgb, #d69e2e 10%, transparent);
+      border-color: color-mix(in srgb, var(--warn) 42%, var(--border));
+      color: var(--warn);
+      background: color-mix(in srgb, var(--warn) 10%, transparent);
     }
 
     .cloud-billing-account-badge.billing-account-danger {
-      border-color: color-mix(in srgb, var(--accent-error, #e06c75) 42%, var(--border));
-      color: var(--accent-error, #e06c75);
-      background: color-mix(in srgb, var(--accent-error, #e06c75) 10%, transparent);
+      border-color: color-mix(in srgb, var(--accent-error, var(--red)) 42%, var(--border));
+      color: var(--accent-error, var(--red));
+      background: color-mix(in srgb, var(--accent-error, var(--red)) 10%, transparent);
     }
 
     .billing-chart-card {
@@ -833,15 +833,15 @@ body.bg-pattern-sparkles {
     }
 
     .billing-chart-budget.over-warning .billing-chart-budget-track span {
-      background: color-mix(in srgb, #d69e2e 76%, var(--fg));
+      background: color-mix(in srgb, var(--warn) 76%, var(--fg));
     }
 
     .billing-chart-row-error {
-      color: var(--accent-error, #e06c75);
+      color: var(--accent-error, var(--red));
     }
 
     .billing-chart-budget.over-limit .billing-chart-budget-track span {
-      background: var(--accent-error, #e06c75);
+      background: var(--accent-error, var(--red));
     }
 
     .billing-chart-budget-labels,
