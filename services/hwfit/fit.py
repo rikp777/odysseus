@@ -374,13 +374,29 @@ def analyze_model(model, system, target_quant=None, scoring_use_case=None, targe
         # and RAM modes where llama.cpp serving is the natural path.
         quant_to_try = "Q4_K_M"
 
-    # Multi-GPU filter: skip the row if the resolved quant is a GGUF tier
-    # (Q*/IQ-prefixed) — vLLM/SGLang can't serve those, so showing them on
-    # a 2+ GPU rig just clutters the list with unservable candidates.
-    if gpu_count >= 2 and quant_to_try and quant_to_try.upper().startswith(("Q2", "Q3", "Q4", "Q5", "Q6", "Q8", "IQ")):
+    multi_gpu_gguf_quant = (
+        gpu_count >= 2
+        and quant_to_try
+        and quant_to_try.upper().startswith(("Q2", "Q3", "Q4", "Q5", "Q6", "Q8", "IQ"))
+    )
+    # Multi-GPU default filter: skip GGUF tiers (Q*/IQ-prefixed) unless the
+    # user explicitly picked that quant. vLLM/SGLang can't serve GGUF tiers on
+    # a 2+ GPU rig, but an explicit selection should surface as no_fit rather
+    # than disappearing or falling back to a lower quant.
+    if multi_gpu_gguf_quant and not target_quant:
         return None
 
-    result = _try_quant_at(model, quant_to_try, ctx, effective_vram, 0 if native_gpu_only else eff_ram)
+    result = (
+        None
+        if multi_gpu_gguf_quant
+        else _try_quant_at(
+            model,
+            quant_to_try,
+            ctx,
+            effective_vram,
+            0 if native_gpu_only else eff_ram,
+        )
+    )
 
     if result is None:
         # Model doesn't fit on the user's current hardware. Surface it
