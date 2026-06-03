@@ -14888,6 +14888,18 @@ body:has(.doc-version-panel:not(.hidden)) .hamburger-btn {
   white-space: nowrap;
   flex: 1;
 }
+.mcp-tools-list label > .adm-model-name {
+  flex: 1 1 auto;
+}
+.mcp-tools-list label > .adm-model-price {
+  flex: 0 0 auto;
+  max-width: 132px;
+  color: color-mix(in srgb, var(--fg) 58%, transparent);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  margin-left: auto;
+}
 .mcp-tools-list label:hover {
   background: color-mix(in srgb, var(--fg) 5%, transparent);
 }

@@ -683,6 +683,26 @@ def test_get_models_returns_pinned_when_probe_empty(monkeypatch):
     assert result[0]["is_pinned"] is True
 
 
+def test_get_models_includes_known_provider_pricing(monkeypatch):
+    ep = _make_endpoint(base_url="https://inference.do-ai.run/v1")
+    db = _PinnedFakeDb([ep])
+    monkeypatch.setattr(model_routes, "SessionLocal", lambda: db)
+    monkeypatch.setattr(model_routes, "require_admin", lambda request: None)
+    monkeypatch.setattr(
+        model_routes,
+        "_probe_endpoint",
+        lambda *a, **k: ["qwen3-coder-flash", "router:general"],
+    )
+    endpoint = _get_route("/api/model-endpoints/{ep_id}/models", "GET")
+
+    result = endpoint("ep1", _PinnedFakeRequest())
+
+    assert result[0]["pricing"]["provider"] == "digitalocean"
+    assert result[0]["pricing"]["input_usd_per_unit"] == 0.45
+    assert result[0]["pricing"]["output_usd_per_unit"] == 1.70
+    assert result[1]["pricing"] is None
+
+
 def test_reprobe_preserves_pinned_models(monkeypatch):
     ep = _make_endpoint(pinned_models=json.dumps(["deploy-1"]))
     db = _PinnedFakeDb([ep])

@@ -5,6 +5,7 @@ import uiModule from './ui.js';
 import settingsModule from './settings.js';
 import { providerLogo } from './providers.js';
 import { sortModelObjects } from './modelSort.js';
+import { formatModelPrice } from './modelPricing.js';
 
 let initialized = false;
 let modalEl = null;
@@ -15,6 +16,15 @@ let _recentlyAddedEpId = null;
 
 function el(id) { return document.getElementById(id); }
 function esc(s) { return uiModule.esc(s); }
+
+function _modelPricingChipHtml(pricing) {
+  const price = formatModelPrice(pricing);
+  if (!price) return '';
+  const titleParts = [price.detail];
+  if (pricing.source) titleParts.push(pricing.source);
+  if (pricing.note) titleParts.push(pricing.note);
+  return `<span class="adm-model-price billing-cost-only" title="${esc(titleParts.join(' · '))}">${esc(price.compact)}</span>`;
+}
 
 /* ═══════════════════════════════════════════
    USERS TAB
@@ -571,7 +581,8 @@ async function loadEndpoints() {
               `<label title="${esc(m.id)}" data-ep-model-row data-search="${esc((m.display + ' ' + m.id).toLowerCase())}" class="adm-model-row">
                 <input type="checkbox" class="adm-cb-hidden" data-ep-model-id="${esc(m.id)}" ${!m.is_hidden ? 'checked' : ''}>
                 <span class="adm-check-dot" aria-hidden="true"></span>
-                <span>${esc(m.display)}</span>
+                <span class="adm-model-name">${esc(m.display)}</span>
+                ${_modelPricingChipHtml(m.pricing)}
               </label>`
             ).join('') + '</div>';
             const filterRows = (q) => {

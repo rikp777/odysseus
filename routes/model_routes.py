@@ -1457,14 +1457,17 @@ def setup_model_routes(model_discovery):
                     pass
             pinned = _normalize_model_ids(getattr(ep, "pinned_models", None))
             pinned_set = set(pinned)
+            merged_models = _merge_model_ids(all_models, pinned)
+            model_pricing = _model_pricing_map(ep.base_url, merged_models)
             return [
                 {
                     "id": m,
                     "display": m.split("/")[-1],
                     "is_hidden": m in hidden,
                     "is_pinned": m in pinned_set,
+                    "pricing": model_pricing.get(m),
                 }
-                for m in _merge_model_ids(all_models, pinned)
+                for m in merged_models
             ]
         finally:
             db.close()
