@@ -25,6 +25,7 @@ from src.endpoint_resolver import (
     build_headers,
 )
 from src.auth_helpers import _auth_disabled, owner_filter
+from src.model_pricing import _model_pricing_map
 
 logger = logging.getLogger(__name__)
 
@@ -210,158 +211,7 @@ def _rewrite_loopback_for_docker(base_url: str, *, container_local: bool = False
     return urlunparse(parsed._replace(netloc=netloc))
 
 
-_DIGITALOCEAN_PRICING_URL = "https://docs.digitalocean.com/products/inference/details/pricing/"
-
-
-def _io_price(input_usd: float, output_usd: float, note: Optional[str] = None) -> Dict[str, Any]:
-    data: Dict[str, Any] = {
-        "currency": "USD",
-        "unit": "1M tokens",
-        "input_usd_per_unit": input_usd,
-        "output_usd_per_unit": output_usd,
-        "source": "DigitalOcean Inference pricing",
-        "source_url": _DIGITALOCEAN_PRICING_URL,
-    }
-    if note:
-        data["note"] = note
-    return data
-
-
-def _input_price(input_usd: float, unit: str = "1M input tokens") -> Dict[str, Any]:
-    return {
-        "currency": "USD",
-        "unit": unit,
-        "input_usd_per_unit": input_usd,
-        "source": "DigitalOcean Inference pricing",
-        "source_url": _DIGITALOCEAN_PRICING_URL,
-    }
-
-
-def _unit_price(price_usd: float, unit: str) -> Dict[str, Any]:
-    return {
-        "currency": "USD",
-        "unit": unit,
-        "price_usd_per_unit": price_usd,
-        "source": "DigitalOcean Inference pricing",
-        "source_url": _DIGITALOCEAN_PRICING_URL,
-    }
-
-
-# DigitalOcean's /v1/models endpoint does not expose price metadata. Keep this
-# catalog provider-scoped so other cloud providers can be added independently.
-_DIGITALOCEAN_MODEL_PRICING: Dict[str, Dict[str, Any]] = {
-    # Anthropic commercial models billed through DigitalOcean Inference.
-    "anthropic-claude-4.6-sonnet": _io_price(3.00, 15.00, "Prompts over 200K tokens have higher rates."),
-    "anthropic-claude-4.5-sonnet": _io_price(3.00, 15.00, "Prompts over 200K tokens have higher rates."),
-    "anthropic-claude-sonnet-4": _io_price(3.00, 15.00, "Prompts over 200K tokens have higher rates."),
-    "anthropic-claude-haiku-4.5": _io_price(1.00, 5.00),
-    "anthropic-claude-opus-4.8": _io_price(5.00, 25.00),
-    "anthropic-claude-opus-4.7": _io_price(5.00, 25.00),
-    "anthropic-claude-opus-4.6": _io_price(5.00, 25.00, "Prompts over 200K tokens have higher rates."),
-    "anthropic-claude-opus-4.5": _io_price(5.00, 25.00),
-    "anthropic-claude-4.1-opus": _io_price(15.00, 75.00),
-    "anthropic-claude-opus-4": _io_price(15.00, 75.00),
-
-    # DigitalOcean-hosted and third-party models exposed by the DO endpoint.
-    "arcee-trinity-large-thinking": _io_price(0.25, 0.90),
-    "alibaba-qwen3-32b": _io_price(0.25, 0.55),
-    "qwen3-coder-flash": _io_price(0.45, 1.70),
-    "qwen3.5-397b-a17b": _io_price(0.55, 3.50),
-    "qwen3-tts-voicedesign": _unit_price(20.00, "1M character tokens"),
-    "wan2.2-t2v-a14b": _unit_price(0.60, "1M video tokens"),
-    "wan2-2-t2v-a14b": _unit_price(0.60, "1M video tokens"),
-    "deepseek-r1-distill-llama-70b": _io_price(0.99, 0.99),
-    "deepseek-v4-pro": _io_price(1.74, 3.48),
-    "deepseek-4-flash": _io_price(0.14, 0.28),
-    "deepseek-3.2": _io_price(0.50, 1.60),
-    "gemma-4-31B-it": _io_price(0.18, 0.50),
-    "minimax-m2.5": _io_price(0.30, 1.20, "30% lower during DigitalOcean off-peak hours."),
-    "kimi-k2.5": _io_price(0.50, 2.70, "30% lower during DigitalOcean off-peak hours."),
-    "kimi-k2.6": _io_price(0.95, 4.00),
-    "llama3.3-70b-instruct": _io_price(0.65, 0.65),
-    "llama-4-maverick": _io_price(0.25, 0.87),
-    "mistral-3-14B": _io_price(0.20, 0.20),
-    "nvidia-nemotron-3-super-120b": _io_price(0.30, 0.65),
-    "nemotron-3-nano-omni": _io_price(0.50, 0.90),
-    "nemotron-nano-12b-v2-vl": _io_price(0.20, 0.60),
-    "stable-diffusion-3.5-large": _unit_price(0.08, "1M image tokens"),
-    "glm-5": _io_price(1.00, 3.20),
-
-    # OpenAI commercial models billed through DigitalOcean Inference.
-    "openai-gpt-oss-120b": _io_price(0.10, 0.70),
-    "openai-gpt-oss-20b": _io_price(0.05, 0.45),
-    "openai-gpt-5.4": _io_price(2.50, 15.00),
-    "openai-gpt-5.4-mini": _io_price(0.75, 4.50),
-    "openai-gpt-5.4-nano": _io_price(0.20, 1.25),
-    "openai-gpt-5.4-pro": _io_price(30.00, 180.00),
-    "openai-gpt-5.3-codex": _io_price(1.75, 14.00),
-    "openai-gpt-5.2": _io_price(1.75, 14.00),
-    "openai-gpt-5-2-pro": _io_price(21.00, 168.00),
-    "openai-gpt-5.2-pro": _io_price(21.00, 168.00),
-    "openai-gpt-5.1-codex-max": _io_price(1.25, 10.00),
-    "openai-gpt-5": _io_price(1.25, 10.00),
-    "openai-gpt-5-mini": _io_price(0.25, 2.00),
-    "openai-gpt-5-nano": _io_price(0.05, 0.40),
-    "openai-gpt-4.1": _io_price(2.00, 8.00),
-    "openai-gpt-4o": _io_price(2.50, 10.00),
-    "openai-gpt-4o-mini": _io_price(0.15, 0.60),
-    "openai-o1": _io_price(15.00, 60.00),
-    "openai-o3": _io_price(2.00, 8.00),
-    "openai-o3-mini": _io_price(1.10, 4.40),
-    "openai-gpt-image-1": _io_price(5.00, 40.00),
-    "openai-gpt-image-1.5": _io_price(5.00, 10.00),
-
-    # Knowledge-base embeddings and reranking.
-    "all-mini-lm-l6-v2": _input_price(0.009),
-    "multi-qa-mpnet-base-dot-v1": _input_price(0.009),
-    "gte-large-en-v1.5": _input_price(0.09),
-    "qwen3-embedding-0.6b": _input_price(0.04),
-    "bge-m3": _input_price(0.02),
-    "e5-large-v2": _input_price(0.02),
-    "bge-reranker-v2-m3": _unit_price(0.01, "1M reranking tokens"),
-}
-
-
-_MODEL_PRICING_BY_PROVIDER: Dict[str, Dict[str, Dict[str, Any]]] = {
-    "digitalocean": _DIGITALOCEAN_MODEL_PRICING,
-}
-
-
-_URL_TO_PRICING_PROVIDER = {
-    "inference.do-ai.run": "digitalocean",
-}
-
-
-def _match_pricing_provider(base_url: str) -> Optional[str]:
-    base = (base_url or "").lower()
-    host = (urlparse(base).hostname or "").lower()
-    for substring, provider in _URL_TO_PRICING_PROVIDER.items():
-        if substring in base or substring in host:
-            return provider
-    return None
-
-
-def _model_pricing_for_endpoint(base_url: str, model_id: str) -> Optional[Dict[str, Any]]:
-    provider = _match_pricing_provider(base_url)
-    if not provider:
-        return None
-    pricing = (_MODEL_PRICING_BY_PROVIDER.get(provider) or {}).get(model_id)
-    if not pricing:
-        return None
-    data = dict(pricing)
-    data["provider"] = provider
-    return data
-
-
-def _model_pricing_map(base_url: str, model_ids: List[str]) -> Dict[str, Dict[str, Any]]:
-    pricing: Dict[str, Dict[str, Any]] = {}
-    for model_id in model_ids:
-        item = _model_pricing_for_endpoint(base_url, model_id)
-        if item:
-            pricing[model_id] = item
-    return pricing
-
-
+# Pricing catalogs live in src.model_pricing so routes, billing, and usage accounting share one source.
 # ── Curated model lists per provider ──
 # For cloud providers that return 100+ models, only show these by default.
 # A model ID matches if it starts with or equals a curated entry.
@@ -785,13 +635,68 @@ def _model_endpoint_error_message(base_url: str, ping: Dict[str, Any] = None) ->
     return "No models found for that provider/key."
 
 
-def _visible_models(cached_models, hidden_models):
-    """Filter cached model IDs by hidden_models. Returns list of visible IDs."""
-    all_models = json.loads(cached_models) if isinstance(cached_models, str) else (cached_models or [])
+def _normalize_model_ids(value):
+    """Coerce a model-ID input into a clean, ordered list of strings.
+
+    Accepts a list, a JSON-encoded list string, or a comma/newline separated
+    string (handy for form or backend API input). Trims whitespace, drops
+    empty and non-string values, and de-duplicates preserving first-seen order.
+    """
+    if value is None:
+        return []
+    items = value
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return []
+        try:
+            parsed = json.loads(text)
+        except Exception:
+            parsed = None
+        items = parsed if isinstance(parsed, list) else re.split(r"[,\n]", text)
+    if not isinstance(items, list):
+        return []
+    out, seen = [], set()
+    for item in items:
+        if not isinstance(item, str):
+            continue
+        s = item.strip()
+        if not s or s in seen:
+            continue
+        seen.add(s)
+        out.append(s)
+    return out
+
+
+def _merge_model_ids(*lists):
+    """Concatenate model-ID lists, de-duplicating and preserving order."""
+    out, seen = [], set()
+    for ids in lists:
+        for m in (ids or []):
+            if not isinstance(m, str) or m in seen:
+                continue
+            seen.add(m)
+            out.append(m)
+    return out
+
+
+def _visible_models(cached_models, hidden_models, pinned_models=None):
+    """Merge cached + pinned model IDs, then filter out hidden ones.
+
+    Pinned IDs are admin-entered and may not appear in cached_models (e.g.
+    cloud deployment IDs the provider does not list in /v1/models). Returns an
+    ordered, de-duplicated list of visible IDs.
+    """
+    # Normalize each input so JSON strings, lists, comma/newline strings, and
+    # malformed strings are all handled without raising.
+    merged = _merge_model_ids(
+        _normalize_model_ids(cached_models),
+        _normalize_model_ids(pinned_models),
+    )
     if not hidden_models:
-        return all_models
-    hidden = set(json.loads(hidden_models) if isinstance(hidden_models, str) else (hidden_models or []))
-    return [m for m in all_models if m not in hidden]
+        return merged
+    hidden = set(_normalize_model_ids(hidden_models))
+    return [m for m in merged if m not in hidden]
 
 
 def setup_model_routes(model_discovery):
@@ -1277,10 +1182,13 @@ def setup_model_routes(model_discovery):
                         hidden = set(json.loads(r.hidden_models))
                     except Exception:
                         pass
-                visible = [m for m in all_models if m not in hidden]
-                status = "online" if all_models else "offline"
+                pinned = _normalize_model_ids(getattr(r, "pinned_models", None))
+                visible = _visible_models(all_models, r.hidden_models, pinned)
+                # Endpoint counts as reachable if it has any model — including
+                # admin-pinned IDs that a probe would never surface.
+                status = "online" if (all_models or pinned) else "offline"
                 ping = None
-                if not all_models and r.is_enabled:
+                if not all_models and not pinned and r.is_enabled:
                     ping = _ping_endpoint(r.base_url, r.api_key, timeout=1.0)
                     if ping.get("reachable"):
                         status = "empty"
@@ -1291,6 +1199,7 @@ def setup_model_routes(model_discovery):
                     "has_key": bool(r.api_key),
                     "is_enabled": r.is_enabled,
                     "models": visible,
+                    "pinned_models": pinned,
                     "hidden_count": len(hidden),
                     "online": status != "offline",
                     "status": status,
@@ -1312,6 +1221,7 @@ def setup_model_routes(model_discovery):
         require_models: str = Form("false"),
         model_type: str = Form("llm"),
         supports_tools: str = Form(""),  # "true"/"false"/"" (unknown)
+        pinned_models: str = Form(""),  # admin-pinned IDs: list/JSON/comma/newline
         container_local: str = Form("false"),
         # Default `shared=true` → endpoints are visible to all users (the
         # app's historical behaviour). Admins can pass `shared=false` to
@@ -1353,11 +1263,28 @@ def setup_model_routes(model_discovery):
                 .first()
             )
             if existing:
+                # Persist any incoming pinned IDs onto the existing row. An
+                # empty/omitted form field must not wipe previously pinned IDs.
+                _incoming_pinned = _normalize_model_ids(pinned_models)
+                if _incoming_pinned:
+                    _merged_pinned = _merge_model_ids(
+                        _normalize_model_ids(getattr(existing, "pinned_models", None)),
+                        _incoming_pinned,
+                    )
+                    existing.pinned_models = json.dumps(_merged_pinned) if _merged_pinned else None
+                    _db_dedup.commit()
+                    _invalidate_models_cache()
+                _existing_pinned = _normalize_model_ids(getattr(existing, "pinned_models", None))
                 return {
                     "id": existing.id,
                     "name": existing.name,
                     "base_url": existing.base_url,
-                    "models": json.loads(existing.cached_models) if existing.cached_models else [],
+                    "models": _visible_models(
+                        getattr(existing, "cached_models", None),
+                        getattr(existing, "hidden_models", None),
+                        existing.pinned_models,
+                    ),
+                    "pinned_models": _existing_pinned,
                     "online": True,
                     "status": "online",
                     "existing": True,
@@ -1379,6 +1306,7 @@ def setup_model_routes(model_discovery):
         try:
             _st_raw = (supports_tools or "").strip().lower()
             _st = True if _st_raw in ("true", "1", "yes") else (False if _st_raw in ("false", "0", "no") else None)
+            _pinned = _normalize_model_ids(pinned_models)
             # Stamp owner so the picker only shows this endpoint to the admin
             # who added it. Pass `shared=true` to mark it null-owner (visible
             # to all users), preserving the pre-fix "everyone sees everything"
@@ -1394,6 +1322,7 @@ def setup_model_routes(model_discovery):
                 is_enabled=True,
                 model_type=model_type.strip() if model_type else "llm",
                 cached_models=json.dumps(model_ids) if model_ids else None,
+                pinned_models=json.dumps(_pinned) if _pinned else None,
                 supports_tools=_st,
                 owner=_owner_val,
             )
@@ -1419,9 +1348,10 @@ def setup_model_routes(model_discovery):
             "id": ep_id,
             "name": name.strip(),
             "base_url": base_url,
-            "models": model_ids,
-            "online": bool(model_ids) or bool(ping.get("reachable")),
-            "status": "online" if model_ids else ("empty" if ping.get("reachable") else "offline"),
+            "models": _merge_model_ids(model_ids, _pinned),
+            "pinned_models": _pinned,
+            "online": bool(model_ids) or bool(_pinned) or bool(ping.get("reachable")),
+            "status": "online" if (model_ids or _pinned) else ("empty" if ping.get("reachable") else "offline"),
             "ping_error": ping.get("error") if ping else None,
         }
 
@@ -1514,7 +1444,8 @@ def setup_model_routes(model_discovery):
                     hidden = set(json.loads(ep.hidden_models))
                 except Exception:
                     pass
-            # Try live probe, fall back to cached
+            # Try live probe, fall back to cached. Pinned IDs are admin-entered
+            # and persist regardless of probe results — never overwritten here.
             all_models = _probe_endpoint(ep.base_url, ep.api_key, timeout=3)
             if all_models:
                 ep.cached_models = json.dumps(all_models)
@@ -1524,18 +1455,28 @@ def setup_model_routes(model_discovery):
                     all_models = json.loads(ep.cached_models)
                 except Exception:
                     pass
+            pinned = _normalize_model_ids(getattr(ep, "pinned_models", None))
+            pinned_set = set(pinned)
             return [
-                {"id": m, "display": m.split("/")[-1], "is_hidden": m in hidden}
-                for m in all_models
+                {
+                    "id": m,
+                    "display": m.split("/")[-1],
+                    "is_hidden": m in hidden,
+                    "is_pinned": m in pinned_set,
+                }
+                for m in _merge_model_ids(all_models, pinned)
             ]
         finally:
             db.close()
 
     @router.patch("/model-endpoints/{ep_id}/models")
     async def update_hidden_models(ep_id: str, request: Request):
-        """Bulk update hidden models list for an endpoint.
+        """Bulk update hidden and/or pinned model lists for an endpoint.
 
-        Expects JSON body: {"hidden": ["model-id-1", "model-id-2"]}
+        Expects JSON body with optional keys:
+          {"hidden": ["model-id-1", ...], "pinned_models": ["deploy-id", ...]}
+        Each key is updated only when present, so callers can patch one list
+        without clobbering the other.
         """
         require_admin(request)
         db = SessionLocal()
@@ -1544,13 +1485,22 @@ def setup_model_routes(model_discovery):
             if not ep:
                 raise HTTPException(404, "Endpoint not found")
             body = await request.json()
-            hidden = body.get("hidden", [])
-            if not isinstance(hidden, list):
-                raise HTTPException(400, "hidden must be a list of model IDs")
-            ep.hidden_models = json.dumps(hidden) if hidden else None
+            if not isinstance(body, dict):
+                raise HTTPException(400, "Body must be a JSON object")
+            if "hidden" in body:
+                hidden = body.get("hidden")
+                if not isinstance(hidden, list):
+                    raise HTTPException(400, "hidden must be a list of model IDs")
+                ep.hidden_models = json.dumps(hidden) if hidden else None
+            # Accept either "pinned" or "pinned_models" for the manual IDs list.
+            if "pinned_models" in body or "pinned" in body:
+                pinned = _normalize_model_ids(body.get("pinned_models", body.get("pinned")))
+                ep.pinned_models = json.dumps(pinned) if pinned else None
             db.commit()
             _invalidate_models_cache()
-            return {"id": ep_id, "hidden_count": len(hidden)}
+            hidden_count = len(json.loads(ep.hidden_models)) if ep.hidden_models else 0
+            pinned_count = len(json.loads(ep.pinned_models)) if ep.pinned_models else 0
+            return {"id": ep_id, "hidden_count": hidden_count, "pinned_count": pinned_count}
         finally:
             db.close()
 
@@ -1648,9 +1598,9 @@ def setup_model_routes(model_discovery):
                 return {"endpoint_id": "", "endpoint_url": "", "model": ""}
             base = _normalize_base(ep.base_url)
             chat_url = build_chat_url(base)
-            if not model and getattr(ep, "cached_models", None):
+            if not model and (getattr(ep, "cached_models", None) or getattr(ep, "pinned_models", None)):
                 try:
-                    visible = _visible_models(ep.cached_models, getattr(ep, "hidden_models", None))
+                    visible = _visible_models(ep.cached_models, getattr(ep, "hidden_models", None), getattr(ep, "pinned_models", None))
                     if visible:
                         model = visible[0]
                 except Exception:
@@ -1686,6 +1636,9 @@ def setup_model_routes(model_discovery):
                     ep.name = body["name"].strip() or ep.name
                 if "model_type" in body and isinstance(body["model_type"], str):
                     ep.model_type = body["model_type"].strip() or ep.model_type
+                if "pinned_models" in body:
+                    _pinned = _normalize_model_ids(body["pinned_models"])
+                    ep.pinned_models = json.dumps(_pinned) if _pinned else None
                 # Rotating an API key used to require DELETE+POST, which wiped
                 # endpoint_url/model from every session referencing the old base
                 # URL. Allow in-place updates so the admin can change the key
@@ -1714,6 +1667,7 @@ def setup_model_routes(model_discovery):
                 "name": ep.name,
                 "model_type": ep.model_type,
                 "base_url": ep.base_url,
+                "pinned_models": _normalize_model_ids(getattr(ep, "pinned_models", None)),
             }
         finally:
             db.close()

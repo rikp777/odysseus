@@ -41,6 +41,7 @@ services/data/
 
 # Test capture artifacts (browser session dumps may contain personal content)
 .playwright-mcp/
+.playwright-cli/
 
 # OS
 .DS_Store

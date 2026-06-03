@@ -77,7 +77,7 @@ async def test_auto_summarize_pass_logs_out_imap_on_select_failure(monkeypatch):
             captured["logout_calls"] = captured.get("logout_calls", 0) + 1
 
     def fake_imap_connect(account_id=None, owner=""):
-        captured["connect_called"] = True
+        captured["connect_calls"] = captured.get("connect_calls", 0) + 1
         return _Conn()
 
     def fake_owner_for(account_id):
@@ -97,12 +97,13 @@ async def test_auto_summarize_pass_logs_out_imap_on_select_failure(monkeypatch):
         account_id="acct-1", progress_cb=None,
     )
 
-    assert captured.get("connect_called") is True, (
+    assert captured.get("connect_calls", 0) >= 1, (
         "test setup: _imap_connect must be reached for the leak to apply"
     )
-    assert captured.get("logout_calls", 0) == 1, (
-        f"conn.logout() must be called exactly once on the error path "
+    assert captured.get("logout_calls", 0) == captured.get("connect_calls", 0), (
+        f"conn.logout() must be called once per opened connection on the error path "
         f"(IMAP leak fix). Got logout_calls={captured.get('logout_calls')}, "
+        f"connect_calls={captured.get('connect_calls')}, "
         f"select_calls={captured.get('select_calls')}. Pre-fix the "
         f"outer `except` returned without logging out the IMAP socket."
     )

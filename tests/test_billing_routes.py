@@ -7,6 +7,7 @@ from fastapi import HTTPException
 
 from routes import auth_routes
 from routes import billing_routes
+from src.billing.providers import BillingProvider
 
 
 class _AuthManager:
@@ -45,9 +46,19 @@ def _reset_cache():
 
 
 def _set_digitalocean_fetch(monkeypatch, fetch):
-    provider = dict(billing_routes._PROVIDERS["digitalocean"])
-    provider["fetch"] = fetch
+    provider = billing_routes._PROVIDERS["digitalocean"].with_fetch(fetch)
     monkeypatch.setitem(billing_routes._PROVIDERS, "digitalocean", provider)
+
+
+def _example_provider(fetch, normalize):
+    return BillingProvider(
+        id="examplecloud",
+        label="ExampleCloud",
+        short_label="EX",
+        token_hint="ExampleCloud billing token",
+        fetch=fetch,
+        normalize=normalize,
+    )
 
 
 def _account(account_id="do-main", provider="digitalocean", token="token", label="Main", enabled=True):
@@ -78,6 +89,13 @@ def _empty_local_usage(period="month"):
         "providers": [],
         "models": [],
     }
+
+
+def test_provider_registry_uses_billing_provider_objects():
+    assert isinstance(billing_routes._PROVIDERS["digitalocean"], BillingProvider)
+    assert billing_routes._PROVIDERS["digitalocean"].id == "digitalocean"
+    assert callable(billing_routes._PROVIDERS["digitalocean"].fetch)
+    assert callable(billing_routes._PROVIDERS["digitalocean"].normalize)
 
 
 @pytest.fixture(autouse=True)
@@ -211,16 +229,13 @@ def test_cloud_monthly_spend_sums_multiple_accounts(monkeypatch):
     monkeypatch.setitem(
         billing_routes._PROVIDERS,
         "examplecloud",
-        {
-            "label": "ExampleCloud",
-            "short_label": "EX",
-            "token_hint": "ExampleCloud billing token",
-            "fetch": lambda token: {"usage": "2.50"},
-            "normalize": lambda balance: {
+        _example_provider(
+            fetch=lambda token: {"usage": "2.50"},
+            normalize=lambda balance: {
                 "amount_decimal": billing_routes._decimal_or_zero(balance.get("usage")),
                 "month_to_date_usage": "2.50",
             },
-        },
+        ),
     )
 
     result = _endpoint()(_request())
@@ -286,16 +301,13 @@ def test_cloud_spending_graph_returns_chart_and_records_history(monkeypatch, tmp
     monkeypatch.setitem(
         billing_routes._PROVIDERS,
         "examplecloud",
-        {
-            "label": "ExampleCloud",
-            "short_label": "EX",
-            "token_hint": "ExampleCloud billing token",
-            "fetch": lambda token: {"usage": "2.50"},
-            "normalize": lambda balance: {
+        _example_provider(
+            fetch=lambda token: {"usage": "2.50"},
+            normalize=lambda balance: {
                 "amount_decimal": billing_routes._decimal_or_zero(balance.get("usage")),
                 "month_to_date_usage": "2.50",
             },
-        },
+        ),
     )
 
     result = _graph_endpoint()(_request())
@@ -417,6 +429,103 @@ def test_monthly_spend_prefers_digitalocean_inference_insights(monkeypatch):
     assert result["spend_scope"] == "model_usage"
     assert result["over_limit"] is False
     assert result["accounts"][0]["model_display"] == "$0.68"
+
+
+def test_monthly_spend_supports_openai_account_and_model_usage(monkeypatch):
+    monkeypatch.setattr(
+        billing_routes,
+        "_load_settings",
+        lambda: {
+            "cloud_billing_enabled": True,
+            "cloud_billing_accounts": [_account(account_id="openai-main", provider="openai", token="oa-token", label="OpenAI")],
+            "cloud_billing_refresh_seconds": 300,
+            "cloud_billing_monthly_warning_usd": "1",
+            "cloud_billing_monthly_limit_usd": "1",
+            "cloud_billing_usage_ledger_enabled": True,
+        },
+    )
+    provider = billing_routes._PROVIDERS["openai"].with_fetch(lambda token: {
+        "costs": [{
+            "data": [{
+                "results": [{
+                    "amount": {"value": 2.0, "currency": "usd"},
+                    "line_item": "API usage",
+                }],
+            }],
+            "has_more": False,
+        }],
+        "completions_usage": [{
+            "data": [{
+                "results": [{
+                    "model": "gpt-4o-mini",
+                    "input_tokens": 1_000_000,
+                    "output_tokens": 500_000,
+                    "num_model_requests": 2,
+                }],
+            }],
+            "has_more": False,
+        }],
+    })
+    monkeypatch.setitem(billing_routes._PROVIDERS, "openai", provider)
+
+    result = _endpoint()(_request())
+
+    assert result["amount"] == "0.45"
+    assert result["display"] == "$0.45"
+    assert result["provider_amount"] == "2.00"
+    assert result["provider_display"] == "$2.00"
+    assert result["spend_source"] == "provider_model_billing"
+    assert result["spend_scope"] == "model_usage"
+    assert result["provider_label"] == "OpenAI models"
+    assert result["accounts"][0]["provider"] == "openai"
+    assert result["accounts"][0]["model_display"] == "$0.45"
+
+
+def test_monthly_spend_supports_anthropic_admin_usage_report(monkeypatch):
+    monkeypatch.setattr(
+        billing_routes,
+        "_load_settings",
+        lambda: {
+            "cloud_billing_enabled": True,
+            "cloud_billing_accounts": [_account(account_id="anthropic-main", provider="anthropic", token="cl-token", label="Claude")],
+            "cloud_billing_refresh_seconds": 300,
+            "cloud_billing_monthly_warning_usd": "20",
+            "cloud_billing_monthly_limit_usd": "30",
+            "cloud_billing_usage_ledger_enabled": True,
+        },
+    )
+    provider = billing_routes._PROVIDERS["anthropic"].with_fetch(lambda token: {
+        "messages_usage": [{
+            "data": [{
+                "results": [{
+                    "model": "claude-sonnet-4-5-20250929",
+                    "uncached_input_tokens": 1_000_000,
+                    "cache_creation": {
+                        "ephemeral_5m_input_tokens": 1_000_000,
+                        "ephemeral_1h_input_tokens": 1_000_000,
+                    },
+                    "cache_read_input_tokens": 1_000_000,
+                    "output_tokens": 1_000_000,
+                }],
+            }],
+            "has_more": False,
+        }],
+    })
+    monkeypatch.setitem(billing_routes._PROVIDERS, "anthropic", provider)
+
+    result = _endpoint()(_request())
+
+    assert result["amount"] == "28.05"
+    assert result["display"] == "$28.05"
+    assert result.get("provider_amount") is None
+    assert result.get("provider_display") in (None, "")
+    assert result["spend_source"] == "provider_model_billing"
+    assert result["spend_scope"] == "model_usage"
+    assert result["provider_label"] == "Anthropic models"
+    assert result["over_warning"] is True
+    assert result["over_limit"] is False
+    assert result["accounts"][0]["amount_scope"] == "model_usage"
+    assert result["accounts"][0]["model_display"] == "$28.05"
 
 
 def test_spending_graph_uses_digitalocean_inference_insight_rows(monkeypatch):

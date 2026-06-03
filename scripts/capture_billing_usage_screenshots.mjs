@@ -551,6 +551,14 @@ function populateBillingSettingsCard() {
   setValue('#set-cloudBillingDailyLimit', settings.cloud_billing_daily_limit_usd);
   setValue('#set-cloudBillingLimit', settings.cloud_billing_monthly_limit_usd);
 
+  const billingProviderLabels = {
+    digitalocean: 'DigitalOcean',
+    openai: 'OpenAI',
+    anthropic: 'Anthropic',
+  };
+  const billingProviderOptions = (selected) => Object.entries(billingProviderLabels).map(([value, label]) => (
+    '<option value="' + esc(value) + '"' + (value === selected ? ' selected' : '') + '>' + esc(label) + '</option>'
+  )).join('');
   const accounts = $('#set-cloudBillingAccounts');
   if (accounts) {
     const results = new Map((status.accounts || []).map((item) => [item.account_id, item]));
@@ -559,7 +567,7 @@ function populateBillingSettingsCard() {
         const result = results.get(account.id);
         const state = accountStatusState(account, result);
         const warning = state.tone === 'warning' || state.tone === 'danger';
-        const providerLabel = account.provider === 'digitalocean' ? 'DigitalOcean' : account.provider;
+        const providerLabel = billingProviderLabels[account.provider] || account.provider;
         const accountTitle = account.label || providerLabel;
         return (
       '<div class="cloud-billing-account" data-account-id="' + esc(account.id) + '">' +
@@ -578,7 +586,7 @@ function populateBillingSettingsCard() {
           '<span class="cloud-billing-account-status-text">' + esc(accountStatusText(account, result)) + '</span>' +
         '</div>' +
         '<div class="cloud-billing-account-fields">' +
-          '<label class="cloud-billing-field"><span>Provider</span><select class="settings-select" data-field="provider"><option value="digitalocean" selected>DigitalOcean</option></select></label>' +
+          '<label class="cloud-billing-field"><span>Provider</span><select class="settings-select" data-field="provider">' + billingProviderOptions(account.provider) + '</select></label>' +
           '<label class="cloud-billing-field"><span>Label</span><input class="settings-input" data-field="label" type="text" placeholder="Label" value="' + esc(account.label || '') + '"></label>' +
           '<label class="cloud-billing-field cloud-billing-token-field"><span>Token</span><input class="settings-input" data-field="api_token" type="password" placeholder="Key stored; enter new key to replace"></label>' +
         '</div>' +

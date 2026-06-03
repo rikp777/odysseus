@@ -10,48 +10,24 @@ from __future__ import annotations
 
 from calendar import monthrange
 from datetime import datetime, timedelta, timezone
-from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+from decimal import Decimal
 import ipaddress
 from typing import Any, Dict, Optional
 from urllib.parse import urlparse
 import uuid
 
+from src.billing.common import (
+    decimal_or_none as _decimal_or_none,
+    decimal_or_zero as _decimal_or_zero,
+    display_money as _display_money,
+    float_money as _float_money,
+    stored_money as _stored_money,
+)
 from src.settings import load_settings
 
 
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
-
-
-def _decimal_or_none(value: Any) -> Optional[Decimal]:
-    if value in (None, ""):
-        return None
-    try:
-        return Decimal(str(value))
-    except (InvalidOperation, ValueError):
-        return None
-
-
-def _decimal_or_zero(value: Any) -> Decimal:
-    return _decimal_or_none(value) or Decimal("0")
-
-
-def _stored_money(value: Optional[Decimal]) -> Optional[str]:
-    if value is None:
-        return None
-    return str(value.quantize(Decimal("0.000001"), rounding=ROUND_HALF_UP))
-
-
-def _display_money(value: Optional[Decimal]) -> str:
-    if value is None:
-        return ""
-    return f"${value.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)}"
-
-
-def _float_money(value: Optional[Decimal]) -> Optional[float]:
-    if value is None:
-        return None
-    return float(value.quantize(Decimal("0.000001"), rounding=ROUND_HALF_UP))
 
 
 def _period_range(period: str, now: Optional[datetime] = None) -> tuple[datetime, datetime, str]:
@@ -117,7 +93,7 @@ def _is_remote_billable_url(endpoint_url: str) -> bool:
 
 def _pricing_for(endpoint_url: str, model: str) -> Optional[Dict[str, Any]]:
     try:
-        from routes.model_routes import _model_pricing_for_endpoint
+        from src.model_pricing import _model_pricing_for_endpoint
         return _model_pricing_for_endpoint(endpoint_url, model)
     except Exception:
         return None
@@ -313,7 +289,11 @@ def get_usage_summary(
     current = now or _utc_now()
     elapsed_days = max(1, current.day if normalized_period == "month" else 1)
     days_in_month = monthrange(current.year, current.month)[1]
-    projected = (total_cost / Decimal(elapsed_days)) * Decimal(days_in_month) if normalized_period == "month" and total_cost > 0 else total_cost
+    projected = (
+        (total_cost / Decimal(elapsed_days)) * Decimal(days_in_month)
+        if normalized_period == "month" and total_cost > 0
+        else total_cost
+    )
 
     return {
         "enabled": load_settings().get("cloud_billing_usage_ledger_enabled") is not False,
@@ -359,7 +339,7 @@ def local_budget_block_reason(endpoint_url: str, model: str = "", owner: Optiona
         limit = _decimal_or_none(raw_limit)
         if limit is None or limit <= 0:
             continue
-        summary = get_usage_summary(period=period, owner=None)
+        summary = get_usage_summary(period=period, owner=owner)
         amount = summary["amount_decimal"]
         if amount >= limit:
             label = "daily" if period == "day" else "monthly"

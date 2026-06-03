@@ -1428,9 +1428,13 @@ async function initCloudBillingSettings() {
   var accounts = [];
   var providerHints = {
     digitalocean: 'DigitalOcean token with billing:read and account:read',
+    openai: 'OpenAI admin key with organization usage/costs access',
+    anthropic: 'Anthropic Admin API key',
   };
   var providerLabels = {
     digitalocean: 'DigitalOcean',
+    openai: 'OpenAI',
+    anthropic: 'Anthropic',
   };
   var thresholdControls = [
     { toggle: dailyWarningToggle, input: dailyWarningInput },
@@ -1670,6 +1674,9 @@ async function initCloudBillingSettings() {
       return account && account.api_token_set
         ? 'Saved token; refresh to check account billing.'
         : 'Add a billing token, then save.';
+    }
+    if (result.ok && result.amount_scope === 'model_usage') {
+      return 'Provider model usage: ' + (result.model_display || result.display || '--') + ' this month.';
     }
     if (result.ok) return 'Provider account total: ' + (result.display || '--') + ' this month (all services, not AI-only).';
     return result.error || result.status || 'Could not refresh billing.';

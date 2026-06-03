@@ -78,6 +78,7 @@ async def test_webhook_delivery_uses_naive_utc_timestamps(monkeypatch):
     db = _Db()
     client = _Client()
     monkeypatch.setattr(wm, "SessionLocal", lambda: db)
+    monkeypatch.setattr(wm, "Webhook", type("_Webhook", (), {"id": object()}))
 
     manager = wm.WebhookManager()
     await manager._client.aclose()

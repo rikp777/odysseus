@@ -45,6 +45,36 @@ def test_estimate_usage_cost_records_unknown_provider_without_cost(monkeypatch):
     assert result["known_cost"] is False
 
 
+def test_estimate_usage_cost_uses_openai_catalog():
+    result = billing_usage.estimate_usage_cost(
+        "https://api.openai.com/v1/chat/completions",
+        "gpt-4o-mini-2024-07-18",
+        input_tokens=1_000_000,
+        output_tokens=500_000,
+    )
+
+    assert result["provider"] == "openai"
+    assert result["input_cost_usd"] == "0.150000"
+    assert result["output_cost_usd"] == "0.300000"
+    assert result["total_cost_usd"] == "0.450000"
+    assert result["known_cost"] is True
+
+
+def test_estimate_usage_cost_uses_anthropic_catalog():
+    result = billing_usage.estimate_usage_cost(
+        "https://api.anthropic.com/v1/messages",
+        "claude-sonnet-4-5-20250929",
+        input_tokens=1_000_000,
+        output_tokens=1_000_000,
+    )
+
+    assert result["provider"] == "anthropic"
+    assert result["input_cost_usd"] == "3.000000"
+    assert result["output_cost_usd"] == "15.000000"
+    assert result["total_cost_usd"] == "18.000000"
+    assert result["known_cost"] is True
+
+
 def test_local_budget_blocks_remote_when_daily_limit_is_reached(monkeypatch):
     monkeypatch.setattr(
         billing_usage,
@@ -73,3 +103,33 @@ def test_local_budget_blocks_remote_when_daily_limit_is_reached(monkeypatch):
     assert "Cloud model budget reached" in reason
     assert "$1.25" in reason
     assert billing_usage.local_budget_block_reason("http://127.0.0.1:11434/v1/chat/completions") is None
+
+
+def test_local_budget_uses_owner_scope(monkeypatch):
+    seen = []
+    monkeypatch.setattr(
+        billing_usage,
+        "load_settings",
+        lambda: {
+            "cloud_billing_enabled": True,
+            "cloud_billing_budget_enforcement_enabled": True,
+            "cloud_billing_usage_ledger_enabled": True,
+            "cloud_billing_daily_limit_usd": "",
+            "cloud_billing_monthly_limit_usd": "1.00",
+        },
+    )
+
+    def fake_usage_summary(period="month", owner=None):
+        seen.append((period, owner))
+        return {"amount_decimal": Decimal("1.25")}
+
+    monkeypatch.setattr(billing_usage, "get_usage_summary", fake_usage_summary)
+
+    reason = billing_usage.local_budget_block_reason(
+        "https://api.example.test/v1/chat/completions",
+        model="remote-model",
+        owner="alice",
+    )
+
+    assert "Cloud model budget reached" in reason
+    assert seen == [("month", "alice")]
