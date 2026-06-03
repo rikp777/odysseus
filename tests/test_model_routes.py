@@ -696,15 +696,25 @@ def test_reprobe_preserves_pinned_models(monkeypatch):
 
     class _FakeStreamingResponse:
         def __init__(self, body_iterator, media_type=None):
-            self.body_iterator = body_iterator
             self.media_type = media_type
+            self.body_iterator = self._iter_body(body_iterator)
+
+        async def _iter_body(self, body_iterator):
+            for chunk in body_iterator:
+                yield chunk
 
     monkeypatch.setattr(model_routes, "StreamingResponse", _FakeStreamingResponse)
     endpoint = _get_route("/api/model-endpoints/{ep_id}/probe", "GET")
 
     response = endpoint("ep1", _PinnedFakeRequest())
 
-    chunks = list(response.body_iterator)
+    async def _drain():
+        chunks = []
+        async for _ in response.body_iterator:
+            chunks.append(_)
+        return chunks
+
+    chunks = asyncio.run(_drain())
     assert any("probe_done" in str(chunk) for chunk in chunks)
 
     # Probe rewrites cached/hidden but must never touch admin-pinned IDs.
