@@ -470,7 +470,7 @@ function prepareSidebar() {
   if (avatar) avatar.textContent = 'A';
 }
 
-function fillSettingsCard() {
+function fillSettingsCard(options = {}) {
   showAdminUi();
   const modal = $('#settings-modal');
   if (modal) modal.classList.remove('hidden');
@@ -550,8 +550,9 @@ function fillSettingsCard() {
   document.body.style.margin = '0';
   document.body.style.padding = '0';
   document.body.style.background = 'var(--bg)';
-  card.style.width = '560px';
-  card.style.maxWidth = '560px';
+  const cardWidth = options.mobile ? '390px' : '560px';
+  card.style.width = cardWidth;
+  card.style.maxWidth = cardWidth;
   card.style.margin = '0';
 }
 
@@ -642,8 +643,8 @@ async function renderModelPicker() {
 
 async function main() {
   showAdminUi();
-  if (view === 'settings') {
-    fillSettingsCard();
+  if (view === 'settings' || view === 'settings-mobile') {
+    fillSettingsCard({ mobile: view === 'settings-mobile' });
     await waitFor(() => !!$('#cloud-billing-card:not(.collapsed) .cloud-billing-account-status'));
   } else if (view === 'picker') {
     await renderModelPicker();
@@ -1019,6 +1020,13 @@ function capturePlan() {
       selector: '#cloud-billing-card',
       width: 980,
       height: 850,
+    },
+    {
+      view: 'settings-mobile',
+      path: path.join(dir, `${prefix}-settings-mobile.png`),
+      selector: '#cloud-billing-card',
+      width: 390,
+      height: 1180,
     },
     {
       view: 'picker',
