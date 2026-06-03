@@ -1708,6 +1708,7 @@ async function initCloudBillingSettings() {
           '</div>' +
           '<div class="cloud-billing-account-actions">' +
             '<span class="cloud-billing-include-toggle" title="Include this account in provider billing checks"><span>Include</span><label class="admin-switch"><input type="checkbox" data-field="enabled" ' + (account.enabled ? 'checked' : '') + '><span class="admin-slider"></span></label></span>' +
+            '<button type="button" class="admin-btn-sm cloud-billing-test" data-action="test">Test</button>' +
             '<button type="button" class="admin-btn-sm cloud-billing-remove" data-action="remove">Remove</button>' +
           '</div>' +
         '</div>' +
@@ -1743,6 +1744,7 @@ async function initCloudBillingSettings() {
         api_token_set: !!prev.api_token_set,
       };
       if (token && token.value.trim()) next.api_token = token.value.trim();
+      else if (prev.api_token && !prev.api_token_set) next.api_token = prev.api_token;
       else if (prev.provider && providerValue !== prev.provider) {
         next.api_token_clear = true;
         next.api_token_set = false;
@@ -1750,6 +1752,13 @@ async function initCloudBillingSettings() {
       return next;
     });
     return accounts.slice();
+  }
+
+  function hasPendingTokenInput() {
+    if (!accountsEl) return false;
+    return Array.from(accountsEl.querySelectorAll('[data-field="api_token"]')).some(function(input) {
+      return !!(input && input.value && input.value.trim());
+    });
   }
 
   function applySettings(settings) {
@@ -1829,6 +1838,7 @@ async function initCloudBillingSettings() {
 
   async function saveBilling(options) {
     options = options || {};
+    var testing = !!options.testing;
     var payloadAccounts = readAccountsFromDom();
     var configured = payloadAccounts.some(function(account) {
       return !!(account && (account.api_token_set || (account.api_token || '').trim()));
@@ -1846,7 +1856,7 @@ async function initCloudBillingSettings() {
     };
 
     try {
-      setMsg('Saving...', false);
+      setMsg(testing ? 'Saving and testing...' : 'Saving...', false);
       var res = await fetch('/api/auth/settings', {
         method: 'POST',
         credentials: 'same-origin',
@@ -1855,10 +1865,15 @@ async function initCloudBillingSettings() {
       });
       if (!res.ok) throw new Error('save failed');
       applySettings(await res.json());
-      setMsg('Saved', false);
-      setTimeout(function() { setMsg('', false); }, 1800);
       notifyBillingChanged();
-      await refreshStatus(true);
+      var data = await refreshStatus(true);
+      if (testing) {
+        var ok = !!(data && data.configured && data.ok);
+        setMsg(ok ? 'Token saved and connected' : 'Token saved; billing check failed', !ok);
+      } else {
+        setMsg('Saved', false);
+        setTimeout(function() { setMsg('', false); }, 1800);
+      }
     } catch (e) {
       setMsg('Failed to save', true);
     }
@@ -1867,6 +1882,10 @@ async function initCloudBillingSettings() {
   if (saveBtn) saveBtn.addEventListener('click', function() { saveBilling(); });
   if (refreshBtn) refreshBtn.addEventListener('click', async function() {
     if (!hasConfiguredAccount()) return;
+    if (hasPendingTokenInput()) {
+      await saveBilling({ testing: true });
+      return;
+    }
     setMsg('Refreshing...', false);
     await refreshStatus(true);
     notifyBillingChanged();
@@ -1875,12 +1894,18 @@ async function initCloudBillingSettings() {
   if (addBtn) addBtn.addEventListener('click', function() {
     accounts = readAccountsFromDom();
     var provider = (addProvider && addProvider.value) || 'digitalocean';
+    var tokenValue = (addToken && addToken.value.trim()) || '';
+    if (!tokenValue) {
+      setMsg('Enter a provider billing token before adding.', true);
+      if (addToken) addToken.focus();
+      return;
+    }
     accounts.push({
       id: 'acct-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 7),
       provider: provider,
       label: (addLabel && addLabel.value.trim()) || providerLabels[provider] || provider,
       enabled: true,
-      api_token: (addToken && addToken.value.trim()) || '',
+      api_token: tokenValue,
       api_token_set: false,
     });
     if (addLabel) addLabel.value = '';
@@ -1888,7 +1913,12 @@ async function initCloudBillingSettings() {
     renderAccounts();
     saveBilling();
   });
-  if (accountsEl) accountsEl.addEventListener('click', function(e) {
+  if (accountsEl) accountsEl.addEventListener('click', async function(e) {
+    var testBtn = e.target.closest('[data-action="test"]');
+    if (testBtn) {
+      await saveBilling({ testing: true });
+      return;
+    }
     var removeBtn = e.target.closest('[data-action="remove"]');
     if (!removeBtn) return;
     var row = removeBtn.closest('.cloud-billing-account');
@@ -1933,10 +1963,11 @@ async function initCloudBillingSettings() {
       saveBilling();
     });
   });
-  if (accountsEl) accountsEl.addEventListener('change', function() {
+  if (accountsEl) accountsEl.addEventListener('change', function(e) {
     readAccountsFromDom();
     syncBillingAvailability();
-    setMsg('Unsaved changes', false);
+    var tokenField = e.target && e.target.closest ? e.target.closest('[data-field="api_token"]') : null;
+    setMsg(tokenField ? 'Unsaved token; click Save or Test' : 'Unsaved changes', false);
   });
   if (toggleBtn) {
     toggleBtn.addEventListener('click', function() {
