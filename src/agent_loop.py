@@ -960,8 +960,8 @@ def _build_system_prompt(
 _ADMIN_TOOLS = {
     "manage_session", "manage_skills", "manage_tasks",
     "manage_endpoints", "manage_mcp", "manage_webhooks", "manage_tokens",
-    "manage_documents", "manage_settings", "create_session", "list_sessions",
-    "send_to_session", "pipeline", "ask_teacher", "list_models",
+    "manage_documents", "manage_settings", "manage_billing", "create_session",
+    "list_sessions", "send_to_session", "pipeline", "ask_teacher", "list_models",
 }
 
 def _build_base_prompt(

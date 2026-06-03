@@ -26,6 +26,7 @@ NON_ADMIN_BLOCKED_TOOLS = {
     "manage_tokens",
     "manage_documents",
     "manage_settings",
+    "manage_billing",
     "api_call",
     "app_api",
     "send_email",
