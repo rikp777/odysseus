@@ -43,3 +43,15 @@ export function formatModelPrice(pricing) {
   }
   return null;
 }
+
+export function modelPriceSortValue(pricing) {
+  if (!pricing) return null;
+  const input = Number(pricing.input_usd_per_unit);
+  const output = Number(pricing.output_usd_per_unit);
+  if (Number.isFinite(input) && Number.isFinite(output)) return (input + output) / 2;
+  if (Number.isFinite(output)) return output;
+  if (Number.isFinite(input)) return input;
+
+  const unitPrice = Number(pricing.price_usd_per_unit);
+  return Number.isFinite(unitPrice) ? unitPrice : null;
+}

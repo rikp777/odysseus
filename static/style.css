@@ -14864,6 +14864,27 @@ body:has(.doc-version-panel:not(.hidden)) .hamburger-btn {
   padding: 4px 6px;
   background: color-mix(in srgb, var(--fg) 3%, transparent);
 }
+.adm-model-filter-row {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  margin: -2px 0 6px;
+}
+.adm-model-sort {
+  width: 152px;
+  height: 26px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+  font-size: 11px;
+  outline: none;
+}
+.adm-model-sort:focus {
+  border-color: var(--accent, var(--red));
+}
 .mcp-tools-list::-webkit-scrollbar {
   width: 4px;
 }
@@ -14890,6 +14911,18 @@ body:has(.doc-version-panel:not(.hidden)) .hamburger-btn {
 }
 .mcp-tools-list label > .adm-model-name {
   flex: 1 1 auto;
+}
+.mcp-tools-list label > .adm-model-intel {
+  flex: 0 0 auto;
+  max-width: 58px;
+  padding: 1px 5px;
+  border: 1px solid color-mix(in srgb, var(--fg) 13%, transparent);
+  border-radius: 999px;
+  color: color-mix(in srgb, var(--fg) 50%, transparent);
+  font-size: 9px;
+  font-weight: 600;
+  line-height: 1.15;
+  text-transform: uppercase;
 }
 .mcp-tools-list label > .adm-model-price {
   flex: 0 0 auto;

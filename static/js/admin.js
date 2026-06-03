@@ -5,7 +5,8 @@ import uiModule from './ui.js';
 import settingsModule from './settings.js';
 import { providerLogo } from './providers.js';
 import { sortModelObjects } from './modelSort.js';
-import { formatModelPrice } from './modelPricing.js';
+import { formatModelPrice, modelPriceSortValue } from './modelPricing.js';
+import { modelIntelligenceLabel, modelIntelligenceScore } from './modelRanking.js';
 
 let initialized = false;
 let modalEl = null;
@@ -23,7 +24,49 @@ function _modelPricingChipHtml(pricing) {
   const titleParts = [price.detail];
   if (pricing.source) titleParts.push(pricing.source);
   if (pricing.note) titleParts.push(pricing.note);
-  return `<span class="adm-model-price billing-cost-only" title="${esc(titleParts.join(' · '))}">${esc(price.compact)}</span>`;
+  return `<span class="adm-model-price" title="${esc(titleParts.join(' · '))}">${esc(price.compact)}</span>`;
+}
+
+function _modelIntelligenceChipHtml(score) {
+  const label = modelIntelligenceLabel(score);
+  return `<span class="adm-model-intel" title="Estimated intelligence level: ${esc(label)} (${score}/100)">${esc(label)}</span>`;
+}
+
+function _sortEndpointModelRows(panel, mode) {
+  const list = panel ? panel.querySelector('.mcp-tools-list') : null;
+  if (!list) return;
+  const rows = Array.from(list.querySelectorAll('[data-ep-model-row]'));
+  const numberOrNull = (value) => {
+    if (value == null || String(value).trim() === '') return null;
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  };
+  const byName = (a, b) => String(a.dataset.name || '').localeCompare(String(b.dataset.name || ''), undefined, {
+    numeric: true,
+    sensitivity: 'base',
+  });
+  const byIndex = (a, b) => (numberOrNull(a.dataset.index) || 0) - (numberOrNull(b.dataset.index) || 0);
+  const withUnknownLast = (aValue, bValue, direction) => {
+    const aMissing = aValue == null;
+    const bMissing = bValue == null;
+    if (aMissing && bMissing) return 0;
+    if (aMissing) return 1;
+    if (bMissing) return -1;
+    return direction * (aValue - bValue);
+  };
+  rows.sort((a, b) => {
+    if (mode === 'cheapest') {
+      return withUnknownLast(numberOrNull(a.dataset.price), numberOrNull(b.dataset.price), 1) || byName(a, b);
+    }
+    if (mode === 'expensive') {
+      return withUnknownLast(numberOrNull(a.dataset.price), numberOrNull(b.dataset.price), -1) || byName(a, b);
+    }
+    if (mode === 'intelligence') {
+      return ((numberOrNull(b.dataset.intelligence) || 0) - (numberOrNull(a.dataset.intelligence) || 0)) || byName(a, b);
+    }
+    return byIndex(a, b);
+  });
+  rows.forEach(row => list.appendChild(row));
 }
 
 /* ═══════════════════════════════════════════
@@ -535,7 +578,7 @@ async function loadEndpoints() {
         // Don't let interactions inside the expanded panel re-fire the
         // expand/collapse handler — the search box was getting closed
         // because clicking it bubbled up to here.
-        if (e.target.closest('.admin-btn-sm, .admin-btn-delete, .mcp-tools-list, .mcp-tools-header, .mcp-tools-search, input, label')) return;
+        if (e.target.closest('.admin-btn-sm, .admin-btn-delete, .mcp-tools-list, .mcp-tools-header, .mcp-tools-search, .adm-model-filter-row, input, label, select')) return;
         const epId = header.dataset.admEpHeader;
         const panel = row.querySelector(`[data-adm-ep-models-panel="${epId}"]`);
         if (!panel) return;
@@ -570,6 +613,15 @@ async function loadEndpoints() {
             if (!sortedModels.length) { panel.innerHTML = '<span style="opacity:0.5;font-size:11px;">No models</span>'; return; }
             const hiddenSet = new Set(sortedModels.filter(m => m.is_hidden).map(m => m.id));
             const showSearch = sortedModels.length >= 8;
+            const hasPricing = sortedModels.some(m => modelPriceSortValue(m.pricing) != null);
+            const sortControl = hasPricing
+              ? `<select class="adm-model-sort" data-ep-model-sort="${epId}" aria-label="Sort models">
+                  <option value="default">A-Z</option>
+                  <option value="cheapest">Cheapest</option>
+                  <option value="expensive">Most expensive</option>
+                  <option value="intelligence">Intelligence</option>
+                </select>`
+              : '';
             panel.innerHTML = `<div class="mcp-tools-header">
               <span>Models</span>
               <span style="display:flex;gap:8px;align-items:center;">
@@ -577,20 +629,26 @@ async function loadEndpoints() {
                 <a href="#" data-ep-select-all="${epId}">All</a>
                 <a href="#" data-ep-select-none="${epId}">None</a>
               </span>
-            </div>${showSearch ? `<input type="search" class="mcp-tools-search" placeholder="Search ${sortedModels.length} models..." data-ep-search="${epId}">` : ''}<div class="mcp-tools-list">` + sortedModels.map(m =>
-              `<label title="${esc(m.id)}" data-ep-model-row data-search="${esc((m.display + ' ' + m.id).toLowerCase())}" class="adm-model-row">
+            </div>${sortControl ? `<div class="adm-model-filter-row">${sortControl}</div>` : ''}${showSearch ? `<input type="search" class="mcp-tools-search" placeholder="Search ${sortedModels.length} models..." data-ep-search="${epId}">` : ''}<div class="mcp-tools-list">` + sortedModels.map((m, idx) => {
+              const priceValue = modelPriceSortValue(m.pricing);
+              const intelligence = modelIntelligenceScore(m);
+              return `<label title="${esc(m.id)}" data-ep-model-row data-search="${esc((m.display + ' ' + m.id).toLowerCase())}" data-name="${esc(m.display || m.id)}" data-index="${idx}" data-price="${priceValue == null ? '' : String(priceValue)}" data-intelligence="${intelligence}" class="adm-model-row">
                 <input type="checkbox" class="adm-cb-hidden" data-ep-model-id="${esc(m.id)}" ${!m.is_hidden ? 'checked' : ''}>
                 <span class="adm-check-dot" aria-hidden="true"></span>
                 <span class="adm-model-name">${esc(m.display)}</span>
+                ${_modelIntelligenceChipHtml(intelligence)}
                 ${_modelPricingChipHtml(m.pricing)}
-              </label>`
-            ).join('') + '</div>';
+              </label>`;
+            }).join('') + '</div>';
             const filterRows = (q) => {
               const needle = q.trim().toLowerCase();
               panel.querySelectorAll('[data-ep-model-row]').forEach(row => {
                 row.style.display = (!needle || row.dataset.search.includes(needle)) ? '' : 'none';
               });
             };
+            panel.querySelector(`[data-ep-model-sort="${epId}"]`)?.addEventListener('change', (e) => {
+              _sortEndpointModelRows(panel, e.target.value);
+            });
             panel.querySelector(`[data-ep-search="${epId}"]`)?.addEventListener('input', (e) => filterRows(e.target.value));
             panel.querySelector(`[data-ep-select-all="${epId}"]`)?.addEventListener('click', (e) => {
               e.preventDefault();
