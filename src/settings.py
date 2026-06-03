@@ -130,6 +130,7 @@ DEFAULT_SETTINGS = {
     "cloud_billing_accounts": [],
     "cloud_billing_refresh_seconds": 900,
     "cloud_billing_monthly_warning_usd": "",
+    "cloud_billing_daily_warning_usd": "",
     "cloud_billing_monthly_limit_usd": "",
     "cloud_billing_daily_limit_usd": "",
     "cloud_billing_budget_enforcement_enabled": True,

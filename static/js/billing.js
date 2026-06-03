@@ -62,12 +62,13 @@ function renderSpend(data) {
 
   const parts = [];
   if (data.ok) {
-    parts.push(`${data.provider_label || 'Cloud'} month-to-date spend: ${data.display || '--'}`);
-    if (data.warning_usd) parts.push(`warn at $${data.warning_usd}`);
-    if (data.limit_usd) parts.push(`limit $${data.limit_usd}`);
+    const scope = data.spend_scope === 'model_usage' ? 'model spend' : 'account spend';
+    parts.push(`${data.provider_label || 'Cloud'} ${scope}: ${data.display || '--'}`);
+    if (data.warning_usd) parts.push(`monthly warning $${data.warning_usd}`);
+    if (data.limit_usd) parts.push(`monthly max $${data.limit_usd}`);
     if (data.cached) parts.push('cached');
   } else {
-    parts.push(data.error || 'Cloud billing status unavailable');
+    parts.push(data.error || 'Model spend status unavailable');
   }
   pill.title = parts.join(' - ');
   scheduleRefresh(data.refresh_seconds);
@@ -94,7 +95,7 @@ export async function refreshBillingSpend(options = {}) {
       ok: false,
       enabled: true,
       configured: true,
-      error: 'Cloud billing status unavailable',
+      error: 'Model spend status unavailable',
       refresh_seconds: 900,
     });
     return null;

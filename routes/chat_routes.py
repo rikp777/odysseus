@@ -121,8 +121,8 @@ async def _run_direct_manage_billing(args: Dict[str, Any], request: Request, own
         owner=owner,
     )
     if result.get("exit_code", 0) != 0:
-        return str(result.get("error") or "Cloud billing data is unavailable right now.")
-    return str(result.get("response") or "Cloud billing data is unavailable right now.")
+        return str(result.get("error") or "Model spend data is unavailable right now.")
+    return str(result.get("response") or "Model spend data is unavailable right now.")
 
 
 _DIRECT_TOOL_RUNNERS: Dict[str, Callable[[Dict[str, Any], Request, str | None], Awaitable[str]]] = {

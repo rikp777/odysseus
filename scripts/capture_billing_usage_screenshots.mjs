@@ -78,11 +78,16 @@ function usage(events, input, output, knownCostEvents = events) {
 function buildCharts(balance) {
   const liveAmount = balance ? Number(balance.month_to_date_usage || 0) : null;
   const total = liveAmount == null ? 12.84 : Math.max(0, liveAmount);
-  const updatedAt = balance?.generated_at || isoNow();
+  const screenshotMonth = '2026-06';
+  const updatedAt = balance?.generated_at || `${screenshotMonth}-03T08:00:00Z`;
   const modelUsage = usage(18, 1480000, 212000, 15);
-  const providerUsage = usage(18, 1480000, 212000, 15);
+  const digitalOceanUsage = usage(11, 980000, 140000, 10);
+  const openAiUsage = usage(7, 500000, 72000, 5);
   const digitalOceanAmount = liveAmount == null ? 10.62 : total;
   const localLedgerAmount = liveAmount == null ? 2.22 : Math.min(total, 2.22);
+  const modelSpendTotal = localLedgerAmount;
+  const openAiModelAmount = Math.min(modelSpendTotal, Math.round(modelSpendTotal * 0.36 * 100) / 100);
+  const digitalOceanModelAmount = Math.max(0, modelSpendTotal - openAiModelAmount);
 
   const base = {
     version: 1,
@@ -93,21 +98,42 @@ function buildCharts(balance) {
     enabled: true,
     configured: true,
     currency: 'USD',
-    total,
-    total_display: money(total),
-    display: money(total),
+    total: modelSpendTotal,
+    total_display: money(modelSpendTotal),
+    display: money(modelSpendTotal),
     warning: 20,
     warning_display: '$20.00',
     warning_usd: '20.00',
     limit: 35,
     limit_display: '$35.00',
     limit_usd: '35.00',
-    projected: total * 1.8,
-    projected_display: money(total * 1.8),
+    daily_warning: null,
+    daily_warning_display: '',
+    daily_limit: null,
+    daily_limit_display: '',
+    monthly_warning: 20,
+    monthly_warning_display: '$20.00',
+    monthly_limit: 35,
+    monthly_limit_display: '$35.00',
+    projected: modelSpendTotal * 1.8,
+    projected_display: money(modelSpendTotal * 1.8),
     updated_at: updatedAt,
     cached: false,
-    provider_label: 'DigitalOcean',
+    provider_label: 'DigitalOcean models',
     provider_short_label: 'DO',
+    period: 'month',
+    month: screenshotMonth,
+    month_label: 'June 2026',
+    previous_month: '2026-05',
+    next_month: '',
+    is_current_month: true,
+    days_elapsed: 3,
+    days_in_month: 30,
+    spend_source: 'usage_ledger',
+    spend_scope: 'model_usage',
+    source_label: 'Usage ledger',
+    provider_total: digitalOceanAmount,
+    provider_total_display: money(digitalOceanAmount),
     refresh_seconds: 900,
     over_warning: false,
     over_limit: false,
@@ -122,97 +148,79 @@ function buildCharts(balance) {
       source_kind: 'usage_ledger',
       source_label: 'Usage ledger',
     },
-    source_note: 'Provider billing totals with usage ledger estimates',
+    source_note: 'Model spend from usage ledger estimates; provider billing is account-level and can include non-model services',
     history: [
-      { timestamp: '2026-06-01T08:00:00Z', amount: total * 0.22, display: money(total * 0.22) },
-      { timestamp: '2026-06-08T08:00:00Z', amount: total * 0.48, display: money(total * 0.48) },
-      { timestamp: '2026-06-15T08:00:00Z', amount: total * 0.72, display: money(total * 0.72) },
-      { timestamp: updatedAt, amount: total, display: money(total) },
+      { timestamp: '2026-06-01T00:00:00Z', amount: 0, display: '$0.00', synthetic: true },
+      { timestamp: '2026-06-02T08:00:00Z', amount: modelSpendTotal * 0.48, display: money(modelSpendTotal * 0.48) },
+      { timestamp: updatedAt, amount: modelSpendTotal, display: money(modelSpendTotal) },
     ],
-    notice: '',
+    notice: `Provider account billing reports ${money(digitalOceanAmount)} across all services; it is not used for the model spend total.`,
   };
 
   const model = {
     ...base,
-    title: 'Cloud Spend by Model',
-    period: 'month',
+    title: 'Model Spend by Model',
     group_by: 'model',
     accounts: [
       {
-        id: 'gpt-4o',
-        account_id: 'gpt-4o',
-        label: 'gpt-4o',
-        provider: 'local_usage',
-        provider_label: 'Local usage',
-        amount: 1.48,
-        display: '$1.48',
-        ok: true,
-        usage: usage(11, 960000, 141000, 10),
-        source_kind: 'usage_ledger',
-        source_label: 'Usage estimate',
-      },
-      {
-        id: 'claude-3-5-sonnet',
-        account_id: 'claude-3-5-sonnet',
-        label: 'claude-3.5-sonnet',
-        provider: 'local_usage',
-        provider_label: 'Local usage',
-        amount: 0.74,
-        display: '$0.74',
-        ok: true,
-        usage: usage(7, 520000, 71000, 5),
-        source_kind: 'usage_ledger',
-        source_label: 'Usage estimate',
-      },
-      {
-        id: 'digitalocean-main',
-        account_id: 'digitalocean-main',
-        label: 'DigitalOcean',
+        id: 'openai/gpt-oss-120b',
+        account_id: 'openai/gpt-oss-120b',
+        label: 'GPT OSS 120B',
         provider: 'digitalocean',
         provider_label: 'DigitalOcean',
-        amount: digitalOceanAmount,
-        display: money(digitalOceanAmount),
+        amount: digitalOceanModelAmount,
+        display: money(digitalOceanModelAmount),
         ok: true,
-        status: 'ok',
-        usage: providerUsage,
-        source_kind: 'provider_billing',
-        source_label: 'Provider billing',
+        usage: digitalOceanUsage,
+        source_kind: 'usage_ledger',
+        source_label: 'Usage estimate',
+      },
+      {
+        id: 'gpt-4o',
+        account_id: 'gpt-4o',
+        label: 'GPT-4o',
+        provider: 'openai',
+        provider_label: 'OpenAI',
+        amount: openAiModelAmount,
+        display: money(openAiModelAmount),
+        ok: true,
+        usage: openAiUsage,
+        source_kind: 'usage_ledger',
+        source_label: 'Usage estimate',
       },
     ],
   };
 
   const provider = {
     ...base,
-    title: 'Cloud Spend by Provider',
-    period: 'month',
+    title: 'Model Spend by Provider',
     group_by: 'provider',
     accounts: [
       {
         id: 'usage-digitalocean',
         account_id: 'usage-digitalocean',
-        label: 'digitalocean model usage',
+        label: 'DigitalOcean',
         provider: 'digitalocean',
-        provider_label: 'Local usage',
-        amount: localLedgerAmount,
-        display: money(localLedgerAmount),
+        provider_label: 'DigitalOcean',
+        amount: digitalOceanModelAmount,
+        display: money(digitalOceanModelAmount),
         ok: true,
-        usage: providerUsage,
+        usage: digitalOceanUsage,
         source_kind: 'usage_ledger',
         source_label: 'Usage estimate',
       },
       {
-        id: 'digitalocean-main',
-        account_id: 'digitalocean-main',
-        label: 'DigitalOcean',
-        provider: 'digitalocean',
-        provider_label: 'DigitalOcean',
-        amount: digitalOceanAmount,
-        display: money(digitalOceanAmount),
+        id: 'usage-openai',
+        account_id: 'usage-openai',
+        label: 'OpenAI',
+        provider: 'openai',
+        provider_label: 'OpenAI',
+        amount: openAiModelAmount,
+        display: money(openAiModelAmount),
         ok: true,
-        status: 'ok',
-        usage: {},
-        source_kind: 'provider_billing',
-        source_label: 'Provider billing',
+        usage: openAiUsage,
+        source_kind: 'usage_ledger',
+        source_label: 'Usage estimate',
       },
     ],
   };
@@ -269,21 +277,25 @@ function buildModelItems() {
 
 function billingStatus(charts) {
   const model = charts.model;
+  const providerTotal = Number(model.provider_total || 0);
+  const modelTotal = Number(model.total || 0);
   return {
     ...model,
     display: model.total_display,
+    provider_display: model.provider_total_display,
+    provider_amount: String(model.provider_total || ''),
     accounts: [
       {
         account_id: 'digitalocean-main',
         ok: true,
-        display: model.accounts.find((item) => item.id === 'digitalocean-main')?.display || model.total_display,
+        display: money(Math.max(providerTotal - modelTotal, 0)),
         over_warning: false,
         over_limit: false,
       },
       {
         account_id: 'digitalocean-production',
         ok: true,
-        display: '$2.22',
+        display: model.total_display,
         over_warning: false,
         over_limit: false,
       },
@@ -312,6 +324,7 @@ function settingsPayload() {
     ],
     cloud_billing_refresh_seconds: 900,
     cloud_billing_monthly_warning_usd: '20.00',
+    cloud_billing_daily_warning_usd: '0.75',
     cloud_billing_daily_limit_usd: '1.00',
     cloud_billing_monthly_limit_usd: '35.00',
     cloud_billing_budget_enforcement_enabled: true,
@@ -437,11 +450,27 @@ function accountStatusText(account, result) {
   if (account && account.enabled === false) return 'Excluded from spend total.';
   if (!result) {
     return account && account.api_token_set
-      ? 'Saved token; refresh to check spend.'
+      ? 'Saved token; refresh to check account billing.'
       : 'Add a billing token, then save.';
   }
-  if (result.ok) return (result.display || '--') + ' this month';
+  if (result.ok) return 'Provider account total: ' + (result.display || '--') + ' this month (all services, not AI-only).';
   return result.error || result.status || 'Could not refresh billing.';
+}
+
+function currentSpendHtml(status) {
+  const chips = [];
+  if (status.source_label) chips.push(status.source_label);
+  if (status.limit_usd) chips.push('Monthly max $' + status.limit_usd);
+  else if (status.warning_usd) chips.push('Monthly warning $' + status.warning_usd);
+  if (status.provider_display) chips.push('Provider account total ' + status.provider_display + ' (all services)');
+  return (
+    '<div class="cloud-billing-current-main">' +
+      '<div><span>Current AI Spend</span><strong>' + esc(status.display || '$0.00') + '</strong></div>' +
+      '<span class="cloud-billing-current-period">Month to date</span>' +
+    '</div>' +
+    '<div class="cloud-billing-current-meta">AI/model usage this month. This value drives graphs, warnings, and max usage.</div>' +
+    '<div class="cloud-billing-current-chips">' + chips.map((chip) => '<span>' + esc(chip) + '</span>').join('') + '</div>'
+  );
 }
 
 function prepareSidebar() {
@@ -470,7 +499,7 @@ function prepareSidebar() {
   if (avatar) avatar.textContent = 'A';
 }
 
-function fillSettingsCard(options = {}) {
+function showServicesSettingsModal() {
   showAdminUi();
   const modal = $('#settings-modal');
   if (modal) modal.classList.remove('hidden');
@@ -480,7 +509,9 @@ function fillSettingsCard(options = {}) {
   document.querySelectorAll('[data-settings-tab]').forEach((tab) => {
     tab.classList.toggle('active', tab.dataset.settingsTab === 'services');
   });
+}
 
+function populateBillingSettingsCard() {
   const settings = data.settings;
   const status = data.billingStatus;
   const card = $('#cloud-billing-card');
@@ -492,6 +523,11 @@ function fillSettingsCard(options = {}) {
   if (toggle) toggle.setAttribute('aria-expanded', 'true');
   const summary = $('#set-cloudBillingSummary');
   if (summary) summary.textContent = status.display || charts.model.total_display;
+  const currentSpend = $('#set-cloudBillingCurrentSpend');
+  if (currentSpend) {
+    currentSpend.className = 'cloud-billing-current';
+    currentSpend.innerHTML = currentSpendHtml(status);
+  }
 
   const setChecked = (selector, checked) => {
     const input = $(selector);
@@ -506,6 +542,11 @@ function fillSettingsCard(options = {}) {
     if (input) input.value = value == null ? '' : String(value);
   };
   setValue('#set-cloudBillingRefresh', settings.cloud_billing_refresh_seconds);
+  setChecked('#set-cloudBillingDailyWarningToggle', !!settings.cloud_billing_daily_warning_usd);
+  setChecked('#set-cloudBillingDailyLimitToggle', !!settings.cloud_billing_daily_limit_usd);
+  setChecked('#set-cloudBillingWarningToggle', !!settings.cloud_billing_monthly_warning_usd);
+  setChecked('#set-cloudBillingLimitToggle', !!settings.cloud_billing_monthly_limit_usd);
+  setValue('#set-cloudBillingDailyWarning', settings.cloud_billing_daily_warning_usd);
   setValue('#set-cloudBillingWarning', settings.cloud_billing_monthly_warning_usd);
   setValue('#set-cloudBillingDailyLimit', settings.cloud_billing_daily_limit_usd);
   setValue('#set-cloudBillingLimit', settings.cloud_billing_monthly_limit_usd);
@@ -518,16 +559,28 @@ function fillSettingsCard(options = {}) {
         const result = results.get(account.id);
         const state = accountStatusState(account, result);
         const warning = state.tone === 'warning' || state.tone === 'danger';
+        const providerLabel = account.provider === 'digitalocean' ? 'DigitalOcean' : account.provider;
+        const accountTitle = account.label || providerLabel;
         return (
       '<div class="cloud-billing-account" data-account-id="' + esc(account.id) + '">' +
-        '<select class="settings-select" data-field="provider"><option value="digitalocean" selected>DigitalOcean</option></select>' +
-        '<input class="settings-input" data-field="label" type="text" placeholder="Label" value="' + esc(account.label || '') + '">' +
-        '<input class="settings-input" data-field="api_token" type="password" placeholder="Key stored; enter new key to replace">' +
-        '<label class="admin-switch" title="Include this account in the spend total"><input type="checkbox" data-field="enabled" checked><span class="admin-slider"></span></label>' +
-        '<button type="button" class="admin-btn-sm" data-action="remove">Remove</button>' +
+        '<div class="cloud-billing-account-head">' +
+          '<div class="cloud-billing-account-title">' +
+            '<strong>' + esc(accountTitle) + '</strong>' +
+            '<span>' + esc(providerLabel) + '</span>' +
+          '</div>' +
+          '<div class="cloud-billing-account-actions">' +
+            '<span class="cloud-billing-include-toggle" title="Include this account in provider billing checks"><span>Include</span><label class="admin-switch"><input type="checkbox" data-field="enabled" checked><span class="admin-slider"></span></label></span>' +
+            '<button type="button" class="admin-btn-sm cloud-billing-remove" data-action="remove">Remove</button>' +
+          '</div>' +
+        '</div>' +
         '<div class="cloud-billing-account-status' + (warning ? ' billing-warning' : '') + '">' +
           '<span class="cloud-billing-account-badge billing-account-' + state.tone + '">' + esc(state.label) + '</span>' +
           '<span class="cloud-billing-account-status-text">' + esc(accountStatusText(account, result)) + '</span>' +
+        '</div>' +
+        '<div class="cloud-billing-account-fields">' +
+          '<label class="cloud-billing-field"><span>Provider</span><select class="settings-select" data-field="provider"><option value="digitalocean" selected>DigitalOcean</option></select></label>' +
+          '<label class="cloud-billing-field"><span>Label</span><input class="settings-input" data-field="label" type="text" placeholder="Label" value="' + esc(account.label || '') + '"></label>' +
+          '<label class="cloud-billing-field cloud-billing-token-field"><span>Token</span><input class="settings-input" data-field="api_token" type="password" placeholder="Key stored; enter new key to replace"></label>' +
         '</div>' +
       '</div>'
         );
@@ -540,9 +593,47 @@ function fillSettingsCard(options = {}) {
   const statusEl = $('#set-cloudBillingStatus');
   if (statusEl) {
     statusEl.classList.remove('billing-warning');
-    statusEl.textContent = 'DigitalOcean - Current: ' + (status.display || charts.model.total_display) + ' this month - warn at $20.00 - limit $35.00';
+    statusEl.textContent = 'DigitalOcean - Model usage: ' + (status.display || charts.model.total_display) + ' this month - provider account total ' + (status.provider_display || '$10.62') + ' all services, not AI-only - monthly warning $20.00 - monthly max $35.00';
   }
 
+  return card;
+}
+
+function populateAddedModelsCard() {
+  const localList = $('#adm-epList-local');
+  if (localList) {
+    localList.innerHTML = '';
+    const localSection = localList.closest('.adm-ep-section');
+    if (localSection) localSection.style.display = 'none';
+  }
+
+  const apiList = $('#adm-epList-api');
+  if (!apiList) return;
+  const apiSection = apiList.closest('.adm-ep-section');
+  if (apiSection) apiSection.style.display = '';
+  apiList.innerHTML = [
+    '<div class="admin-user-row" data-adm-ep-id="do-inference">',
+      '<div style="display:flex;align-items:center;justify-content:space-between;cursor:pointer;padding:4px 0;" data-adm-ep-header="do-inference">',
+        '<div class="admin-user-info" style="flex:1;flex-wrap:wrap;gap:0.3rem;">',
+          '<span class="admin-user-name">DigitalOcean Inference</span>',
+          '<span class="admin-badge">66/66 models enabled</span>',
+          '<span style="font-size:10px;opacity:0.4;">Click to manage models</span>',
+        '</div>',
+        '<div style="display:flex;gap:4px;align-items:center;">',
+          '<button class="admin-btn-sm" data-adm-toggle-ep="do-inference">Disable</button>',
+          '<button class="admin-btn-delete" data-adm-del-ep="do-inference" data-adm-ep-online="1">Delete</button>',
+          '<svg class="admin-user-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.3;transition:transform 0.2s,opacity 0.2s;"><polyline points="6 9 12 15 18 9"/></svg>',
+        '</div>',
+      '</div>',
+      '<div class="admin-ep-detail">https://inference.do-ai.run/v1 (key set)</div>',
+      '<div class="mcp-tools-panel hidden" data-adm-ep-models-panel="do-inference"></div>',
+    '</div>',
+  ].join('');
+}
+
+function fillSettingsCard(options = {}) {
+  showServicesSettingsModal();
+  const card = populateBillingSettingsCard();
   document.body.replaceChildren(card);
   document.body.style.display = 'block';
   document.body.style.height = 'auto';
@@ -554,6 +645,32 @@ function fillSettingsCard(options = {}) {
   card.style.width = cardWidth;
   card.style.maxWidth = cardWidth;
   card.style.margin = '0';
+}
+
+function fillSettingsLocation() {
+  showServicesSettingsModal();
+  populateAddedModelsCard();
+  const card = populateBillingSettingsCard();
+  const modal = $('#settings-modal');
+  const content = modal ? modal.querySelector('.settings-modal-content') : null;
+  const layout = $('.settings-layout');
+  const panels = $('.settings-panels');
+  if (!modal || !content || !layout || !panels) throw new Error('Settings modal not found');
+
+  modal.classList.remove('hidden');
+  content.style.width = '860px';
+  content.style.height = '1400px';
+  content.style.maxHeight = 'none';
+  content.style.marginTop = '0';
+  content.style.overflow = 'hidden';
+  layout.style.display = 'flex';
+  layout.style.minHeight = '0';
+  layout.style.height = 'calc(100% - 92px)';
+  layout.style.maxHeight = 'none';
+  panels.style.minHeight = '0';
+  panels.style.height = '100%';
+  panels.style.overflowY = 'auto';
+  panels.scrollTop = Math.max(0, card.offsetTop - 260);
 }
 
 function renderStandaloneChart(key) {
@@ -643,7 +760,10 @@ async function renderModelPicker() {
 
 async function main() {
   showAdminUi();
-  if (view === 'settings' || view === 'settings-mobile') {
+  if (view === 'settings-location') {
+    fillSettingsLocation();
+    await waitFor(() => !!$('#cloud-billing-card:not(.collapsed) .cloud-billing-current'));
+  } else if (view === 'settings' || view === 'settings-mobile') {
     fillSettingsCard({ mobile: view === 'settings-mobile' });
     await waitFor(() => !!$('#cloud-billing-card:not(.collapsed) .cloud-billing-account-status'));
   } else if (view === 'picker') {
@@ -1004,7 +1124,7 @@ async function rmRetry(target) {
       await fs.rm(target, { recursive: true, force: true });
       return;
     } catch (err) {
-      if (err?.code !== 'EBUSY' && err?.code !== 'EPERM') throw err;
+      if (err?.code !== 'EBUSY' && err?.code !== 'EPERM' && err?.code !== 'ENOTEMPTY') throw err;
       await new Promise((resolve) => setTimeout(resolve, 250));
     }
   }
@@ -1015,18 +1135,25 @@ function capturePlan() {
   const prefix = liveDigitalOcean ? 'pr-518-billing-live-digitalocean' : 'pr-518-billing';
   const plan = [
     {
+      view: 'settings-location',
+      path: path.join(dir, `${prefix}-settings-location.png`),
+      selector: '#settings-modal .settings-modal-content',
+      width: 1200,
+      height: 1500,
+    },
+    {
       view: 'settings',
       path: path.join(dir, `${prefix}-settings-card.png`),
       selector: '#cloud-billing-card',
       width: 980,
-      height: 850,
+      height: 1120,
     },
     {
       view: 'settings-mobile',
       path: path.join(dir, `${prefix}-settings-mobile.png`),
       selector: '#cloud-billing-card',
       width: 390,
-      height: 1180,
+      height: 1680,
     },
     {
       view: 'picker',

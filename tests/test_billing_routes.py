@@ -1,5 +1,6 @@
-from types import SimpleNamespace
 import json
+from decimal import Decimal
+from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
@@ -123,6 +124,7 @@ def test_cloud_monthly_spend_reports_missing_token(monkeypatch):
             "cloud_billing_enabled": True,
             "cloud_billing_accounts": [_account(token="")],
             "cloud_billing_refresh_seconds": 900,
+            "cloud_billing_usage_ledger_enabled": False,
         },
     )
 
@@ -141,6 +143,7 @@ def test_cloud_monthly_spend_reports_unsupported_provider(monkeypatch):
             "cloud_billing_enabled": True,
             "cloud_billing_accounts": [_account(provider="examplecloud")],
             "cloud_billing_refresh_seconds": 900,
+            "cloud_billing_usage_ledger_enabled": False,
         },
     )
 
@@ -162,6 +165,7 @@ def test_cloud_monthly_spend_success(monkeypatch):
             "cloud_billing_refresh_seconds": 300,
             "cloud_billing_monthly_warning_usd": "10",
             "cloud_billing_monthly_limit_usd": "10",
+            "cloud_billing_usage_ledger_enabled": False,
         },
     )
     _set_digitalocean_fetch(
@@ -200,6 +204,7 @@ def test_cloud_monthly_spend_sums_multiple_accounts(monkeypatch):
             ],
             "cloud_billing_refresh_seconds": 300,
             "cloud_billing_monthly_warning_usd": "",
+            "cloud_billing_usage_ledger_enabled": False,
         },
     )
     _set_digitalocean_fetch(monkeypatch, lambda token: {"month_to_date_usage": "1.25"})
@@ -274,6 +279,7 @@ def test_cloud_spending_graph_returns_chart_and_records_history(monkeypatch, tmp
             "cloud_billing_refresh_seconds": 300,
             "cloud_billing_monthly_warning_usd": "3",
             "cloud_billing_monthly_limit_usd": "5",
+            "cloud_billing_usage_ledger_enabled": False,
         },
     )
     _set_digitalocean_fetch(monkeypatch, lambda token: {"month_to_date_usage": "1.25"})
@@ -297,14 +303,354 @@ def test_cloud_spending_graph_returns_chart_and_records_history(monkeypatch, tmp
     assert result["amount"] == "3.75"
     assert result["chart"]["kind"] == "billing-spend"
     assert result["chart"]["total_display"] == "$3.75"
+    assert result["chart"]["monthly_warning_display"] == "$3.00"
+    assert result["chart"]["monthly_limit_display"] == "$5.00"
     assert result["chart"]["limit_display"] == "$5.00"
-    assert result["chart"]["source_note"] == "Provider billing totals"
+    assert result["chart"]["source_note"] == "Account total from provider billing"
     assert [item["label"] for item in result["chart"]["accounts"]] == ["DigitalOcean", "Example"]
     assert [item["source_label"] for item in result["chart"]["accounts"]] == ["Provider billing", "Provider billing"]
     assert result["markdown"].startswith("```billing-chart\n")
     history_text = (tmp_path / "billing_history.json").read_text(encoding="utf-8")
     assert "do-token" not in history_text
     assert "ex-token" not in history_text
+
+
+def test_monthly_spend_prefers_model_usage_over_provider_account_total(monkeypatch):
+    monkeypatch.setattr(
+        billing_routes,
+        "_load_settings",
+        lambda: {
+            "cloud_billing_enabled": True,
+            "cloud_billing_accounts": [_account(account_id="do-main", token="do-token", label="DigitalOcean")],
+            "cloud_billing_refresh_seconds": 300,
+            "cloud_billing_monthly_warning_usd": "1",
+            "cloud_billing_monthly_limit_usd": "1",
+            "cloud_billing_usage_ledger_enabled": True,
+        },
+    )
+    _set_digitalocean_fetch(monkeypatch, lambda token: {"month_to_date_usage": "6.44"})
+    monkeypatch.setattr(
+        billing_routes,
+        "_local_usage_payload",
+        lambda period="month": {
+            **_empty_local_usage(period),
+            "amount": "0.640000",
+            "amount_float": 0.64,
+            "display": "$0.64",
+            "events": 4,
+            "known_cost_events": 4,
+            "providers": [
+                {
+                    "id": "digitalocean",
+                    "label": "digitalocean",
+                    "events": 4,
+                    "input_tokens": 1200,
+                    "output_tokens": 300,
+                    "total_tokens": 1500,
+                    "amount": 0.64,
+                    "display": "$0.64",
+                    "known_cost_events": 4,
+                }
+            ],
+        },
+    )
+
+    result = _endpoint()(_request())
+
+    assert result["amount"] == "0.64"
+    assert result["display"] == "$0.64"
+    assert result["provider_amount"] == "6.44"
+    assert result["provider_display"] == "$6.44"
+    assert result["spend_source"] == "usage_ledger"
+    assert result["spend_scope"] == "model_usage"
+    assert result["over_limit"] is False
+
+
+def test_monthly_spend_prefers_digitalocean_inference_insights(monkeypatch):
+    monkeypatch.setattr(
+        billing_routes,
+        "_load_settings",
+        lambda: {
+            "cloud_billing_enabled": True,
+            "cloud_billing_accounts": [_account(account_id="do-main", token="do-token", label="DigitalOcean")],
+            "cloud_billing_refresh_seconds": 300,
+            "cloud_billing_monthly_warning_usd": "1",
+            "cloud_billing_monthly_limit_usd": "1",
+            "cloud_billing_usage_ledger_enabled": True,
+        },
+    )
+    _set_digitalocean_fetch(
+        monkeypatch,
+        lambda token: {
+            "month_to_date_usage": "6.44",
+            "_odysseus_model_billing": {
+                "amount_decimal": Decimal("0.68"),
+                "label": "DigitalOcean GenAI Serverless Inference",
+                "source_label": "Provider model billing",
+                "models": [
+                    {
+                        "id": "openai-gpt-5.5",
+                        "label": "OpenAI GPT-5.5",
+                        "amount": "0.58",
+                        "display": "$0.58",
+                        "events": 3,
+                    },
+                    {
+                        "id": "qwen3-coder-flash",
+                        "label": "Qwen3 Coder Flash",
+                        "amount": "0.08",
+                        "display": "$0.08",
+                        "events": 2,
+                    },
+                ],
+            },
+        },
+    )
+
+    result = _endpoint()(_request())
+
+    assert result["amount"] == "0.68"
+    assert result["display"] == "$0.68"
+    assert result["provider_amount"] == "6.44"
+    assert result["provider_display"] == "$6.44"
+    assert result["spend_source"] == "provider_model_billing"
+    assert result["spend_scope"] == "model_usage"
+    assert result["over_limit"] is False
+    assert result["accounts"][0]["model_display"] == "$0.68"
+
+
+def test_spending_graph_uses_digitalocean_inference_insight_rows(monkeypatch):
+    monkeypatch.setattr(
+        billing_routes,
+        "_load_settings",
+        lambda: {
+            "cloud_billing_enabled": True,
+            "cloud_billing_accounts": [_account(account_id="do-main", token="do-token", label="DigitalOcean")],
+            "cloud_billing_refresh_seconds": 300,
+            "cloud_billing_monthly_limit_usd": "1",
+            "cloud_billing_usage_ledger_enabled": True,
+        },
+    )
+    _set_digitalocean_fetch(
+        monkeypatch,
+        lambda token: {
+            "month_to_date_usage": "6.44",
+            "_odysseus_model_billing": {
+                "amount_decimal": Decimal("0.68"),
+                "label": "DigitalOcean GenAI Serverless Inference",
+                "source_label": "Provider model billing",
+                "models": [
+                    {
+                        "id": "openai-gpt-5.5",
+                        "label": "OpenAI GPT-5.5",
+                        "amount": "0.58",
+                        "display": "$0.58",
+                        "events": 3,
+                    },
+                    {
+                        "id": "qwen3-coder-flash",
+                        "label": "Qwen3 Coder Flash",
+                        "amount": "0.08",
+                        "display": "$0.08",
+                        "events": 2,
+                    },
+                ],
+            },
+        },
+    )
+
+    result = billing_routes.get_spending_graph_status(group_by="model")
+
+    chart = result["chart"]
+    assert chart["title"] == "Model Spend by Model"
+    assert chart["total_display"] == "$0.68"
+    assert result["provider_display"] == "$6.44"
+    assert chart["provider_total_display"] == ""
+    assert chart["provider_total"] is None
+    assert chart["source_note"] == "Model spend from provider billing insights"
+    assert chart["notice"] == ""
+    assert [item["label"] for item in chart["accounts"]] == [
+        "OpenAI GPT-5.5",
+        "Qwen3 Coder Flash",
+    ]
+    assert [item["source_label"] for item in chart["accounts"]] == [
+        "Provider model billing",
+        "Provider model billing",
+    ]
+
+
+def test_model_spend_history_ignores_legacy_account_samples(monkeypatch, tmp_path):
+    history_file = tmp_path / "billing_history.json"
+    monkeypatch.setattr(billing_routes, "BILLING_HISTORY_FILE", history_file)
+    fixed_now = billing_routes.datetime(2026, 6, 3, 8, 48, 6, tzinfo=billing_routes.timezone.utc)
+
+    class _FixedDateTime(billing_routes.datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return fixed_now.astimezone(tz) if tz else fixed_now.replace(tzinfo=None)
+
+    monkeypatch.setattr(billing_routes, "datetime", _FixedDateTime)
+    current = fixed_now
+    month = current.strftime("%Y-%m")
+    current_day = current.strftime("%Y-%m-%d")
+    history_file.write_text(
+        json.dumps(
+            [
+                {
+                    "timestamp": current.replace(day=1, microsecond=0).isoformat().replace("+00:00", "Z"),
+                    "month": month,
+                    "scope": "all",
+                    "amount": "6.44",
+                    "display": "$6.44",
+                    "provider": "multiple",
+                    "provider_label": "Cloud",
+                },
+                {
+                    "timestamp": f"{current_day}T00:01:00Z",
+                    "month": month,
+                    "scope": "all",
+                    "amount": "0.12",
+                    "display": "$0.12",
+                    "provider": "digitalocean",
+                    "provider_label": "DigitalOcean models",
+                },
+                {
+                    "timestamp": f"{current_day}T00:02:00Z",
+                    "month": month,
+                    "scope": "all",
+                    "amount": "0.12",
+                    "display": "$0.12",
+                    "provider": "digitalocean",
+                    "provider_label": "DigitalOcean models",
+                },
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        billing_routes,
+        "_load_settings",
+        lambda: {
+            "cloud_billing_enabled": True,
+            "cloud_billing_accounts": [_account(account_id="do-main", token="do-token", label="DigitalOcean")],
+            "cloud_billing_refresh_seconds": 300,
+            "cloud_billing_monthly_limit_usd": "1",
+            "cloud_billing_usage_ledger_enabled": True,
+        },
+    )
+    _set_digitalocean_fetch(
+        monkeypatch,
+        lambda token: {
+            "month_to_date_usage": "6.44",
+            "_odysseus_model_billing": {
+                "amount_decimal": Decimal("0.68"),
+                "label": "DigitalOcean GenAI Serverless Inference",
+                "source_label": "Provider model billing",
+                "models": [
+                    {
+                        "id": "openai-gpt-5.5",
+                        "label": "OpenAI GPT-5.5",
+                        "amount": "0.58",
+                        "display": "$0.58",
+                    },
+                ],
+            },
+        },
+    )
+
+    result = billing_routes.get_spending_graph_status(group_by="model")
+
+    assert [item["display"] for item in result["chart"]["history"]] == ["$0.00", "$0.68"]
+    assert result["chart"]["previous_month"] == "2026-05"
+    assert result["chart"]["next_month"] == ""
+    assert result["chart"]["history"][0]["synthetic"] is True
+    account_history = billing_routes._history_for_current_month(
+        scope="all",
+        spend_source="provider_billing",
+        spend_scope="provider_account",
+    )
+    assert [item["display"] for item in account_history] == ["$6.44"]
+    saved = json.loads(history_file.read_text(encoding="utf-8"))
+    assert saved[-1]["spend_source"] == "provider_model_billing"
+    assert saved[-1]["spend_scope"] == "model_usage"
+
+
+def test_spending_graph_can_switch_to_saved_history_month(monkeypatch, tmp_path):
+    history_file = tmp_path / "billing_history.json"
+    monkeypatch.setattr(billing_routes, "BILLING_HISTORY_FILE", history_file)
+    fixed_now = billing_routes.datetime(2026, 6, 3, 8, 48, 6, tzinfo=billing_routes.timezone.utc)
+
+    class _FixedDateTime(billing_routes.datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return fixed_now.astimezone(tz) if tz else fixed_now.replace(tzinfo=None)
+
+    monkeypatch.setattr(billing_routes, "datetime", _FixedDateTime)
+    history_file.write_text(
+        json.dumps(
+            [
+                {
+                    "timestamp": "2026-05-10T08:00:00Z",
+                    "month": "2026-05",
+                    "scope": "all",
+                    "spend_source": "provider_model_billing",
+                    "spend_scope": "model_usage",
+                    "amount": "0.40",
+                    "display": "$0.40",
+                    "currency": "USD",
+                    "provider": "digitalocean",
+                    "provider_label": "DigitalOcean models",
+                    "accounts": [],
+                },
+                {
+                    "timestamp": "2026-06-03T08:48:06Z",
+                    "month": "2026-06",
+                    "scope": "all",
+                    "spend_source": "provider_model_billing",
+                    "spend_scope": "model_usage",
+                    "amount": "0.68",
+                    "display": "$0.68",
+                    "currency": "USD",
+                    "provider": "digitalocean",
+                    "provider_label": "DigitalOcean models",
+                    "accounts": [],
+                },
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        billing_routes,
+        "_load_settings",
+        lambda: {
+            "cloud_billing_enabled": True,
+            "cloud_billing_accounts": [_account(account_id="do-main", token="do-token", label="DigitalOcean")],
+            "cloud_billing_refresh_seconds": 300,
+            "cloud_billing_monthly_limit_usd": "1",
+            "cloud_billing_usage_ledger_enabled": True,
+        },
+    )
+    _set_digitalocean_fetch(monkeypatch, lambda token: pytest.fail("past months must use saved history"))
+
+    result = billing_routes.get_spending_graph_status(
+        month="2026-05",
+        spend_source="provider_model_billing",
+        spend_scope="model_usage",
+        group_by="model",
+    )
+
+    chart = result["chart"]
+    assert result["history_only"] is True
+    assert chart["month"] == "2026-05"
+    assert chart["month_label"] == "May 2026"
+    assert chart["subtitle"] == "May 2026"
+    assert chart["total_display"] == "$0.40"
+    assert chart["history"][0]["display"] == "$0.00"
+    assert chart["history"][0]["synthetic"] is True
+    assert chart["history"][-1]["display"] == "$0.40"
+    assert chart["previous_month"] == ""
+    assert chart["next_month"] == "2026-06"
+    assert chart["is_current_month"] is False
 
 
 def test_spending_graph_model_group_includes_usage_breakdown(monkeypatch):
@@ -315,6 +661,7 @@ def test_spending_graph_model_group_includes_usage_breakdown(monkeypatch):
             "cloud_billing_enabled": True,
             "cloud_billing_accounts": [],
             "cloud_billing_refresh_seconds": 300,
+            "cloud_billing_daily_warning_usd": "1",
             "cloud_billing_daily_limit_usd": "2",
             "cloud_billing_usage_ledger_enabled": True,
         },
@@ -367,16 +714,80 @@ def test_spending_graph_model_group_includes_usage_breakdown(monkeypatch):
 
     chart = result["chart"]
     assert chart["title"] == "Model Spend by Model"
-    assert chart["source_note"] == "Usage ledger estimates"
+    assert chart["source_note"] == "Model spend from usage ledger estimates"
     assert chart["usage"]["source_label"] == "Usage ledger"
     assert chart["usage"]["events"] == 3
     assert chart["usage"]["total_tokens"] == 1500
     assert chart["usage"]["unknown_cost_events"] == 1
+    assert chart["warning_display"] == "$1.00"
+    assert chart["limit_display"] == "$2.00"
+    assert chart["monthly_warning"] is None
+    assert chart["monthly_limit"] is None
+    assert chart["daily_warning_display"] == "$1.00"
+    assert chart["daily_limit_display"] == "$2.00"
     assert chart["accounts"][0]["label"] == "gpt-4o"
     assert chart["accounts"][0]["source_label"] == "Usage estimate"
     assert chart["accounts"][0]["usage"]["input_tokens"] == 1000
     assert chart["accounts"][0]["usage"]["output_tokens"] == 250
     assert chart["accounts"][1]["usage"]["unknown_cost_events"] == 1
+
+
+def test_spending_graph_uses_model_usage_without_adding_provider_account_total(monkeypatch):
+    monkeypatch.setattr(
+        billing_routes,
+        "_load_settings",
+        lambda: {
+            "cloud_billing_enabled": True,
+            "cloud_billing_accounts": [_account(account_id="do-main", token="do-token", label="DigitalOcean")],
+            "cloud_billing_refresh_seconds": 300,
+            "cloud_billing_monthly_limit_usd": "5",
+            "cloud_billing_usage_ledger_enabled": True,
+        },
+    )
+    _set_digitalocean_fetch(monkeypatch, lambda token: {"month_to_date_usage": "1.25"})
+    monkeypatch.setattr(
+        billing_routes,
+        "_local_usage_payload",
+        lambda period="month": {
+            **_empty_local_usage(period),
+            "amount": "0.700000",
+            "amount_float": 0.7,
+            "display": "$0.70",
+            "events": 3,
+            "known_cost_events": 3,
+            "input_tokens": 1200,
+            "output_tokens": 300,
+            "total_tokens": 1500,
+            "providers": [
+                {
+                    "id": "digitalocean",
+                    "label": "digitalocean",
+                    "events": 3,
+                    "input_tokens": 1200,
+                    "output_tokens": 300,
+                    "total_tokens": 1500,
+                    "amount": 0.7,
+                    "display": "$0.70",
+                    "known_cost_events": 3,
+                }
+            ],
+            "models": [],
+        },
+    )
+
+    result = billing_routes.get_spending_graph_status(group_by="provider")
+
+    chart = result["chart"]
+    assert result["amount"] == "0.70"
+    assert result["provider_display"] == "$1.25"
+    assert chart["total_display"] == "$0.70"
+    assert chart["provider_total_display"] == ""
+    assert chart["provider_total"] is None
+    assert chart["usage"]["amount_display"] == "$0.70"
+    assert chart["source_note"] == "Model spend from usage ledger estimates"
+    assert chart["notice"] == ""
+    assert [item["source_label"] for item in chart["accounts"]] == ["Usage estimate"]
+    assert sum(item["amount"] for item in chart["accounts"]) == pytest.approx(0.7)
 
 
 def test_cloud_monthly_spend_uses_success_cache(monkeypatch):
@@ -389,6 +800,7 @@ def test_cloud_monthly_spend_uses_success_cache(monkeypatch):
             "cloud_billing_accounts": [_account()],
             "cloud_billing_refresh_seconds": 300,
             "cloud_billing_monthly_warning_usd": "",
+            "cloud_billing_usage_ledger_enabled": False,
         },
     )
 
@@ -418,10 +830,13 @@ async def test_manage_billing_tool_returns_chart_response(monkeypatch):
         "subtitle": "June 2026 month-to-date",
         "enabled": True,
         "configured": True,
+        "spend_scope": "model_usage",
         "total": 1.25,
         "total_display": "$1.25",
         "projected": 3.75,
         "projected_display": "$3.75",
+        "limit": 5.0,
+        "limit_display": "$5.00",
         "accounts": [],
         "history": [],
     }
@@ -439,7 +854,12 @@ async def test_manage_billing_tool_returns_chart_response(monkeypatch):
 
     assert result["exit_code"] == 0
     assert "```billing-chart" in result["response"]
-    assert "Current total: $1.25" in result["response"]
+    assert "Here is the model spending graph for June 2026 month-to-date." in result["response"]
+    assert "So far:" not in result["response"]
+    assert "Projected month-end:" not in result["response"]
+    assert "Limit:" not in result["response"]
+    assert "Current total:" not in result["response"]
+    assert " of $5.00 limit" not in result["response"]
 
 
 def test_billing_graph_request_is_classified_as_billing_intent():
@@ -721,12 +1141,14 @@ async def test_auth_settings_preserves_cloud_billing_token_on_save_without_new_t
                         "enabled": True,
                     }
                 ],
+                "cloud_billing_daily_warning_usd": "0.50",
                 "cloud_billing_monthly_limit_usd": "1.00",
             }
         )
     )
 
     assert saved["cloud_billing_accounts"][0]["api_token"] == "enc:stored-token"
+    assert saved["cloud_billing_daily_warning_usd"] == "0.50"
     assert saved["cloud_billing_monthly_limit_usd"] == "1.00"
     assert result["cloud_billing_accounts"][0]["api_token"] == ""
     assert result["cloud_billing_accounts"][0]["api_token_set"] is True

@@ -104,7 +104,7 @@ def test_billing_chart_renders_usage_breakdown(node_available):
         "total_display": "$0.65",
         "projected": 0.65,
         "projected_display": "$0.65",
-        "source_note": "Usage ledger estimates",
+        "source_note": "Model spend from usage ledger estimates",
         "usage": {
             "events": 2,
             "input_tokens": 30,
@@ -138,7 +138,7 @@ def test_billing_chart_renders_usage_breakdown(node_available):
     html = _run_markdown_case("```billing-chart\n" + json.dumps(chart) + "\n```")
 
     assert "Model Spend by Model" in html
-    assert "Usage ledger estimates" in html
+    assert "Model spend from usage ledger estimates" in html
     assert "Usage estimate" in html
     assert "Tokens" in html
     assert "Calls" in html
@@ -146,6 +146,204 @@ def test_billing_chart_renders_usage_breakdown(node_available):
     assert "42 tokens" in html
     assert "2 calls" in html
     assert "1 unpriced" in html
+
+
+def test_billing_chart_hides_provider_account_total_for_model_spend(node_available):
+    chart = {
+        "version": 1,
+        "kind": "billing-spend",
+        "title": "Model Spend",
+        "subtitle": "June 2026 month-to-date",
+        "enabled": True,
+        "configured": True,
+        "total": 0.68,
+        "total_display": "$0.68",
+        "projected": 6.8,
+        "projected_display": "$6.80",
+        "period": "month",
+        "spend_source": "provider_model_billing",
+        "spend_scope": "model_usage",
+        "provider_total": 6.44,
+        "provider_total_display": "$6.44",
+        "source_note": "Model spend from provider billing insights; provider billing is account-level and can include non-model services",
+        "notice": "Provider account billing reports $6.44 across all services; it is not used for the model spend total.",
+        "accounts": [],
+        "history": [],
+    }
+
+    html = _run_markdown_case("```billing-chart\n" + json.dumps(chart) + "\n```")
+
+    assert "Model spend from provider billing insights" in html
+    assert "provider billing is account-level" not in html
+    assert "Provider account billing reports" not in html
+    assert "Account</span><strong>$6.44" not in html
+
+
+def test_billing_chart_history_points_are_hoverable(node_available):
+    chart = {
+        "version": 1,
+        "kind": "billing-spend",
+        "title": "Model Spend",
+        "subtitle": "June 2026 month-to-date",
+        "enabled": True,
+        "configured": True,
+        "total": 0.68,
+        "total_display": "$0.68",
+        "projected": 6.8,
+        "projected_display": "$6.80",
+        "period": "month",
+        "days_elapsed": 3,
+        "days_in_month": 30,
+        "warning": 1.0,
+        "warning_display": "$1.00",
+        "limit": 5.0,
+        "limit_display": "$5.00",
+        "monthly_warning": 1.0,
+        "monthly_warning_display": "$1.00",
+        "monthly_limit": 5.0,
+        "monthly_limit_display": "$5.00",
+        "accounts": [],
+        "history": [
+            {"timestamp": "2026-06-01T08:00:00Z", "amount": 0.12, "display": "$0.12", "synthetic": True},
+            {"timestamp": "2026-06-03T08:00:00Z", "amount": 0.68, "display": "$0.68"},
+        ],
+    }
+
+    html = _run_markdown_case("```billing-chart\n" + json.dumps(chart) + "\n```")
+
+    assert html.count("billing-chart-actual-point") == 2
+    assert html.count("billing-chart-projection-mode-point") == 2
+    assert html.count("billing-chart-projected-point") == 1
+    assert "billing-chart-threshold-toggle" in html
+    assert "billing-chart-threshold-layer" in html
+    assert "billing-chart-threshold-warning" in html
+    assert "billing-chart-threshold-limit" in html
+    assert "billing-chart-projection-toggle" in html
+    assert "billing-chart-projection-line" in html
+    assert "billing-chart-axis-labels-projected" in html
+    assert "data-chart-x=" in html
+    assert "data-chart-y=" in html
+    assert 'aria-label="Jun 1: $0.12"' in html
+    assert 'title="Jun 3: $0.68"' in html
+    assert 'aria-label="Show monthly warning and max usage lines"' in html
+    assert 'aria-label="Show projected spend line"' in html
+    assert "Month warn: $1.00" in html
+    assert "Month max: $5.00" in html
+    assert 'aria-label="Projected month-end: $6.80"' in html
+    assert "billing-chart-data-points" in html
+    assert "2 points + projection" in html
+    assert "Baseline" in html
+    assert "Actual" in html
+    assert "Projected" in html
+    assert "Jun 30" in html
+
+
+def test_billing_chart_threshold_lines_use_period_specific_fields_only(node_available):
+    chart = {
+        "version": 1,
+        "kind": "billing-spend",
+        "title": "Model Spend",
+        "subtitle": "Today",
+        "enabled": True,
+        "configured": True,
+        "total": 0.68,
+        "total_display": "$0.68",
+        "projected": 0.68,
+        "projected_display": "$0.68",
+        "period": "day",
+        "warning": 1.0,
+        "warning_display": "$1.00",
+        "limit": 2.0,
+        "limit_display": "$2.00",
+        "accounts": [],
+        "history": [
+            {"timestamp": "2026-06-03T08:00:00Z", "amount": 0.12, "display": "$0.12"},
+            {"timestamp": "2026-06-03T09:00:00Z", "amount": 0.68, "display": "$0.68"},
+        ],
+    }
+
+    html = _run_markdown_case("```billing-chart\n" + json.dumps(chart) + "\n```")
+
+    assert "billing-chart-threshold-toggle" not in html
+    assert "billing-chart-threshold-layer" not in html
+    assert "Month max: $2.00" not in html
+
+
+def test_billing_chart_daily_threshold_lines_use_daily_fields(node_available):
+    chart = {
+        "version": 1,
+        "kind": "billing-spend",
+        "title": "Model Spend",
+        "subtitle": "Today",
+        "enabled": True,
+        "configured": True,
+        "total": 0.68,
+        "total_display": "$0.68",
+        "projected": 0.68,
+        "projected_display": "$0.68",
+        "period": "day",
+        "warning": 0.5,
+        "warning_display": "$0.50",
+        "limit": 1.0,
+        "limit_display": "$1.00",
+        "daily_warning": 0.5,
+        "daily_warning_display": "$0.50",
+        "daily_limit": 1.0,
+        "daily_limit_display": "$1.00",
+        "accounts": [],
+        "history": [
+            {"timestamp": "2026-06-03T08:00:00Z", "amount": 0.12, "display": "$0.12"},
+            {"timestamp": "2026-06-03T09:00:00Z", "amount": 0.68, "display": "$0.68"},
+        ],
+    }
+
+    html = _run_markdown_case("```billing-chart\n" + json.dumps(chart) + "\n```")
+
+    assert "billing-chart-threshold-toggle" in html
+    assert 'aria-label="Show daily warning and max usage lines"' in html
+    assert "Day warn: $0.50" in html
+    assert "Day max: $1.00" in html
+    assert "Month warn" not in html
+
+
+def test_billing_chart_renders_month_navigation(node_available):
+    chart = {
+        "version": 1,
+        "kind": "billing-spend",
+        "title": "Model Spend",
+        "subtitle": "May 2026",
+        "enabled": True,
+        "configured": True,
+        "total": 0.4,
+        "total_display": "$0.40",
+        "projected": 0.4,
+        "projected_display": "$0.40",
+        "period": "month",
+        "month": "2026-05",
+        "month_label": "May 2026",
+        "previous_month": "2026-04",
+        "next_month": "2026-06",
+        "group_by": "model",
+        "spend_source": "provider_model_billing",
+        "spend_scope": "model_usage",
+        "history": [
+            {"timestamp": "2026-05-01T00:00:00Z", "amount": 0.0, "display": "$0.00"},
+            {"timestamp": "2026-05-10T08:00:00Z", "amount": 0.4, "display": "$0.40"},
+        ],
+        "accounts": [],
+    }
+
+    html = _run_markdown_case("```billing-chart\n" + json.dumps(chart) + "\n```")
+
+    assert "billing-chart-month-nav" in html
+    assert "May 2026" in html
+    assert 'data-billing-chart-month="2026-04"' in html
+    assert 'data-billing-chart-month="2026-06"' in html
+    assert 'data-billing-group-by="model"' in html
+    assert 'data-billing-spend-source="provider_model_billing"' in html
+    assert 'data-billing-spend-scope="model_usage"' in html
+    assert "edge-start" in html
+    assert "edge-end" in html
 
 
 def test_table_separator_row_not_rendered_as_data(node_available):

@@ -652,6 +652,302 @@ body.bg-pattern-sparkles {
       color: var(--accent-error, var(--red));
     }
 
+    .cloud-billing-info {
+      overflow: hidden;
+      border: 1px solid color-mix(in srgb, var(--border) 68%, transparent);
+      border-radius: 7px;
+      background: color-mix(in srgb, var(--fg) 2%, transparent);
+    }
+
+    .cloud-billing-info > summary {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      min-height: 30px;
+      padding: 7px 8px;
+      color: color-mix(in srgb, var(--fg) 78%, transparent);
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 650;
+      list-style: none;
+      user-select: none;
+    }
+
+    .cloud-billing-info > summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .cloud-billing-info > summary::before {
+      content: "";
+      width: 6px;
+      height: 6px;
+      flex: 0 0 auto;
+      border-right: 1.5px solid currentColor;
+      border-bottom: 1.5px solid currentColor;
+      transform: rotate(-45deg);
+      transition: transform 120ms ease;
+    }
+
+    .cloud-billing-info[open] > summary::before {
+      transform: rotate(45deg);
+    }
+
+    .cloud-billing-info-body {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      padding: 0 8px 8px 21px;
+      color: color-mix(in srgb, var(--fg) 58%, transparent);
+      font-size: 10px;
+      line-height: 1.35;
+    }
+
+    .cloud-billing-info-body p {
+      margin: 0;
+    }
+
+    .cloud-billing-info-body strong {
+      color: color-mix(in srgb, var(--fg) 82%, transparent);
+      font-weight: 650;
+    }
+
+    .cloud-billing-current {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      padding: 9px;
+      border: 1px solid color-mix(in srgb, var(--accent-primary, var(--red)) 34%, var(--border));
+      border-radius: 7px;
+      background: color-mix(in srgb, var(--accent-primary, var(--red)) 6%, var(--panel));
+    }
+
+    .cloud-billing-current.is-muted,
+    .cloud-billing-current.is-loading {
+      border-color: color-mix(in srgb, var(--border) 72%, transparent);
+      background: color-mix(in srgb, var(--fg) 2%, transparent);
+    }
+
+    .cloud-billing-current.billing-warning {
+      border-color: color-mix(in srgb, var(--accent-warning, #d99a1e) 48%, var(--border));
+      background: color-mix(in srgb, var(--accent-warning, #d99a1e) 8%, var(--panel));
+    }
+
+    .cloud-billing-current-main {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 10px;
+      min-width: 0;
+    }
+
+    .cloud-billing-current-main > div {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      min-width: 0;
+    }
+
+    .cloud-billing-current-main span {
+      color: color-mix(in srgb, var(--fg) 56%, transparent);
+      font-size: 10px;
+      font-weight: 650;
+      letter-spacing: 0;
+      text-transform: uppercase;
+    }
+
+    .cloud-billing-current-main strong {
+      color: var(--fg);
+      font-size: 22px;
+      font-variant-numeric: tabular-nums;
+      font-weight: 750;
+      line-height: 1;
+    }
+
+    .cloud-billing-current-period {
+      flex: 0 0 auto;
+      margin-top: 2px;
+      text-align: right;
+    }
+
+    .cloud-billing-current-meta {
+      color: color-mix(in srgb, var(--fg) 58%, transparent);
+      font-size: 10px;
+      line-height: 1.3;
+    }
+
+    .cloud-billing-current-chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 5px;
+    }
+
+    .cloud-billing-current-chips span {
+      display: inline-flex;
+      align-items: center;
+      min-height: 18px;
+      padding: 0 6px;
+      border: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
+      border-radius: 4px;
+      color: color-mix(in srgb, var(--fg) 64%, transparent);
+      font-size: 10px;
+      line-height: 1;
+    }
+
+    .cloud-billing-control-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 1px;
+      overflow: hidden;
+      border: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
+      border-radius: 7px;
+      background: color-mix(in srgb, var(--border) 72%, transparent);
+    }
+
+    .cloud-billing-control {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      min-width: 0;
+      min-height: 54px;
+      padding: 8px;
+      background: color-mix(in srgb, var(--panel) 92%, var(--bg));
+    }
+
+    .cloud-billing-control-primary {
+      grid-column: 1 / -1;
+      background: color-mix(in srgb, var(--accent-primary, var(--red)) 7%, var(--panel));
+    }
+
+    .cloud-billing-control-copy {
+      display: flex;
+      flex: 1 1 auto;
+      flex-direction: column;
+      gap: 2px;
+      min-width: 0;
+      color: var(--fg);
+      line-height: 1.2;
+    }
+
+    .cloud-billing-control-copy strong {
+      font-size: 12px;
+      font-weight: 650;
+    }
+
+    .cloud-billing-control-copy span {
+      color: color-mix(in srgb, var(--fg) 52%, transparent);
+      font-size: 10px;
+      line-height: 1.25;
+    }
+
+    .cloud-billing-control-switch {
+      flex: 0 0 30px;
+    }
+
+    .cloud-billing-refresh-control {
+      grid-column: 1 / -1;
+    }
+
+    .cloud-billing-refresh-control .settings-select {
+      flex: 0 0 96px;
+      min-width: 96px;
+    }
+
+    .cloud-billing-budget-table {
+      display: grid;
+      grid-template-columns: minmax(72px, 0.7fr) minmax(0, 1fr) minmax(0, 1fr);
+      gap: 1px;
+      overflow: hidden;
+      border: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
+      border-radius: 7px;
+      background: color-mix(in srgb, var(--border) 72%, transparent);
+    }
+
+    .cloud-billing-budget-head,
+    .cloud-billing-budget-period,
+    .cloud-billing-budget-cell {
+      min-width: 0;
+      background: color-mix(in srgb, var(--panel) 92%, var(--bg));
+    }
+
+    .cloud-billing-budget-head {
+      padding: 6px 8px;
+      color: color-mix(in srgb, var(--fg) 55%, transparent);
+      font-size: 10px;
+      font-weight: 650;
+      letter-spacing: 0;
+      text-transform: uppercase;
+    }
+
+    .cloud-billing-budget-period {
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      gap: 2px;
+      padding: 7px 8px;
+    }
+
+    .cloud-billing-budget-period strong {
+      font-size: 12px;
+      font-weight: 650;
+    }
+
+    .cloud-billing-budget-period span {
+      color: color-mix(in srgb, var(--fg) 50%, transparent);
+      font-size: 10px;
+      line-height: 1.2;
+    }
+
+    .cloud-billing-budget-cell {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      padding: 6px;
+    }
+
+    .cloud-billing-budget-cell .settings-input {
+      width: 100%;
+      min-width: 0;
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .cloud-billing-budget-cell.budget-disabled .settings-input {
+      color: color-mix(in srgb, var(--fg) 42%, transparent);
+      background: color-mix(in srgb, var(--fg) 4%, transparent);
+    }
+
+    .cloud-billing-budget-switch {
+      flex: 0 0 30px;
+    }
+
+    .cloud-billing-provider-section {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .cloud-billing-section-head {
+      display: flex;
+      align-items: flex-start;
+      flex-direction: column;
+      gap: 2px;
+      min-width: 0;
+      margin-top: 2px;
+    }
+
+    .cloud-billing-section-head strong {
+      font-size: 12px;
+      font-weight: 650;
+    }
+
+    .cloud-billing-section-head span {
+      max-width: 460px;
+      color: color-mix(in srgb, var(--fg) 52%, transparent);
+      font-size: 10px;
+      line-height: 1.25;
+    }
+
     .cloud-billing-accounts {
       display: flex;
       flex-direction: column;
@@ -659,14 +955,80 @@ body.bg-pattern-sparkles {
     }
 
     .cloud-billing-account {
-      display: grid;
-      grid-template-columns: minmax(108px, 0.9fr) minmax(110px, 1fr) minmax(140px, 1.4fr) auto auto;
-      gap: 6px;
-      align-items: center;
-      padding: 8px;
+      display: flex;
+      flex-direction: column;
+      gap: 7px;
+      padding: 7px;
       border: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
       border-radius: 7px;
       background: color-mix(in srgb, var(--fg) 3%, transparent);
+    }
+
+    .cloud-billing-account-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      min-width: 0;
+    }
+
+    .cloud-billing-account-title {
+      display: flex;
+      align-items: baseline;
+      gap: 6px;
+      min-width: 0;
+    }
+
+    .cloud-billing-account-title strong {
+      overflow: hidden;
+      color: var(--fg);
+      font-size: 12px;
+      font-weight: 650;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .cloud-billing-account-title span {
+      flex: 0 0 auto;
+      color: color-mix(in srgb, var(--fg) 50%, transparent);
+      font-size: 10px;
+    }
+
+    .cloud-billing-account-actions {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      flex: 0 0 auto;
+    }
+
+    .cloud-billing-include-toggle {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      color: color-mix(in srgb, var(--fg) 58%, transparent);
+      font-size: 10px;
+      line-height: 1;
+      white-space: nowrap;
+    }
+
+    .cloud-billing-account-fields {
+      display: grid;
+      grid-template-columns: minmax(108px, 0.8fr) minmax(126px, 1fr) minmax(160px, 1.4fr);
+      gap: 5px;
+      min-width: 0;
+    }
+
+    .cloud-billing-field {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      min-width: 0;
+    }
+
+    .cloud-billing-field > span {
+      color: color-mix(in srgb, var(--fg) 52%, transparent);
+      font-size: 10px;
+      line-height: 1;
     }
 
     .cloud-billing-add-row {
@@ -676,8 +1038,35 @@ body.bg-pattern-sparkles {
       align-items: center;
     }
 
+    .cloud-billing-add-card {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      padding: 7px;
+      border: 1px dashed color-mix(in srgb, var(--border) 82%, transparent);
+      border-radius: 7px;
+      background: color-mix(in srgb, var(--fg) 2%, transparent);
+    }
+
+    .cloud-billing-add-copy {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 8px;
+      min-width: 0;
+    }
+
+    .cloud-billing-add-copy strong {
+      font-size: 12px;
+      font-weight: 650;
+    }
+
+    .cloud-billing-add-copy span {
+      color: color-mix(in srgb, var(--fg) 52%, transparent);
+      font-size: 10px;
+    }
+
     .cloud-billing-account-status {
-      grid-column: 1 / -1;
       display: flex;
       align-items: center;
       gap: 6px;
@@ -694,6 +1083,7 @@ body.bg-pattern-sparkles {
     .cloud-billing-account-status-text {
       min-width: 0;
       overflow-wrap: anywhere;
+      line-height: 1.25;
     }
 
     .cloud-billing-account-badge {
@@ -749,10 +1139,73 @@ body.bg-pattern-sparkles {
       margin-bottom: 10px;
     }
 
+    .billing-chart-heading {
+      min-width: 0;
+      flex: 1 1 auto;
+    }
+
+    .billing-chart-title-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
     .billing-chart-title {
       font-size: 13px;
       font-weight: 650;
       letter-spacing: 0;
+    }
+
+    .billing-chart-month-nav {
+      display: inline-flex;
+      align-items: center;
+      gap: 3px;
+      min-width: 0;
+      color: color-mix(in srgb, var(--fg) 62%, transparent);
+      font-size: 11px;
+      line-height: 1;
+    }
+
+    .billing-chart-month-label {
+      max-width: 120px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .billing-chart-month-button {
+      display: inline-grid;
+      place-items: center;
+      width: 22px;
+      height: 22px;
+      padding: 0;
+      border: 1px solid color-mix(in srgb, var(--border) 64%, transparent);
+      border-radius: 5px;
+      background: color-mix(in srgb, var(--fg) 4%, transparent);
+      color: color-mix(in srgb, var(--fg) 72%, transparent);
+      cursor: pointer;
+    }
+
+    .billing-chart-month-button:hover:not(:disabled) {
+      border-color: color-mix(in srgb, var(--accent-primary, var(--red)) 48%, var(--border));
+      background: color-mix(in srgb, var(--accent-primary, var(--red)) 10%, transparent);
+      color: var(--fg);
+    }
+
+    .billing-chart-month-button:disabled {
+      opacity: 0.38;
+      cursor: default;
+    }
+
+    .billing-chart-month-button svg {
+      width: 14px;
+      height: 14px;
+      fill: none;
+      stroke: currentColor;
+      stroke-width: 2;
+      stroke-linecap: round;
+      stroke-linejoin: round;
     }
 
     .billing-chart-subtitle,
@@ -858,6 +1311,94 @@ body.bg-pattern-sparkles {
       margin: 8px 0 10px;
     }
 
+    .billing-chart-plot-actions {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 10px;
+      justify-content: flex-end;
+      min-height: 20px;
+      margin: -1px 0 3px;
+    }
+
+    .billing-chart-graph-toggle {
+      position: relative;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      color: color-mix(in srgb, var(--fg) 58%, transparent);
+      cursor: pointer;
+      font-size: 11px;
+      line-height: 1;
+      user-select: none;
+    }
+
+    .billing-chart-toggle-input {
+      position: absolute;
+      inset: -4px;
+      z-index: 1;
+      margin: 0;
+      cursor: pointer;
+      opacity: 0;
+    }
+
+    .billing-chart-toggle-switch {
+      position: relative;
+      width: 30px;
+      height: 16px;
+      flex: 0 0 auto;
+      border: 1px solid color-mix(in srgb, var(--fg) 28%, transparent);
+      border-radius: 999px;
+      background: color-mix(in srgb, var(--fg) 7%, transparent);
+      transition: background 140ms ease, border-color 140ms ease, box-shadow 140ms ease;
+    }
+
+    .billing-chart-toggle-switch::after {
+      content: "";
+      position: absolute;
+      left: 2px;
+      top: 50%;
+      width: 10px;
+      height: 10px;
+      border-radius: 999px;
+      background: color-mix(in srgb, var(--fg) 72%, var(--panel));
+      transform: translateY(-50%);
+      transition: background 140ms ease, transform 140ms ease;
+    }
+
+    .billing-chart-toggle-input:checked + .billing-chart-toggle-switch {
+      border-color: color-mix(in srgb, var(--accent-primary, var(--red)) 64%, transparent);
+      background: color-mix(in srgb, var(--accent-primary, var(--red)) 18%, transparent);
+    }
+
+    .billing-chart-toggle-input:checked + .billing-chart-toggle-switch::after {
+      background: color-mix(in srgb, var(--accent-primary, var(--red)) 84%, white);
+      transform: translate(14px, -50%);
+    }
+
+    .billing-chart-projection-input:checked + .billing-chart-toggle-switch {
+      border-color: color-mix(in srgb, var(--accent-warning, #d99a1e) 70%, transparent);
+      background: color-mix(in srgb, var(--accent-warning, #d99a1e) 22%, transparent);
+    }
+
+    .billing-chart-projection-input:checked + .billing-chart-toggle-switch::after {
+      background: color-mix(in srgb, var(--accent-warning, #d99a1e) 86%, white);
+      transform: translate(14px, -50%);
+    }
+
+    .billing-chart-toggle-input:focus-visible + .billing-chart-toggle-switch {
+      box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-primary, var(--red)) 18%, transparent);
+    }
+
+    .billing-chart-projection-input:focus-visible + .billing-chart-toggle-switch {
+      box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-warning, #d99a1e) 22%, transparent);
+    }
+
+    .billing-chart-plot-frame {
+      position: relative;
+      overflow: visible;
+    }
+
     .billing-chart-plot svg {
       display: block;
       width: 100%;
@@ -881,16 +1422,273 @@ body.bg-pattern-sparkles {
       stroke-linejoin: round;
     }
 
+    .billing-chart-projection-line {
+      fill: none;
+      stroke: color-mix(in srgb, var(--accent-warning, #d99a1e) 88%, var(--fg));
+      stroke-dasharray: 6 6;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      stroke-width: 2.5;
+    }
+
+    .billing-chart-threshold-layer {
+      opacity: 0.86;
+    }
+
+    .billing-chart-threshold line {
+      fill: none;
+      stroke-dasharray: 2 7;
+      stroke-linecap: round;
+      stroke-width: 1.15;
+    }
+
+    .billing-chart-threshold text {
+      font-size: 9px;
+      font-variant-numeric: tabular-nums;
+      paint-order: stroke;
+      stroke: color-mix(in srgb, var(--panel) 94%, var(--bg));
+      stroke-width: 3px;
+      text-anchor: end;
+    }
+
+    .billing-chart-threshold-warning line {
+      stroke: color-mix(in srgb, var(--accent-warning, #d99a1e) 76%, var(--fg));
+    }
+
+    .billing-chart-threshold-warning text {
+      fill: color-mix(in srgb, var(--accent-warning, #d99a1e) 82%, var(--fg));
+      stroke: color-mix(in srgb, var(--panel) 94%, var(--bg));
+    }
+
+    .billing-chart-threshold-limit line {
+      stroke: color-mix(in srgb, var(--accent-error, var(--red)) 76%, var(--fg));
+    }
+
+    .billing-chart-threshold-limit text {
+      fill: color-mix(in srgb, var(--accent-error, var(--red)) 82%, var(--fg));
+      stroke: color-mix(in srgb, var(--panel) 94%, var(--bg));
+    }
+
     .billing-chart-dot {
       fill: var(--panel);
       stroke: var(--accent-primary, var(--red));
       stroke-width: 2;
     }
 
+    .billing-chart-projected-dot {
+      fill: var(--panel);
+      stroke: color-mix(in srgb, var(--accent-warning, #d99a1e) 88%, var(--fg));
+      stroke-width: 2;
+    }
+
+    .billing-chart-plot.show-projected .billing-chart-actual-layer,
+    .billing-chart-plot.show-projected .billing-chart-actual-point,
+    .billing-chart-plot.show-projected .billing-chart-axis-labels-actual,
+    .billing-chart-plot:not(.show-projected) .billing-chart-projection-mode-layer,
+    .billing-chart-plot:not(.show-projected) .billing-chart-projection-mode-point,
+    .billing-chart-plot:not(.show-projected) .billing-chart-projected-point,
+    .billing-chart-plot:not(.show-projected) .billing-chart-axis-labels-projected,
+    .billing-chart-plot:not(.show-thresholds) .billing-chart-threshold-layer {
+      display: none;
+    }
+
+    .billing-chart-point {
+      position: absolute;
+      z-index: 2;
+      width: 20px;
+      height: 20px;
+      padding: 0;
+      border: 0;
+      border-radius: 999px;
+      background: transparent;
+      color: var(--fg);
+      cursor: default;
+      transform: translate(-50%, -50%);
+    }
+
+    .billing-chart-point::after {
+      content: "";
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      width: 9px;
+      height: 9px;
+      border: 2px solid transparent;
+      border-radius: inherit;
+      transform: translate(-50%, -50%);
+      transition: border-color 120ms ease, box-shadow 120ms ease, background 120ms ease;
+    }
+
+    .billing-chart-point span {
+      position: absolute;
+      left: 50%;
+      top: -8px;
+      z-index: 3;
+      width: max-content;
+      max-width: min(220px, 70vw);
+      padding: 5px 7px;
+      border: 1px solid color-mix(in srgb, var(--border) 74%, transparent);
+      border-radius: 5px;
+      background: color-mix(in srgb, var(--panel) 92%, var(--bg));
+      box-shadow: 0 8px 24px color-mix(in srgb, var(--bg) 45%, transparent);
+      color: var(--fg);
+      font-size: 11px;
+      font-variant-numeric: tabular-nums;
+      line-height: 1.25;
+      opacity: 0;
+      overflow: hidden;
+      pointer-events: none;
+      text-overflow: ellipsis;
+      transform: translate(-50%, -100%);
+      transition: opacity 120ms ease, transform 120ms ease;
+      white-space: nowrap;
+    }
+
+    .billing-chart-point.edge-start span {
+      left: 0;
+      transform: translate(0, -100%);
+    }
+
+    .billing-chart-point.edge-end span {
+      left: auto;
+      right: 0;
+      transform: translate(0, -100%);
+    }
+
+    .billing-chart-point:hover::after,
+    .billing-chart-point:focus-visible::after,
+    .billing-chart-point.snap-active::after {
+      border-color: var(--accent-primary, var(--red));
+      background: color-mix(in srgb, var(--panel) 82%, transparent);
+      box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent-primary, var(--red)) 18%, transparent);
+    }
+
+    .billing-chart-projected-point:hover::after,
+    .billing-chart-projected-point:focus-visible::after,
+    .billing-chart-projected-point.snap-active::after {
+      border-color: color-mix(in srgb, var(--accent-warning, #d99a1e) 88%, var(--fg));
+      box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent-warning, #d99a1e) 20%, transparent);
+    }
+
+    .billing-chart-point:hover span,
+    .billing-chart-point:focus-visible span,
+    .billing-chart-point.snap-active span {
+      opacity: 1;
+      transform: translate(-50%, calc(-100% - 2px));
+    }
+
+    .billing-chart-point.edge-start:hover span,
+    .billing-chart-point.edge-start:focus-visible span,
+    .billing-chart-point.edge-start.snap-active span,
+    .billing-chart-point.edge-end:hover span,
+    .billing-chart-point.edge-end:focus-visible span,
+    .billing-chart-point.edge-end.snap-active span {
+      transform: translate(0, calc(-100% - 2px));
+    }
+
     .billing-chart-axis-labels {
       color: color-mix(in srgb, var(--fg) 42%, transparent);
       font-size: 10px;
       margin-top: -2px;
+    }
+
+    .billing-chart-data-points {
+      margin: 6px 0 10px;
+      border: 1px solid color-mix(in srgb, var(--border) 58%, transparent);
+      border-radius: 6px;
+      background: color-mix(in srgb, var(--fg) 2.5%, transparent);
+    }
+
+    .billing-chart-data-points > summary {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 7px 8px;
+      color: color-mix(in srgb, var(--fg) 62%, transparent);
+      cursor: pointer;
+      font-size: 11px;
+      line-height: 1.2;
+      list-style: none;
+      user-select: none;
+    }
+
+    .billing-chart-data-points > summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .billing-chart-data-points > summary::before {
+      content: "";
+      width: 6px;
+      height: 6px;
+      flex: 0 0 auto;
+      border-right: 1.5px solid currentColor;
+      border-bottom: 1.5px solid currentColor;
+      transform: rotate(-45deg);
+      transition: transform 120ms ease;
+    }
+
+    .billing-chart-data-points[open] > summary::before {
+      transform: rotate(45deg);
+    }
+
+    .billing-chart-data-points > summary span:first-of-type {
+      flex: 1 1 auto;
+      color: color-mix(in srgb, var(--fg) 74%, transparent);
+      font-weight: 600;
+    }
+
+    .billing-chart-data-list {
+      max-height: 150px;
+      overflow: auto;
+      border-top: 1px solid color-mix(in srgb, var(--border) 52%, transparent);
+      padding: 2px 0;
+    }
+
+    .billing-chart-data-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 10px;
+      align-items: center;
+      padding: 6px 8px;
+      color: color-mix(in srgb, var(--fg) 64%, transparent);
+      font-size: 11px;
+    }
+
+    .billing-chart-data-row + .billing-chart-data-row {
+      border-top: 1px solid color-mix(in srgb, var(--border) 36%, transparent);
+    }
+
+    .billing-chart-data-row strong {
+      color: color-mix(in srgb, var(--fg) 82%, transparent);
+      font-weight: 600;
+    }
+
+    .billing-chart-data-row > span:first-child {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      min-width: 0;
+    }
+
+    .billing-chart-data-row > span:last-child {
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+    }
+
+    .billing-chart-data-tag {
+      padding: 1px 5px;
+      border: 1px solid color-mix(in srgb, var(--border) 54%, transparent);
+      border-radius: 4px;
+      color: color-mix(in srgb, var(--fg) 54%, transparent);
+      font-size: 10px;
+      font-weight: 500;
+      line-height: 1.25;
+    }
+
+    .billing-chart-data-row-projected .billing-chart-data-tag {
+      border-color: color-mix(in srgb, var(--accent-warning, #d99a1e) 42%, transparent);
+      color: color-mix(in srgb, var(--accent-warning, #d99a1e) 84%, var(--fg));
     }
 
     .billing-chart-accounts {
@@ -934,8 +1732,64 @@ body.bg-pattern-sparkles {
       font-size: 11px;
     }
 
+    .billing-chart-card.billing-chart-loading {
+      opacity: 0.68;
+      pointer-events: none;
+    }
+
+    .billing-chart-load-error {
+      margin-top: 8px;
+      color: var(--accent-error, var(--red));
+      font-size: 11px;
+    }
+
     @media (max-width: 760px) {
-      .cloud-billing-account,
+      .cloud-billing-control-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .cloud-billing-control-primary,
+      .cloud-billing-refresh-control {
+        grid-column: auto;
+      }
+
+      .cloud-billing-refresh-control .settings-select {
+        flex-basis: 104px;
+        min-width: 104px;
+      }
+
+      .cloud-billing-budget-table {
+        grid-template-columns: minmax(64px, 0.65fr) minmax(0, 1fr) minmax(0, 1fr);
+      }
+
+      .cloud-billing-budget-head,
+      .cloud-billing-budget-period,
+      .cloud-billing-budget-cell {
+        padding-left: 6px;
+        padding-right: 6px;
+      }
+
+      .cloud-billing-budget-cell {
+        gap: 5px;
+      }
+
+      .cloud-billing-add-copy {
+        align-items: flex-start;
+        flex-direction: column;
+        gap: 3px;
+      }
+
+      .cloud-billing-account-head {
+        align-items: flex-start;
+        flex-direction: column;
+      }
+
+      .cloud-billing-account-actions {
+        width: 100%;
+        justify-content: space-between;
+      }
+
+      .cloud-billing-account-fields,
       .cloud-billing-add-row {
         grid-template-columns: 1fr;
       }

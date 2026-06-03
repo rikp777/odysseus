@@ -82,17 +82,40 @@ function _billingChartSourceKind(item) {
 
 function _billingChartSourceNote(chart, accounts, usage) {
   const explicit = String(chart?.source_note || '').trim();
+  if (
+    explicit
+    && chart?.spend_scope === 'model_usage'
+    && explicit.includes('provider billing is account-level')
+  ) {
+    if (chart?.spend_source === 'provider_model_billing') return 'Model spend from provider billing insights';
+    if (chart?.spend_source === 'usage_ledger') return 'Model spend from usage ledger estimates';
+  }
   if (explicit) return explicit;
+  if (chart?.spend_source === 'usage_ledger') {
+    return 'Model spend from usage ledger estimates';
+  }
   const hasUsage = !!(
     _billingChartWhole(usage?.events) ||
     _billingChartWhole(usage?.total_tokens) ||
     accounts.some(item => _billingChartSourceKind(item) === 'usage_ledger')
   );
   const hasProvider = accounts.some(item => _billingChartSourceKind(item) === 'provider_billing');
-  if (hasProvider && hasUsage) return 'Provider billing totals with usage ledger estimates';
-  if (hasUsage) return 'Usage ledger estimates';
-  if (hasProvider) return 'Provider billing totals';
+  if (hasProvider && hasUsage) return 'Account total from provider billing; usage rows are estimates';
+  if (hasUsage) return 'Model spend from usage ledger estimates';
+  if (hasProvider) return 'Account total from provider billing';
   return '';
+}
+
+function _billingChartNotice(chart) {
+  const notice = String(chart?.notice || '').trim();
+  if (!notice) return '';
+  if (
+    chart?.spend_scope === 'model_usage'
+    && /^Provider account billing reports\b/.test(notice)
+  ) {
+    return '';
+  }
+  return notice;
 }
 
 function _billingChartDateLabel(value) {
@@ -102,7 +125,212 @@ function _billingChartDateLabel(value) {
   return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
 
-function _billingChartSvg(history, maxY) {
+function _billingChartMonthLabel(chart) {
+  const explicit = String(chart?.month_label || '').trim();
+  if (explicit) return explicit;
+  const month = String(chart?.month || '').trim();
+  if (/^\d{4}-\d{2}$/.test(month)) {
+    const date = new Date(`${month}-01T12:00:00Z`);
+    if (!Number.isNaN(date.getTime())) {
+      return date.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+    }
+  }
+  return '';
+}
+
+function _billingChartMonthNav(chart) {
+  const period = String(chart?.period || 'month').toLowerCase();
+  const month = String(chart?.month || '').trim();
+  if (period !== 'month' || !/^\d{4}-\d{2}$/.test(month)) return '';
+
+  const label = _billingChartMonthLabel(chart) || month;
+  const previousMonth = String(chart?.previous_month || '').trim();
+  const nextMonth = String(chart?.next_month || '').trim();
+  const previousDisabled = /^\d{4}-\d{2}$/.test(previousMonth) ? '' : ' disabled';
+  const nextDisabled = /^\d{4}-\d{2}$/.test(nextMonth) ? '' : ' disabled';
+  const previousTarget = previousDisabled ? '' : previousMonth;
+  const nextTarget = nextDisabled ? '' : nextMonth;
+
+  return `
+        <div class="billing-chart-month-nav" aria-label="Billing month">
+          <button
+            type="button"
+            class="billing-chart-month-button"
+            data-billing-chart-month="${escapeHtml(previousTarget)}"
+            aria-label="Previous billing month"${previousDisabled}
+          ><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 18l-6-6 6-6"></path></svg></button>
+          <span class="billing-chart-month-label">${escapeHtml(label)}</span>
+          <button
+            type="button"
+            class="billing-chart-month-button"
+            data-billing-chart-month="${escapeHtml(nextTarget)}"
+            aria-label="Next billing month"${nextDisabled}
+          ><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg></button>
+        </div>
+      `;
+}
+
+function _billingChartPointLabel(item) {
+  const date = _billingChartDateLabel(item?.timestamp) || item?.timestamp || 'Point';
+  const amount = _billingChartMoney(_billingChartNumber(item?.amount), item?.display);
+  return `${date}: ${amount}`;
+}
+
+function _billingChartDayOfMonth(value) {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.getUTCDate();
+}
+
+function _billingChartMonthEndLabel(chart, points) {
+  const daysInMonth = _billingChartWhole(chart?.days_in_month);
+  if (!daysInMonth) return 'Month end';
+  const source = chart?.updated_at || points[points.length - 1]?.timestamp;
+  const date = new Date(source);
+  if (Number.isNaN(date.getTime())) return 'Month end';
+  const monthEnd = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), daysInMonth, 12));
+  return _billingChartDateLabel(monthEnd.toISOString()) || 'Month end';
+}
+
+function _billingChartProjectionAvailable(chart, points) {
+  const period = String(chart?.period || 'month').toLowerCase();
+  const projected = _billingChartNumber(chart?.projected);
+  const total = _billingChartNumber(chart?.total);
+  const daysInMonth = _billingChartWhole(chart?.days_in_month);
+  const daysElapsed = _billingChartWhole(chart?.days_elapsed);
+  return (
+    period === 'month'
+    && points.length >= 2
+    && projected > 0
+    && projected > total
+    && daysInMonth > 1
+    && daysElapsed > 0
+    && daysElapsed < daysInMonth
+  );
+}
+
+function _billingChartThresholds(chart) {
+  const period = String(chart?.period || 'month').toLowerCase();
+  const config = period === 'day'
+    ? {
+      warning: chart?.daily_warning,
+      warningDisplay: chart?.daily_warning_display,
+      warningLabel: 'Day warn',
+      limit: chart?.daily_limit,
+      limitDisplay: chart?.daily_limit_display,
+      limitLabel: 'Day max',
+      ariaLabel: 'Show daily warning and max usage lines',
+    }
+    : period === 'month'
+      ? {
+        warning: chart?.monthly_warning,
+        warningDisplay: chart?.monthly_warning_display,
+        warningLabel: 'Month warn',
+        limit: chart?.monthly_limit,
+        limitDisplay: chart?.monthly_limit_display,
+        limitLabel: 'Month max',
+        ariaLabel: 'Show monthly warning and max usage lines',
+      }
+      : null;
+  if (!config) return [];
+  const thresholds = [];
+  if (config.warning != null) {
+    const amount = _billingChartNumber(config.warning);
+    if (amount > 0) {
+      thresholds.push({
+        kind: 'warning',
+        label: config.warningLabel,
+        amount,
+        display: config.warningDisplay,
+      });
+    }
+  }
+  if (config.limit != null) {
+    const amount = _billingChartNumber(config.limit);
+    if (amount > 0) {
+      thresholds.push({
+        kind: 'limit',
+        label: config.limitLabel,
+        amount,
+        display: config.limitDisplay,
+      });
+    }
+  }
+  thresholds.ariaLabel = config.ariaLabel;
+  return thresholds;
+}
+
+function _billingChartCoords(points, chart, dims, safeMax, mode) {
+  const { h, padX, padY, usableW, usableH } = dims;
+  const daysInMonth = _billingChartWhole(chart?.days_in_month);
+  const daysElapsed = Math.min(daysInMonth || 1, Math.max(1, _billingChartWhole(chart?.days_elapsed)));
+  return points.map((item, idx) => {
+    let x;
+    if (mode === 'month' && daysInMonth > 1) {
+      const fallbackDay = 1 + (idx * Math.max(0, daysElapsed - 1) / Math.max(1, points.length - 1));
+      const day = _billingChartDayOfMonth(item?.timestamp) || fallbackDay;
+      const clampedDay = Math.max(1, Math.min(daysInMonth, day));
+      x = padX + ((clampedDay - 1) * usableW / Math.max(1, daysInMonth - 1));
+    } else {
+      x = padX + (idx * usableW / Math.max(1, points.length - 1));
+    }
+    const y = h - padY - ((_billingChartNumber(item.amount) / safeMax) * usableH);
+    return [Number(x.toFixed(2)), Number(y.toFixed(2))];
+  });
+}
+
+function _billingChartPointControl(pair, label, dims, classNames) {
+  const left = (pair[0] / dims.w) * 100;
+  const top = (pair[1] / dims.h) * 100;
+  const classes = ['billing-chart-point', ...classNames].filter(Boolean).join(' ');
+  return `
+      <button
+        type="button"
+        class="${classes}"
+        style="left:${left.toFixed(4)}%;top:${top.toFixed(4)}%;"
+        data-chart-x="${left.toFixed(4)}"
+        data-chart-y="${top.toFixed(4)}"
+        aria-label="${escapeHtml(label)}"
+        title="${escapeHtml(label)}"
+      ><span>${escapeHtml(label)}</span></button>
+    `;
+}
+
+function _billingChartLayer(coords, dims, classes = '') {
+  const line = coords.map(pair => pair.join(',')).join(' ');
+  const baseline = dims.h - dims.padY;
+  const area = `${coords[0][0]},${baseline} ${line} ${coords[coords.length - 1][0]},${baseline}`;
+  const classAttr = classes ? ` class="${classes}"` : '';
+  return `
+        <g${classAttr}>
+          <polygon class="billing-chart-area" points="${area}"></polygon>
+          <polyline class="billing-chart-line" points="${line}"></polyline>
+          ${coords.map(pair => `<circle class="billing-chart-dot" cx="${pair[0]}" cy="${pair[1]}" r="3"></circle>`).join('')}
+        </g>
+  `;
+}
+
+function _billingChartThresholdLayer(thresholds, dims, safeMax) {
+  if (!thresholds.length) return '';
+  const { w, padX, padY, usableH } = dims;
+  const baseline = dims.h - padY;
+  const rows = thresholds.map(item => {
+    const y = Math.max(padY + 4, Math.min(baseline - 4, baseline - ((item.amount / safeMax) * usableH)));
+    const display = _billingChartMoney(item.amount, item.display);
+    const title = `${item.label}: ${display}`;
+    return `
+        <g class="billing-chart-threshold billing-chart-threshold-${escapeHtml(item.kind)}">
+          <title>${escapeHtml(title)}</title>
+          <line x1="${padX}" y1="${y.toFixed(2)}" x2="${w - padX}" y2="${y.toFixed(2)}"></line>
+          <text x="${w - padX - 4}" y="${Math.max(padY + 9, y - 5).toFixed(2)}">${escapeHtml(title)}</text>
+        </g>
+      `;
+  }).join('');
+  return `<g class="billing-chart-threshold-layer">${rows}</g>`;
+}
+
+function _billingChartSvg(history, maxY, chart = {}) {
   if (!Array.isArray(history) || history.length < 2) return '';
   const points = history
     .filter(item => item && Number.isFinite(Number(item.amount)))
@@ -115,27 +343,136 @@ function _billingChartSvg(history, maxY) {
   const padY = 18;
   const usableW = w - (padX * 2);
   const usableH = h - (padY * 2);
+  const dims = { w, h, padX, padY, usableW, usableH };
   const safeMax = Math.max(0.01, maxY);
-  const coords = points.map((item, idx) => {
-    const x = padX + (idx * usableW / Math.max(1, points.length - 1));
-    const y = h - padY - ((_billingChartNumber(item.amount) / safeMax) * usableH);
-    return [Number(x.toFixed(2)), Number(y.toFixed(2))];
-  });
-  const line = coords.map(pair => pair.join(',')).join(' ');
-  const area = `${padX},${h - padY} ${line} ${coords[coords.length - 1][0]},${h - padY}`;
+  const coords = _billingChartCoords(points, chart, dims, safeMax, 'spread');
+  const hasProjection = _billingChartProjectionAvailable(chart, points);
+  const thresholds = _billingChartThresholds(chart);
+  const hasThresholds = thresholds.length > 0;
+  const monthCoords = hasProjection ? _billingChartCoords(points, chart, dims, safeMax, 'month') : [];
+  const projectedAmount = _billingChartNumber(chart?.projected);
+  const projectedY = h - padY - ((projectedAmount / safeMax) * usableH);
+  const projectedCoord = [w - padX, Number(projectedY.toFixed(2))];
   const firstLabel = _billingChartDateLabel(points[0]?.timestamp);
   const lastLabel = _billingChartDateLabel(points[points.length - 1]?.timestamp);
+  const monthEndLabel = hasProjection ? _billingChartMonthEndLabel(chart, points) : '';
+  const actualPointControls = coords.map((pair, idx) => {
+    const label = _billingChartPointLabel(points[idx]);
+    const edge = idx === 0 ? 'edge-start' : idx === coords.length - 1 ? 'edge-end' : '';
+    return _billingChartPointControl(pair, label, dims, ['billing-chart-actual-point', edge]);
+  }).join('');
+  const projectionPointControls = hasProjection
+    ? monthCoords.map((pair, idx) => {
+      const label = _billingChartPointLabel(points[idx]);
+      const edge = idx === 0 ? 'edge-start' : '';
+      return _billingChartPointControl(pair, label, dims, ['billing-chart-projection-mode-point', edge]);
+    }).join('')
+    : '';
+  const projectedLabel = `Projected month-end: ${_billingChartMoney(projectedAmount, chart?.projected_display)}`;
+  const projectedControl = hasProjection
+    ? _billingChartPointControl(projectedCoord, projectedLabel, dims, ['billing-chart-projected-point', 'edge-end'])
+    : '';
+  const projectionLayer = hasProjection
+    ? `
+        <g class="billing-chart-projection-mode-layer">
+          ${_billingChartLayer(monthCoords, dims)}
+          <polyline class="billing-chart-projection-line" points="${monthCoords[monthCoords.length - 1].join(',')} ${projectedCoord.join(',')}"></polyline>
+          <circle class="billing-chart-projected-dot" cx="${projectedCoord[0]}" cy="${projectedCoord[1]}" r="3.5"></circle>
+        </g>
+      `
+    : '';
+  const thresholdLayer = hasThresholds ? _billingChartThresholdLayer(thresholds, dims, safeMax) : '';
+  const actionItems = [];
+  if (hasThresholds) {
+    actionItems.push(`
+        <label class="billing-chart-graph-toggle billing-chart-threshold-toggle">
+          <input type="checkbox" class="billing-chart-toggle-input billing-chart-threshold-input" aria-label="${escapeHtml(thresholds.ariaLabel || 'Show warning and max usage lines')}" checked>
+          <span class="billing-chart-toggle-switch billing-chart-threshold-switch" aria-hidden="true"></span>
+          <span>Limits</span>
+        </label>
+      `);
+  }
+  if (hasProjection) {
+    actionItems.push(`
+        <label class="billing-chart-graph-toggle billing-chart-projection-toggle">
+          <input type="checkbox" class="billing-chart-toggle-input billing-chart-projection-input" aria-label="Show projected spend line">
+          <span class="billing-chart-toggle-switch billing-chart-projection-switch" aria-hidden="true"></span>
+          <span>Projected</span>
+        </label>
+      `);
+  }
+  const plotActions = actionItems.length
+    ? `
+      <div class="billing-chart-plot-actions">
+        ${actionItems.join('')}
+      </div>
+    `
+    : '';
   return `
-    <div class="billing-chart-plot">
-      <svg viewBox="0 0 ${w} ${h}" role="img" aria-label="Billing spend history">
-        <line class="billing-chart-axis" x1="${padX}" y1="${h - padY}" x2="${w - padX}" y2="${h - padY}"></line>
-        <line class="billing-chart-axis" x1="${padX}" y1="${padY}" x2="${padX}" y2="${h - padY}"></line>
-        <polygon class="billing-chart-area" points="${area}"></polygon>
-        <polyline class="billing-chart-line" points="${line}"></polyline>
-        ${coords.map(pair => `<circle class="billing-chart-dot" cx="${pair[0]}" cy="${pair[1]}" r="3"></circle>`).join('')}
-      </svg>
-      <div class="billing-chart-axis-labels"><span>${escapeHtml(firstLabel)}</span><span>${escapeHtml(lastLabel)}</span></div>
+    <div class="billing-chart-plot${hasThresholds ? ' show-thresholds' : ''}">
+      ${plotActions}
+      <div class="billing-chart-plot-frame">
+        <svg viewBox="0 0 ${w} ${h}" role="img" aria-label="Billing spend history">
+          <line class="billing-chart-axis" x1="${padX}" y1="${h - padY}" x2="${w - padX}" y2="${h - padY}"></line>
+          <line class="billing-chart-axis" x1="${padX}" y1="${padY}" x2="${padX}" y2="${h - padY}"></line>
+          ${thresholdLayer}
+          ${_billingChartLayer(coords, dims, 'billing-chart-actual-layer')}
+          ${projectionLayer}
+        </svg>
+        ${actualPointControls}
+        ${projectionPointControls}
+        ${projectedControl}
+      </div>
+      <div class="billing-chart-axis-labels billing-chart-axis-labels-actual"><span>${escapeHtml(firstLabel)}</span><span>${escapeHtml(lastLabel)}</span></div>
+      ${hasProjection ? `<div class="billing-chart-axis-labels billing-chart-axis-labels-projected"><span>${escapeHtml(firstLabel)}</span><span>${escapeHtml(monthEndLabel)}</span></div>` : ''}
     </div>
+  `;
+}
+
+function _billingChartDataPoints(history, chart = {}) {
+  if (!Array.isArray(history)) return '';
+  const points = history
+    .filter(item => item && Number.isFinite(Number(item.amount)))
+    .slice(-30);
+  if (!points.length) return '';
+
+  const rows = points.map(item => {
+    const date = _billingChartDateLabel(item?.timestamp) || item?.timestamp || 'Point';
+    const tag = item?.synthetic ? 'Baseline' : 'Actual';
+    return `
+      <div class="billing-chart-data-row">
+        <span>
+          <strong>${escapeHtml(date)}</strong>
+          <span class="billing-chart-data-tag">${tag}</span>
+        </span>
+        <span>${_billingChartMoney(_billingChartNumber(item.amount), item.display)}</span>
+      </div>
+    `;
+  });
+
+  const hasProjection = _billingChartProjectionAvailable(chart, points);
+  if (hasProjection) {
+    rows.push(`
+      <div class="billing-chart-data-row billing-chart-data-row-projected">
+        <span>
+          <strong>${escapeHtml(_billingChartMonthEndLabel(chart, points))}</strong>
+          <span class="billing-chart-data-tag">Projected</span>
+        </span>
+        <span>${_billingChartMoney(_billingChartNumber(chart.projected), chart.projected_display)}</span>
+      </div>
+    `);
+  }
+
+  const pointLabel = `${points.length} ${points.length === 1 ? 'point' : 'points'}`;
+  const projectionLabel = hasProjection ? ' + projection' : '';
+  return `
+    <details class="billing-chart-data-points">
+      <summary>
+        <span>Data points</span>
+        <span>${escapeHtml(pointLabel + projectionLabel)}</span>
+      </summary>
+      <div class="billing-chart-data-list">${rows.join('')}</div>
+    </details>
   `;
 }
 
@@ -164,20 +501,28 @@ function _billingChartHtml(raw) {
   const budgetTarget = limit || warning || maxY;
   const budgetPct = Math.max(0, Math.min(100, (total / Math.max(0.01, budgetTarget)) * 100));
   const budgetClass = limit && total >= limit ? ' over-limit' : warning && total >= warning ? ' over-warning' : '';
-  const title = escapeHtml(chart.title || 'Cloud Spend');
+  const title = escapeHtml(chart.title || 'Model Spend');
   const subtitle = escapeHtml(chart.subtitle || '');
+  const chartPeriod = String(chart.period || 'month').toLowerCase();
+  const monthNav = _billingChartMonthNav(chart);
   const sourceNote = _billingChartSourceNote(chart, accounts, usage);
-  const notice = chart.notice ? `<div class="billing-chart-notice">${escapeHtml(chart.notice)}</div>` : '';
+  const noticeText = _billingChartNotice(chart);
+  const notice = noticeText ? `<div class="billing-chart-notice">${escapeHtml(noticeText)}</div>` : '';
   const updated = chart.updated_at ? `<span>Updated ${escapeHtml(_billingChartDateLabel(chart.updated_at) || chart.updated_at)}</span>` : '';
 
-  const statItems = [
-    ['Current', _billingChartMoney(total, chart.total_display)],
-    ['Projected', _billingChartMoney(projected, chart.projected_display)],
-  ];
-  if (limit != null) statItems.push(['Limit', _billingChartMoney(limit, chart.limit_display)]);
-  else if (warning != null) statItems.push(['Warn At', _billingChartMoney(warning, chart.warning_display)]);
+  const statItems = [['Current', _billingChartMoney(total, chart.total_display)]];
+  if (chart.is_current_month !== false) {
+    statItems.push(['Projected', _billingChartMoney(projected, chart.projected_display)]);
+  }
+  if (limit != null) statItems.push([chartPeriod === 'day' ? 'Daily Max' : 'Monthly Max', _billingChartMoney(limit, chart.limit_display)]);
+  else if (warning != null) statItems.push([chartPeriod === 'day' ? 'Daily Warning' : 'Monthly Warning', _billingChartMoney(warning, chart.warning_display)]);
   if (usageTokens) statItems.push(['Tokens', _billingChartCompact(usageTokens)]);
   if (usageEvents) statItems.push(['Calls', String(usageEvents)]);
+  const budgetLabel = limit != null
+    ? (chartPeriod === 'day' ? 'daily max' : 'monthly max')
+    : warning != null
+      ? (chartPeriod === 'day' ? 'warning' : 'monthly warning')
+      : 'current scale';
 
   const accountRows = accounts.length
     ? accounts.map(item => {
@@ -204,10 +549,21 @@ function _billingChartHtml(raw) {
     : '<div class="billing-chart-empty">No provider spend or usage has been recorded yet.</div>';
 
   return `
-    <div class="billing-chart-card">
+    <div
+      class="billing-chart-card"
+      data-billing-chart-card="1"
+      data-billing-month="${escapeHtml(chart.month || '')}"
+      data-billing-group-by="${escapeHtml(chart.group_by || 'provider')}"
+      data-billing-provider-query="${escapeHtml(chart.provider_query || '')}"
+      data-billing-spend-source="${escapeHtml(chart.spend_source || '')}"
+      data-billing-spend-scope="${escapeHtml(chart.spend_scope || '')}"
+    >
       <div class="billing-chart-head">
-        <div>
-          <div class="billing-chart-title">${title}</div>
+        <div class="billing-chart-heading">
+          <div class="billing-chart-title-row">
+            <div class="billing-chart-title">${title}</div>
+            ${monthNav}
+          </div>
           <div class="billing-chart-subtitle">${subtitle}</div>
           ${sourceNote ? `<div class="billing-chart-source-note">${escapeHtml(sourceNote)}</div>` : ''}
         </div>
@@ -218,9 +574,10 @@ function _billingChartHtml(raw) {
       </div>
       <div class="billing-chart-budget${budgetClass}">
         <div class="billing-chart-budget-track"><span style="width:${budgetPct.toFixed(2)}%"></span></div>
-        <div class="billing-chart-budget-labels"><span>${budgetPct.toFixed(0)}% of ${limit != null ? 'limit' : warning != null ? 'warning' : 'current scale'}</span>${updated}</div>
+        <div class="billing-chart-budget-labels"><span>${budgetPct.toFixed(0)}% of ${budgetLabel}</span>${updated}</div>
       </div>
-      ${_billingChartSvg(history, maxY)}
+      ${_billingChartSvg(history, maxY, chart)}
+      ${_billingChartDataPoints(history, chart)}
       <div class="billing-chart-accounts">${accountRows}</div>
       ${notice}
     </div>
@@ -904,6 +1261,160 @@ function initMermaid() {
 }
 window.odysseusInitMermaid = initMermaid;
 initMermaid();
+
+const BILLING_CHART_SNAP_RADIUS_PX = 38;
+let _billingChartSnapFrame = null;
+
+function _billingChartClearSnap(frame) {
+  if (!frame) return;
+  frame.querySelectorAll('.billing-chart-point.snap-active').forEach(point => {
+    point.classList.remove('snap-active');
+  });
+}
+
+function _billingChartSnapPoint(frame, clientX, clientY) {
+  if (!frame) return;
+  const points = Array.from(frame.querySelectorAll('.billing-chart-point'));
+  let nearest = null;
+  let nearestDistance = Infinity;
+  for (const point of points) {
+    const style = window.getComputedStyle ? window.getComputedStyle(point) : null;
+    if (style && (style.display === 'none' || style.visibility === 'hidden')) continue;
+    const rect = point.getBoundingClientRect();
+    if (!rect.width && !rect.height) continue;
+    const x = rect.left + (rect.width / 2);
+    const y = rect.top + (rect.height / 2);
+    const distance = Math.hypot(clientX - x, clientY - y);
+    if (distance < nearestDistance) {
+      nearest = point;
+      nearestDistance = distance;
+    }
+  }
+
+  if (!nearest || nearestDistance > BILLING_CHART_SNAP_RADIUS_PX) {
+    _billingChartClearSnap(frame);
+    return;
+  }
+
+  points.forEach(point => point.classList.toggle('snap-active', point === nearest));
+}
+
+function _billingChartToggleProjection(input) {
+  const plot = input?.closest?.('.billing-chart-plot') || null;
+  if (!plot) return;
+  plot.classList.toggle('show-projected', !!input.checked);
+  _billingChartClearSnap(plot.querySelector('.billing-chart-plot-frame'));
+}
+
+function _billingChartToggleThresholds(input) {
+  const plot = input?.closest?.('.billing-chart-plot') || null;
+  if (!plot) return;
+  plot.classList.toggle('show-thresholds', !!input.checked);
+}
+
+function _billingChartSetLoadError(card, message) {
+  if (!card) return;
+  let error = card.querySelector('.billing-chart-load-error');
+  if (!error) {
+    error = document.createElement('div');
+    error.className = 'billing-chart-load-error';
+    card.appendChild(error);
+  }
+  error.textContent = message;
+}
+
+async function _billingChartSwitchMonth(button) {
+  const targetMonth = String(button?.getAttribute?.('data-billing-chart-month') || '').trim();
+  if (!/^\d{4}-\d{2}$/.test(targetMonth) || button.disabled) return;
+  const card = button.closest?.('.billing-chart-card') || null;
+  if (!card || card.classList.contains('billing-chart-loading')) return;
+
+  const params = new URLSearchParams();
+  params.set('period', 'month');
+  params.set('month', targetMonth);
+  params.set('group_by', card.getAttribute('data-billing-group-by') || 'provider');
+
+  const provider = String(card.getAttribute('data-billing-provider-query') || '').trim();
+  const spendSource = String(card.getAttribute('data-billing-spend-source') || '').trim();
+  const spendScope = String(card.getAttribute('data-billing-spend-scope') || '').trim();
+  if (provider) params.set('provider', provider);
+  if (spendSource) params.set('spend_source', spendSource);
+  if (spendScope) params.set('spend_scope', spendScope);
+
+  card.classList.add('billing-chart-loading');
+  try {
+    const response = await fetch(`/api/billing/spending-graph?${params.toString()}`, {
+      headers: { Accept: 'application/json' },
+    });
+    if (!response.ok) throw new Error(`Billing graph request failed (${response.status})`);
+    const payload = await response.json();
+    if (!payload?.chart || payload.chart.kind !== 'billing-spend') {
+      throw new Error('Billing graph response did not include chart data');
+    }
+    const template = document.createElement('template');
+    template.innerHTML = _billingChartHtml(JSON.stringify(payload.chart)).trim();
+    const nextCard = template.content.firstElementChild;
+    if (!nextCard) throw new Error('Billing graph response could not be rendered');
+    card.replaceWith(nextCard);
+  } catch (error) {
+    card.classList.remove('billing-chart-loading');
+    _billingChartSetLoadError(card, error?.message || 'Billing graph could not be loaded');
+  }
+}
+
+function _billingChartFrameForPointer(target, clientX, clientY) {
+  const direct = target.closest?.('.billing-chart-plot-frame') || null;
+  if (direct) return direct;
+  for (const frame of document.querySelectorAll('.billing-chart-plot-frame')) {
+    const rect = frame.getBoundingClientRect();
+    if (
+      clientX >= rect.left - BILLING_CHART_SNAP_RADIUS_PX
+      && clientX <= rect.right + BILLING_CHART_SNAP_RADIUS_PX
+      && clientY >= rect.top - BILLING_CHART_SNAP_RADIUS_PX
+      && clientY <= rect.bottom + BILLING_CHART_SNAP_RADIUS_PX
+    ) {
+      return frame;
+    }
+  }
+  return null;
+}
+
+document.addEventListener('pointermove', function(e) {
+  const frame = _billingChartFrameForPointer(e.target, e.clientX, e.clientY);
+  if (_billingChartSnapFrame && _billingChartSnapFrame !== frame) {
+    _billingChartClearSnap(_billingChartSnapFrame);
+  }
+  _billingChartSnapFrame = frame;
+  if (!frame) return;
+  _billingChartSnapPoint(frame, e.clientX, e.clientY);
+});
+
+document.addEventListener('pointerout', function(e) {
+  const frame = e.target.closest?.('.billing-chart-plot-frame') || null;
+  if (!frame) return;
+  if (e.relatedTarget && frame.contains(e.relatedTarget)) return;
+  _billingChartClearSnap(frame);
+  if (_billingChartSnapFrame === frame) _billingChartSnapFrame = null;
+});
+
+document.addEventListener('change', function(e) {
+  const projectionInput = e.target.closest?.('.billing-chart-projection-input') || null;
+  if (projectionInput) {
+    _billingChartToggleProjection(projectionInput);
+    return;
+  }
+  const thresholdInput = e.target.closest?.('.billing-chart-threshold-input') || null;
+  if (thresholdInput) {
+    _billingChartToggleThresholds(thresholdInput);
+  }
+});
+
+document.addEventListener('click', function(e) {
+  const button = e.target.closest?.('.billing-chart-month-button') || null;
+  if (!button) return;
+  e.preventDefault();
+  _billingChartSwitchMonth(button);
+});
 
 // Persist which thinking sections were expanded across page refreshes.
 // IDs are render-generated (Date.now-based) so we key by a stable hash of
