@@ -16,7 +16,7 @@ from src.billing.common import (
     float_money as _float_money,
     money as _money,
 )
-from src.billing.providers import _normalized_provider
+from src.billing.providers import normalized_provider
 
 
 DEFAULT_BILLING_HISTORY_FILE = Path("data/billing_history.json")
@@ -75,7 +75,7 @@ def account_history_snapshot(account: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def billing_scope(forced_provider: Optional[str] = None) -> str:
-    return _normalized_provider(forced_provider) if forced_provider else "all"
+    return normalized_provider(forced_provider) if forced_provider else "all"
 
 
 def billing_month(value: Any = "", *, now: Optional[datetime] = None) -> str:
@@ -142,11 +142,12 @@ def history_item_matches_series(
             str(item.get(key) or "")
             for key in ("provider_label", "source_label", "label")
         ).lower()
+        # Older history samples predate explicit spend_source/spend_scope and
+        # mostly represented provider account totals. Labels that look like
+        # model spend are too ambiguous to reuse safely because they can leak
+        # old partial/derived points into either account or AI-only graphs.
         if "model" in legacy_label:
-            return (
-                spend_scope == "model_usage"
-                and spend_source in {"provider_model_billing", "usage_ledger"}
-            )
+            return False
         return spend_scope == "provider_account" and spend_source == "provider_billing"
     return item_scope == spend_scope and item_source == spend_source
 

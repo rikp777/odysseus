@@ -18,7 +18,7 @@ from src.billing.common import (
     money as _money,
     utc_now_iso as _utc_now_iso,
 )
-from src.billing.providers import _normalized_provider
+from src.billing.providers import normalized_provider
 
 
 def usage_breakdown(source: Any) -> Dict[str, Any]:
@@ -382,7 +382,7 @@ def build_spending_graph_payload(
         "previous_month": context.previous_month,
         "next_month": context.next_month,
         "scope": context.scope,
-        "provider_query": _normalized_provider(forced_provider) if forced_provider else "",
+        "provider_query": normalized_provider(forced_provider) if forced_provider else "",
         "history_only": bool(status.get("history_only", False)),
         "group_by": group_by,
         "local_usage": local_usage or {},

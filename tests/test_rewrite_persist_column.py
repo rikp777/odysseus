@@ -30,6 +30,8 @@ def test_rewrite_query_selects_and_updates_latest_assistant_message():
     tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
     engine = create_engine(f"sqlite:///{tmp.name}", connect_args={"check_same_thread": False}, poolclass=NullPool)
     cdb.Base.metadata.create_all(engine)
+    DbSession.__table__.create(bind=engine, checkfirst=True)
+    DBChatMessage.__table__.create(bind=engine, checkfirst=True)
     TS = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 
     sid = "s-" + uuid.uuid4().hex[:8]

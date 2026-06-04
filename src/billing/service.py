@@ -10,19 +10,10 @@ import httpx
 from src.billing.common import money as _money
 from src.billing.common import utc_now_iso as _utc_now_iso
 from src.billing.provider_types import BillingProvider
+from src.billing.providers import provider_meta
 
 
 SecretDecryptor = Callable[[str], str]
-
-
-def _provider_meta(provider: str, definition: Optional[BillingProvider] = None) -> Dict[str, str]:
-    label = definition.label if definition else provider or "Cloud provider"
-    return {
-        "provider": provider,
-        "provider_label": label,
-        "provider_short_label": definition.short_label if definition else label[:2].upper(),
-        "provider_token_hint": definition.token_hint if definition else "Provider billing API token",
-    }
 
 
 def error_payload(
@@ -50,7 +41,7 @@ def error_payload(
         "refresh_seconds": refresh_seconds,
         "updated_at": _utc_now_iso(),
         "cached": False,
-        **_provider_meta(provider, provider_definition),
+        **provider_meta(provider, provider_definition),
     }
 
 
@@ -118,7 +109,7 @@ def fetch_account_spend(
 
     fetcher = provider_def.fetch
     normalizer = provider_def.normalize
-    provider_label = _provider_meta(provider, provider_def)["provider_label"]
+    provider_label = provider_meta(provider, provider_def)["provider_label"]
 
     try:
         raw_balance = fetcher(token)
@@ -186,7 +177,7 @@ def fetch_account_spend(
         "cached": False,
         "account_id": account["id"],
         "account_label": account["label"],
-        **_provider_meta(provider, provider_def),
+        **provider_meta(provider, provider_def),
         **normalized,
     }
     if model_amount is not None:

@@ -28,17 +28,30 @@ _STUBS = {
     "core.models": {"ChatMessage": MagicMock()},
     "src.request_models": {"SessionResponse": MagicMock()},
 }
-for _name, _attrs in _STUBS.items():
-    if _name not in sys.modules:
-        _m = types.ModuleType(_name)
-        for _k, _v in _attrs.items():
-            setattr(_m, _k, _v)
-        sys.modules[_name] = _m
 
-from fastapi import HTTPException  # noqa: E402
+_ABSENT = object()
+_saved_modules = {
+    name: sys.modules.get(name, _ABSENT)
+    for name in [*_STUBS, "routes.session_routes"]
+}
+try:
+    for _name, _attrs in _STUBS.items():
+        if _name not in sys.modules:
+            _m = types.ModuleType(_name)
+            for _k, _v in _attrs.items():
+                setattr(_m, _k, _v)
+            sys.modules[_name] = _m
 
-from src.auth_helpers import effective_user  # noqa: E402
-import routes.session_routes as SR  # noqa: E402
+    from fastapi import HTTPException  # noqa: E402
+
+    from src.auth_helpers import effective_user  # noqa: E402
+    import routes.session_routes as SR  # noqa: E402
+finally:
+    for _name, _val in _saved_modules.items():
+        if _val is _ABSENT:
+            sys.modules.pop(_name, None)
+        else:
+            sys.modules[_name] = _val
 
 
 def _req(**state):

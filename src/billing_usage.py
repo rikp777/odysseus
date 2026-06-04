@@ -11,9 +11,7 @@ from __future__ import annotations
 from calendar import monthrange
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
-import ipaddress
 from typing import Any, Dict, Optional
-from urllib.parse import urlparse
 import uuid
 
 from src.billing.common import (
@@ -23,6 +21,7 @@ from src.billing.common import (
     float_money as _float_money,
     stored_money as _stored_money,
 )
+from src.provider_identity import is_remote_billable_endpoint, provider_from_endpoint
 from src.settings import load_settings
 
 
@@ -44,53 +43,6 @@ def _period_range(period: str, now: Optional[datetime] = None) -> tuple[datetime
     return start, end, "month"
 
 
-def _provider_for_endpoint(endpoint_url: str) -> str:
-    value = (endpoint_url or "").lower()
-    host = (urlparse(value).hostname or "").lower()
-    if "inference.do-ai.run" in value or "inference.do-ai.run" in host:
-        return "digitalocean"
-    if "api.openai.com" in host:
-        return "openai"
-    if "anthropic.com" in host:
-        return "anthropic"
-    if "openrouter.ai" in host:
-        return "openrouter"
-    if "api.groq.com" in host:
-        return "groq"
-    if "api.mistral.ai" in host:
-        return "mistral"
-    if "api.together.xyz" in host or "api.together.ai" in host:
-        return "together"
-    if "fireworks.ai" in host:
-        return "fireworks"
-    if "generativelanguage.googleapis.com" in host:
-        return "google"
-    if "api.x.ai" in host:
-        return "xai"
-    if host:
-        return host
-    return "unknown"
-
-
-def _is_remote_billable_url(endpoint_url: str) -> bool:
-    try:
-        host = (urlparse(endpoint_url or "").hostname or "").lower()
-    except Exception:
-        return False
-    if not host:
-        return False
-    if host in {"localhost", "127.0.0.1", "0.0.0.0", "::1"} or host.endswith(".local"):
-        return False
-    try:
-        ip = ipaddress.ip_address(host)
-        tailscale = ipaddress.ip_network("100.64.0.0/10")
-        if ip.is_loopback or ip.is_private or ip.is_link_local or ip in tailscale:
-            return False
-    except ValueError:
-        pass
-    return True
-
-
 def _pricing_for(endpoint_url: str, model: str) -> Optional[Dict[str, Any]]:
     try:
         from src.model_pricing import _model_pricing_for_endpoint
@@ -107,7 +59,7 @@ def estimate_usage_cost(
 ) -> Dict[str, Any]:
     """Return normalized cost metadata for a model usage event."""
     pricing = _pricing_for(endpoint_url, model) or {}
-    provider = pricing.get("provider") or _provider_for_endpoint(endpoint_url)
+    provider = pricing.get("provider") or provider_from_endpoint(endpoint_url)
     unit = str(pricing.get("unit") or "1M tokens").lower()
     denominator = Decimal("1000000") if "1m" in unit or "million" in unit else Decimal("1")
 
@@ -321,7 +273,7 @@ def get_usage_summary(
 
 def local_budget_block_reason(endpoint_url: str, model: str = "", owner: Optional[str] = None) -> Optional[str]:
     """Return a block reason if local usage-ledger budgets are exceeded."""
-    if not _is_remote_billable_url(endpoint_url):
+    if not is_remote_billable_endpoint(endpoint_url):
         return None
     settings = load_settings()
     if not settings.get("cloud_billing_enabled"):

@@ -24,6 +24,8 @@ from datetime import datetime
 def test_sqlite_foreign_keys_cascade():
     engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
     Base.metadata.create_all(bind=engine)
+    Session.__table__.create(bind=engine, checkfirst=True)
+    ChatMessage.__table__.create(bind=engine, checkfirst=True)
     
     TestSessionLocal = sessionmaker(bind=engine)
     db = TestSessionLocal()

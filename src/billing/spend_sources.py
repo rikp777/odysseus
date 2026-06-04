@@ -6,14 +6,14 @@ from decimal import Decimal
 from typing import Any, Dict, Optional
 
 from src.billing.common import decimal_or_none, money
-from src.billing.providers import _normalized_provider, _provider_meta
+from src.billing.providers import normalized_provider, provider_meta
 
 
 def local_usage_amount(local_usage: Any, *, forced_provider: Optional[str] = None) -> Optional[Decimal]:
     if not isinstance(local_usage, dict) or local_usage.get("enabled") is False:
         return None
     if forced_provider:
-        wanted = _normalized_provider(forced_provider)
+        wanted = normalized_provider(forced_provider)
         for item in local_usage.get("providers", []):
             if not isinstance(item, dict):
                 continue
@@ -33,8 +33,8 @@ def local_usage_provider_meta(
     forced_provider: Optional[str] = None,
 ) -> Dict[str, str]:
     if forced_provider:
-        provider = _normalized_provider(forced_provider)
-        meta = _provider_meta(provider)
+        provider = normalized_provider(forced_provider)
+        meta = provider_meta(provider)
         return {
             "provider": provider,
             "provider_label": f"{meta['provider_label']} models",
@@ -53,7 +53,7 @@ def local_usage_provider_meta(
 
     unique = sorted(set(providers))
     if len(unique) == 1:
-        meta = _provider_meta(unique[0])
+        meta = provider_meta(unique[0])
         return {
             "provider": unique[0],
             "provider_label": f"{meta['provider_label']} models",
@@ -76,7 +76,7 @@ def provider_model_spend_amount(
 ) -> Optional[Decimal]:
     total = Decimal("0")
     found = False
-    wanted = _normalized_provider(forced_provider) if forced_provider else ""
+    wanted = normalized_provider(forced_provider) if forced_provider else ""
     for item in payload.get("accounts", []):
         if not isinstance(item, dict):
             continue
@@ -96,7 +96,7 @@ def provider_model_spend_meta(
     *,
     forced_provider: Optional[str] = None,
 ) -> Dict[str, str]:
-    wanted = _normalized_provider(forced_provider) if forced_provider else ""
+    wanted = normalized_provider(forced_provider) if forced_provider else ""
     providers = []
     labels = []
     for item in payload.get("accounts", []):
@@ -115,7 +115,7 @@ def provider_model_spend_meta(
 
     unique = sorted(set(providers))
     if len(unique) == 1:
-        meta = _provider_meta(unique[0])
+        meta = provider_meta(unique[0])
         return {
             "provider": unique[0],
             "provider_label": f"{meta['provider_label']} models",

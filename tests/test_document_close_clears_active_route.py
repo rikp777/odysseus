@@ -51,6 +51,8 @@ _ENGINE = create_engine(
     poolclass=NullPool,
 )
 cdb.Base.metadata.create_all(_ENGINE)
+DbSession.__table__.create(bind=_ENGINE, checkfirst=True)
+Document.__table__.create(bind=_ENGINE, checkfirst=True)
 _TS = sessionmaker(bind=_ENGINE, autoflush=False, autocommit=False)
 droutes.SessionLocal = _TS  # route handlers resolve SessionLocal at call time
 
