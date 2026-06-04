@@ -17,6 +17,8 @@ from sqlalchemy.pool import NullPool
 
 import core.database as cdb
 from core.database import Document
+from core.database import DocumentVersion
+from core.database import Session as DbSession
 
 
 @pytest.fixture
@@ -24,6 +26,9 @@ def db_factory(monkeypatch):
     tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
     engine = create_engine(f"sqlite:///{tmp.name}", connect_args={"check_same_thread": False}, poolclass=NullPool)
     cdb.Base.metadata.create_all(engine)
+    DbSession.__table__.create(bind=engine, checkfirst=True)
+    Document.__table__.create(bind=engine, checkfirst=True)
+    DocumentVersion.__table__.create(bind=engine, checkfirst=True)
     TS = sessionmaker(bind=engine, autoflush=False, autocommit=False)
     monkeypatch.setattr(cdb, "SessionLocal", TS)
     return TS

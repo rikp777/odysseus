@@ -41,6 +41,7 @@ def test_fallback_emits_indicator_when_primary_fails(monkeypatch):
     assert fb[0]["type"] == "fallback"
     assert fb[0]["selected_model"] == "primary"
     assert fb[0]["answered_by"] == "backup"
+    assert fb[0]["answered_endpoint"] == "u2"
     assert "400" in fb[0]["reason"]
     # the fallback notice must precede the answer content
     order = [i for i, c in enumerate(chunks) if '"fallback"' in c or '"delta": "hello"' in c]

@@ -63,6 +63,7 @@ def test_rename_owner_db_filter_is_case_insensitive():
 
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(bind=engine)
+    DbSession.__table__.create(bind=engine, checkfirst=True)
     db = sessionmaker(bind=engine)()
     db.add(
         DbSession(

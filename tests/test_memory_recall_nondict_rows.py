@@ -8,9 +8,11 @@ class _FakeVectorStore:
     vector index + metadata store. A stale or corrupt index can yield a
     non-dict row mixed in with the good ones."""
 
+    healthy = True
+
     def search(self, query, k=5):
         return [
-            {"id": "1", "text": "real memory", "timestamp": 5},
+            {"memory_id": "1", "score": 0.8},
             "corrupt-row",
             None,
         ]
@@ -18,6 +20,7 @@ class _FakeVectorStore:
 
 def test_recall_skips_non_dict_vector_rows(tmp_path):
     svc = MemoryService(str(tmp_path))
+    svc.manager.save([{"id": "1", "text": "real memory", "timestamp": 5}])
     svc.vector_store = _FakeVectorStore()
     res = asyncio.run(svc.recall("anything"))
     # old code did r.get(...) on the str/None rows and raised AttributeError,

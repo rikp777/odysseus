@@ -39,6 +39,8 @@ def test_chatmessage_model_has_timestamp_not_created_at():
 def test_order_by_timestamp_query_executes():
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(engine)
+    DbSession.__table__.create(bind=engine, checkfirst=True)
+    DbChatMessage.__table__.create(bind=engine, checkfirst=True)
     db = sessionmaker(bind=engine)()
     try:
         sid = "sess1234"
