@@ -20,6 +20,16 @@ export async function fetchBillingProviders() {
   return Array.isArray(data.providers) ? data.providers : [];
 }
 
+export async function fetchSessionUsage(sessionId) {
+  const id = String(sessionId || '').trim();
+  if (!id) return null;
+  const res = await fetch(`/api/billing/session/${encodeURIComponent(id)}/usage`, {
+    credentials: 'same-origin',
+  });
+  if (!res.ok) throw new Error('billing session usage unavailable');
+  return res.json();
+}
+
 export async function saveAuthSettings(payload) {
   const res = await fetch(AUTH_SETTINGS_URL, {
     method: 'POST',

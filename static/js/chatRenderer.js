@@ -9,6 +9,7 @@ import settingsModule from './settings.js';
 import spinnerModule from './spinner.js';
 import { bindMenuDismiss } from './escMenuStack.js';
 import { matchModelKey } from './model/matchKey.js';
+import { fetchSessionUsage } from './billing/api.js';
 
 const SEARCH_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>';
 const REPORT_ICON = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><line x1="10" y1="9" x2="8" y2="9"/></svg>';
@@ -669,14 +670,6 @@ export function isLocalEndpoint(url) {
   return false;
 }
 
-/** Cost for the current turn, returning null (free) for local endpoints. */
-function _billableCost(model, inputTokens, outputTokens) {
-  const url = (window.sessionModule && window.sessionModule.getCurrentEndpointUrl)
-    ? window.sessionModule.getCurrentEndpointUrl() : null;
-  if (isLocalEndpoint(url)) return null;
-  return getModelCost(model, inputTokens, outputTokens);
-}
-
 function _costDisplayEnabled() {
   return window.__odysseusBillingDisplayEnabled !== false;
 }
@@ -694,66 +687,125 @@ export function getImageCost(model, quality, size) {
 }
 
 /* ── Session cost helpers ─────────────────────────────────────────── */
-const _COST_KEY = 'ody-session-cost';
+const _sessionUsageCache = new Map();
+const _sessionUsageInFlight = new Map();
 
-/** Return the accumulated cost for the current (or given) session. */
-export function getSessionCost(sessionId) {
-  const sid = sessionId || (window.sessionModule && window.sessionModule.getCurrentSessionId());
-  if (!sid) return 0;
-  try {
-    const costs = JSON.parse(localStorage.getItem(_COST_KEY) || '{}');
-    return costs[sid] || 0;
-  } catch (_e) { return 0; }
+function _currentSessionId() {
+  return window.sessionModule && window.sessionModule.getCurrentSessionId
+    ? window.sessionModule.getCurrentSessionId()
+    : null;
 }
 
-/** Reset session cost for the given session (defaults to current). */
-export function resetSessionCost(sessionId) {
-  const sid = sessionId || (window.sessionModule && window.sessionModule.getCurrentSessionId());
-  if (!sid) return;
-  try {
-    const costs = JSON.parse(localStorage.getItem(_COST_KEY) || '{}');
-    delete costs[sid];
-    localStorage.setItem(_COST_KEY, JSON.stringify(costs));
-  } catch (_e) { /* ignore */ }
-  updateSessionCostUI();
+function _usageCostDisplay(usage) {
+  if (!usage || !usage.known_cost_events) return null;
+  const amount = Number(usage.amount_float || usage.amount);
+  if (!Number.isFinite(amount) || amount <= 0) return null;
+  const display = String(usage.display || '').trim();
+  if (display) return display;
+  return '$' + (amount < 0.01 ? amount.toFixed(4) : amount < 1 ? amount.toFixed(3) : amount.toFixed(2));
 }
 
-/** Update the persistent session-cost badge in the input bar. */
-export function updateSessionCostUI() {
+function _messageUsageForElement(messageElement) {
+  const sid = _currentSessionId();
+  const messageId = messageElement?.dataset?.dbId || '';
+  if (!sid || !messageId) return null;
+  const usage = _sessionUsageCache.get(sid);
+  const rows = Array.isArray(usage?.messages) ? usage.messages : [];
+  return rows.find(item => item && item.message_id === messageId) || null;
+}
+
+function _messageCostDisplay(messageElement) {
+  return _usageCostDisplay(_messageUsageForElement(messageElement));
+}
+
+function _renderSessionCostUI(sessionId) {
   const el = document.getElementById('session-cost-display');
   if (!el) return;
   if (!_costDisplayEnabled()) {
     el.style.display = 'none';
     return;
   }
-  // Local model? It's free — hide the badge and clear any stale cost that a
-  // previous (buggy) cloud-rate billing left in localStorage for this session.
-  const _url = (window.sessionModule && window.sessionModule.getCurrentEndpointUrl)
-    ? window.sessionModule.getCurrentEndpointUrl() : null;
-  if (isLocalEndpoint(_url)) {
-    const sid = window.sessionModule && window.sessionModule.getCurrentSessionId();
-    if (sid && getSessionCost(sid) > 0) {
-      try {
-        const costs = JSON.parse(localStorage.getItem(_COST_KEY) || '{}');
-        delete costs[sid];
-        localStorage.setItem(_COST_KEY, JSON.stringify(costs));
-      } catch (_e) { /* ignore */ }
-    }
-    el.style.display = 'none';
-    return;
-  }
-  const cost = getSessionCost();
-  if (cost > 0) {
-    el.textContent = '$' + (cost < 0.01 ? cost.toFixed(4) : cost < 1 ? cost.toFixed(3) : cost.toFixed(2));
+  const sid = sessionId || _currentSessionId();
+  const usage = sid ? _sessionUsageCache.get(sid) : null;
+  const display = _usageCostDisplay(usage);
+  if (display) {
+    el.textContent = display;
     el.style.display = '';
   } else {
     el.style.display = 'none';
   }
 }
 
+function _refreshRenderedMessageCosts(sessionId) {
+  if (!sessionId || sessionId !== _currentSessionId()) return;
+  document.querySelectorAll('.msg-ai[data-db-id]').forEach(el => {
+    if (el._lastMetrics) {
+      displayMetrics(el, { ...el._lastMetrics, _fromHistory: true });
+    }
+  });
+}
+
+/** Return the accumulated cost for the current (or given) session. */
+export function getSessionCost(sessionId) {
+  const sid = sessionId || _currentSessionId();
+  const usage = sid ? _sessionUsageCache.get(sid) : null;
+  return Number(usage?.amount_float || usage?.amount || 0) || 0;
+}
+
+/** Reset session cost for the given session (defaults to current). */
+export function resetSessionCost(sessionId) {
+  const sid = sessionId || _currentSessionId();
+  if (!sid) return;
+  _sessionUsageCache.delete(sid);
+  _renderSessionCostUI(sid);
+  refreshSessionUsage(sid, { force: true }).catch(() => {});
+}
+
+export async function refreshSessionUsage(sessionId, options = {}) {
+  const sid = sessionId || _currentSessionId();
+  if (!sid || !_costDisplayEnabled()) {
+    _renderSessionCostUI(sid);
+    return null;
+  }
+  if (!options.force && _sessionUsageCache.has(sid)) {
+    _renderSessionCostUI(sid);
+    return _sessionUsageCache.get(sid);
+  }
+  if (_sessionUsageInFlight.has(sid)) return _sessionUsageInFlight.get(sid);
+  const promise = fetchSessionUsage(sid)
+    .then(data => {
+      _sessionUsageCache.set(sid, data || {});
+      _renderSessionCostUI(sid);
+      _refreshRenderedMessageCosts(sid);
+      return data;
+    })
+    .catch(() => {
+      _renderSessionCostUI(sid);
+      return null;
+    })
+    .finally(() => {
+      _sessionUsageInFlight.delete(sid);
+    });
+  _sessionUsageInFlight.set(sid, promise);
+  return promise;
+}
+
+/** Update the persistent session-cost badge in the input bar. */
+export function updateSessionCostUI() {
+  const sid = _currentSessionId();
+  _renderSessionCostUI(sid);
+  if (sid && !_sessionUsageCache.has(sid) && !_sessionUsageInFlight.has(sid)) {
+    refreshSessionUsage(sid).catch(() => {});
+  }
+}
+
 if (typeof window !== 'undefined') {
   window.addEventListener('odysseus-billing-visibility-changed', () => {
-    updateSessionCostUI();
+    if (_costDisplayEnabled()) {
+      refreshSessionUsage(_currentSessionId(), { force: true }).catch(() => {});
+    } else {
+      updateSessionCostUI();
+    }
   });
 }
 
@@ -1599,6 +1651,7 @@ export function createUserMsgFooter(msgElement) {
  * Display performance metrics for a message.
  */
 export function displayMetrics(messageElement, metrics) {
+  messageElement._lastMetrics = metrics;
   const existingMetrics = messageElement.querySelector('.response-metrics');
   if (existingMetrics) existingMetrics.remove();
 
@@ -1612,26 +1665,17 @@ export function displayMetrics(messageElement, metrics) {
   const isReal = metrics.usage_source === 'real';
   const ctxPct = metrics.context_percent;
   const model = metrics.model || 'Unknown';
-  const cost = _billableCost(model, inputTokens, outputTokens);
+  const costStr0 = _messageCostDisplay(messageElement);
 
   // Nothing useful to show — bail out (only if ALL metrics are missing)
   if (!responseTime && !outputTokens && tps == null && !ctxPct) return;
 
-  // Accumulate session cost (only on fresh metrics, not history reload)
   if (!metrics._fromHistory) {
     const _sid = window.sessionModule && window.sessionModule.getCurrentSessionId();
-    if (_sid && cost !== null && _costDisplayEnabled()) {
-      try {
-        const _costs = JSON.parse(localStorage.getItem(_COST_KEY) || '{}');
-        _costs[_sid] = (_costs[_sid] || 0) + cost;
-        localStorage.setItem(_COST_KEY, JSON.stringify(_costs));
-      } catch (_e) { /* ignore */ }
-      updateSessionCostUI();
-    }
+    if (_sid && _costDisplayEnabled()) refreshSessionUsage(_sid, { force: true }).catch(() => {});
   }
 
   // Default: show tok/s if available, else fall back to other stats
-  const costStr0 = cost !== null ? `$${cost < 0.01 ? cost.toFixed(4) : cost.toFixed(3)}` : null;
   const hasSpeed = tps != null && tps !== 'undefined';
   const baseLabel = hasSpeed
     ? `${tps} tok/s`
@@ -1660,7 +1704,7 @@ export function displayMetrics(messageElement, metrics) {
     e.stopPropagation();
     document.querySelectorAll('.ctx-popup').forEach(p => { if (typeof p._dismiss === 'function') p._dismiss(); else p.remove(); });
 
-    const costStr = cost !== null ? `$${cost < 0.01 ? cost.toFixed(4) : cost.toFixed(3)}` : 'n/a';
+    const costStr = _messageCostDisplay(messageElement) || 'n/a';
     const speedStr = tps != null && tps !== 'undefined' ? `${tps} tok/s` : 'n/a';
     const totalTok = inputTokens + outputTokens;
     const ctxColor = ctxPct >= 85 ? 'var(--red, #e06c75)' : ctxPct >= 70 ? '#ff9900' : 'var(--color-muted-alt, #6b7280)';
@@ -1673,9 +1717,10 @@ export function displayMetrics(messageElement, metrics) {
 
     // Session total cost
     let sessionCostStr = '';
-    const sc = getSessionCost();
-    if (sc > 0) {
-      sessionCostStr = `<div class="billing-cost-only"><span class="ctx-label">Session</span> $${sc < 0.01 ? sc.toFixed(4) : sc.toFixed(3)}</div>`;
+    const sessionUsage = _sessionUsageCache.get(_currentSessionId());
+    const sessionDisplay = _usageCostDisplay(sessionUsage);
+    if (sessionDisplay) {
+      sessionCostStr = `<div class="billing-cost-only"><span class="ctx-label">Session</span> ${sessionDisplay}</div>`;
     }
 
     const popup = document.createElement('div');
@@ -2306,6 +2351,7 @@ const chatRenderer = {
   getImageCost,
   getSessionCost,
   resetSessionCost,
+  refreshSessionUsage,
   updateSessionCostUI,
   roleTimestamp,
   stripToolBlocks,

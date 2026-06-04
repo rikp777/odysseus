@@ -1,6 +1,30 @@
 from decimal import Decimal
+from datetime import datetime
+from types import SimpleNamespace
 
 from src import billing_usage
+
+
+def _usage_row(
+    *,
+    message_id="msg-1",
+    provider="openai",
+    model="gpt-4o-mini",
+    input_tokens=100,
+    output_tokens=50,
+    total_cost_usd="0.001000",
+    created_at=None,
+):
+    return SimpleNamespace(
+        message_id=message_id,
+        provider=provider,
+        model=model,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        total_tokens=input_tokens + output_tokens,
+        total_cost_usd=total_cost_usd,
+        created_at=created_at or datetime(2026, 6, 4, 12, 0, 0),
+    )
 
 
 def test_estimate_usage_cost_uses_provider_pricing(monkeypatch):
@@ -28,6 +52,35 @@ def test_estimate_usage_cost_uses_provider_pricing(monkeypatch):
     assert result["output_cost_usd"] == "1.500000"
     assert result["total_cost_usd"] == "2.500000"
     assert result["known_cost"] is True
+
+
+def test_usage_summary_from_rows_groups_costs_and_unknown_events(monkeypatch):
+    monkeypatch.setattr(
+        billing_usage,
+        "load_settings",
+        lambda: {"cloud_billing_usage_ledger_enabled": True},
+    )
+    rows = [
+        _usage_row(message_id="msg-1", total_cost_usd="0.001000"),
+        _usage_row(message_id="msg-1", provider="anthropic", model="claude", total_cost_usd=None),
+        _usage_row(message_id="msg-2", total_cost_usd="0.002000"),
+    ]
+
+    summary = billing_usage._usage_summary_from_rows(rows, period="session")
+    messages = billing_usage._message_usage_summaries(rows)
+
+    assert summary["period"] == "session"
+    assert summary["amount"] == "0.003000"
+    assert summary["display"] == "$0.0030"
+    assert summary["events"] == 3
+    assert summary["known_cost_events"] == 2
+    assert summary["unknown_cost_events"] == 1
+    assert summary["total_tokens"] == 450
+    assert messages[0]["message_id"] == "msg-1"
+    assert messages[0]["provider"] == "multiple"
+    assert messages[0]["amount"] == "0.001000"
+    assert messages[0]["display"] == "$0.0010"
+    assert messages[0]["unknown_cost_events"] == 1
 
 
 def test_estimate_usage_cost_records_unknown_provider_without_cost(monkeypatch):

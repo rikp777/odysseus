@@ -28,7 +28,7 @@ from src.billing.providers import (
     provider_catalog as _provider_catalog,
 )
 from src.billing.status import BillingStatusService
-from src.billing_usage import get_usage_summary
+from src.billing_usage import get_session_usage_summary, get_usage_summary
 from src.secret_storage import decrypt as _decrypt_secret
 from src.settings import load_settings as _load_settings
 
@@ -63,6 +63,13 @@ def _local_usage_payload(period: str = "month") -> Dict[str, Any]:
     summary.pop("amount_decimal", None)
     summary.pop("projected_decimal", None)
     return summary
+
+
+def _public_usage_summary(summary: Dict[str, Any]) -> Dict[str, Any]:
+    payload = dict(summary)
+    payload.pop("amount_decimal", None)
+    payload.pop("projected_decimal", None)
+    return payload
 
 
 def _attach_local_usage(payload: Dict[str, Any], *, period: str = "month") -> Dict[str, Any]:
@@ -461,6 +468,11 @@ def setup_billing_routes() -> APIRouter:
     def usage_summary(request: Request, period: str = "month") -> Dict[str, Any]:
         require_admin(request)
         return _local_usage_payload(period)
+
+    @router.get("/session/{session_id}/usage")
+    def session_usage(session_id: str, request: Request) -> Dict[str, Any]:
+        require_admin(request)
+        return _public_usage_summary(get_session_usage_summary(session_id=session_id))
 
     @router.get("/providers")
     def billing_providers(request: Request) -> Dict[str, Any]:

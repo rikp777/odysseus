@@ -9,8 +9,9 @@ provider that exposes token usage.
 from __future__ import annotations
 
 from calendar import monthrange
+from collections import OrderedDict
 from datetime import datetime, timedelta, timezone
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 from typing import Any, Dict, Optional
 import uuid
 
@@ -23,6 +24,14 @@ from src.billing.common import (
 )
 from src.provider_identity import is_remote_billable_endpoint, provider_from_endpoint
 from src.settings import load_settings
+
+
+def _usage_display_money(value: Optional[Decimal]) -> str:
+    if value is None:
+        return ""
+    magnitude = abs(value)
+    precision = Decimal("0.0001") if magnitude and magnitude < Decimal("0.01") else Decimal("0.01")
+    return f"${value.quantize(precision, rounding=ROUND_HALF_UP)}"
 
 
 def _utc_now() -> datetime:
@@ -170,27 +179,14 @@ def record_model_usage_from_metrics(
     )
 
 
-def get_usage_summary(
+def _usage_summary_from_rows(
+    rows: list[Any],
     *,
-    period: str = "month",
-    owner: Optional[str] = None,
+    period: str,
+    start: Optional[datetime] = None,
+    end: Optional[datetime] = None,
     now: Optional[datetime] = None,
 ) -> Dict[str, Any]:
-    start, end, normalized_period = _period_range(period, now=now)
-    from core.database import ModelUsageEvent, SessionLocal
-
-    db = SessionLocal()
-    try:
-        q = db.query(ModelUsageEvent).filter(
-            ModelUsageEvent.created_at >= start,
-            ModelUsageEvent.created_at < end,
-        )
-        if owner:
-            q = q.filter(ModelUsageEvent.owner == owner)
-        rows = q.order_by(ModelUsageEvent.created_at.asc()).all()
-    finally:
-        db.close()
-
     total_cost = Decimal("0")
     known_cost_events = 0
     input_tokens = 0
@@ -229,37 +225,35 @@ def get_usage_summary(
     def _bucket_values(bucket: Dict[str, Dict[str, Any]]) -> list[Dict[str, Any]]:
         values = []
         for item in bucket.values():
-            amount = item.pop("amount")
+            amount = item["amount"]
             values.append({
-                **item,
+                **{key: value for key, value in item.items() if key != "amount"},
                 "amount": _float_money(amount) or 0.0,
-                "display": _display_money(amount),
+                "display": _usage_display_money(amount),
             })
         values.sort(key=lambda item: item["amount"], reverse=True)
         return values
 
+    normalized_period = (period or "month").strip().lower() or "month"
     current = now or _utc_now()
-    elapsed_days = max(1, current.day if normalized_period == "month" else 1)
-    days_in_month = monthrange(current.year, current.month)[1]
-    projected = (
-        (total_cost / Decimal(elapsed_days)) * Decimal(days_in_month)
-        if normalized_period == "month" and total_cost > 0
-        else total_cost
-    )
+    if normalized_period == "month":
+        elapsed_days = max(1, current.day)
+        days_in_month = monthrange(current.year, current.month)[1]
+        projected = (total_cost / Decimal(elapsed_days)) * Decimal(days_in_month) if total_cost > 0 else total_cost
+    else:
+        projected = total_cost
 
-    return {
+    result = {
         "enabled": load_settings().get("cloud_billing_usage_ledger_enabled") is not False,
         "period": normalized_period,
-        "start": start.isoformat() + "Z",
-        "end": end.isoformat() + "Z",
         "currency": "USD",
         "amount_decimal": total_cost,
         "amount": _stored_money(total_cost) or "0.000000",
         "amount_float": _float_money(total_cost) or 0.0,
-        "display": _display_money(total_cost),
+        "display": _usage_display_money(total_cost),
         "projected_decimal": projected,
         "projected": _stored_money(projected) or "0.000000",
-        "projected_display": _display_money(projected),
+        "projected_display": _usage_display_money(projected),
         "events": len(rows),
         "known_cost_events": known_cost_events,
         "unknown_cost_events": max(len(rows) - known_cost_events, 0),
@@ -269,6 +263,85 @@ def get_usage_summary(
         "providers": _bucket_values(provider_map),
         "models": _bucket_values(model_map),
     }
+    if start is not None:
+        result["start"] = start.isoformat() + "Z"
+    if end is not None:
+        result["end"] = end.isoformat() + "Z"
+    return result
+
+
+def _message_usage_summaries(rows: list[Any]) -> list[Dict[str, Any]]:
+    grouped: "OrderedDict[str, list[Any]]" = OrderedDict()
+    for row in rows:
+        message_id = str(row.message_id or "").strip()
+        if not message_id:
+            continue
+        grouped.setdefault(message_id, []).append(row)
+
+    messages = []
+    for message_id, group_rows in grouped.items():
+        summary = _usage_summary_from_rows(group_rows, period="message")
+        summary.pop("amount_decimal", None)
+        summary.pop("projected_decimal", None)
+        first = group_rows[0]
+        last = group_rows[-1]
+        providers = sorted({str(row.provider or "unknown") for row in group_rows})
+        models = sorted({str(row.model or "unknown") for row in group_rows})
+        messages.append({
+            "message_id": message_id,
+            "provider": providers[0] if len(providers) == 1 else "multiple",
+            "model": models[0] if len(models) == 1 else "multiple",
+            "created_at": getattr(first, "created_at", None).isoformat() + "Z" if getattr(first, "created_at", None) else "",
+            "updated_at": getattr(last, "created_at", None).isoformat() + "Z" if getattr(last, "created_at", None) else "",
+            **summary,
+        })
+    return messages
+
+
+def get_usage_summary(
+    *,
+    period: str = "month",
+    owner: Optional[str] = None,
+    now: Optional[datetime] = None,
+) -> Dict[str, Any]:
+    start, end, normalized_period = _period_range(period, now=now)
+    from core.database import ModelUsageEvent, SessionLocal
+
+    db = SessionLocal()
+    try:
+        q = db.query(ModelUsageEvent).filter(
+            ModelUsageEvent.created_at >= start,
+            ModelUsageEvent.created_at < end,
+        )
+        if owner:
+            q = q.filter(ModelUsageEvent.owner == owner)
+        rows = q.order_by(ModelUsageEvent.created_at.asc()).all()
+    finally:
+        db.close()
+
+    return _usage_summary_from_rows(rows, period=normalized_period, start=start, end=end, now=now)
+
+
+def get_session_usage_summary(
+    *,
+    session_id: str,
+    owner: Optional[str] = None,
+) -> Dict[str, Any]:
+    from core.database import ModelUsageEvent, SessionLocal
+
+    db = SessionLocal()
+    try:
+        q = db.query(ModelUsageEvent).filter(ModelUsageEvent.session_id == session_id)
+        if owner:
+            q = q.filter(ModelUsageEvent.owner == owner)
+        rows = q.order_by(ModelUsageEvent.created_at.asc()).all()
+    finally:
+        db.close()
+
+    summary = _usage_summary_from_rows(rows, period="session")
+    summary["session_id"] = session_id
+    summary["messages"] = _message_usage_summaries(rows)
+    return summary
 
 
 def local_budget_block_reason(endpoint_url: str, model: str = "", owner: Optional[str] = None) -> Optional[str]:
