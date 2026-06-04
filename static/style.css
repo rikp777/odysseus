@@ -793,6 +793,166 @@ body.bg-pattern-sparkles {
       line-height: 1;
     }
 
+    .cloud-billing-diagnostics {
+      overflow: hidden;
+      border: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
+      border-radius: 7px;
+      background: color-mix(in srgb, var(--fg) 2%, transparent);
+    }
+
+    .cloud-billing-diagnostics > summary {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-height: 30px;
+      padding: 7px 8px;
+      color: color-mix(in srgb, var(--fg) 76%, transparent);
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 650;
+      list-style: none;
+      user-select: none;
+    }
+
+    .cloud-billing-diagnostics > summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .cloud-billing-diagnostics > summary::before {
+      content: "";
+      width: 6px;
+      height: 6px;
+      flex: 0 0 auto;
+      border-right: 1.5px solid currentColor;
+      border-bottom: 1.5px solid currentColor;
+      transform: rotate(-45deg);
+      transition: transform 120ms ease;
+    }
+
+    .cloud-billing-diagnostics[open] > summary::before {
+      transform: rotate(45deg);
+    }
+
+    .cloud-billing-diagnostics > summary span:last-child {
+      margin-left: auto;
+      overflow: hidden;
+      color: color-mix(in srgb, var(--fg) 50%, transparent);
+      font-size: 10px;
+      font-weight: 500;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .cloud-billing-diagnostics-body {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      padding: 0 8px 8px 21px;
+    }
+
+    .cloud-billing-audit-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 1px;
+      overflow: hidden;
+      border: 1px solid color-mix(in srgb, var(--border) 68%, transparent);
+      border-radius: 6px;
+      background: color-mix(in srgb, var(--border) 68%, transparent);
+    }
+
+    .cloud-billing-audit-item {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      min-width: 0;
+      padding: 7px;
+      background: color-mix(in srgb, var(--panel) 92%, var(--bg));
+    }
+
+    .cloud-billing-audit-item span {
+      overflow: hidden;
+      color: color-mix(in srgb, var(--fg) 52%, transparent);
+      font-size: 10px;
+      line-height: 1.2;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .cloud-billing-audit-item strong {
+      overflow: hidden;
+      color: var(--fg);
+      font-size: 12px;
+      font-variant-numeric: tabular-nums;
+      font-weight: 650;
+      line-height: 1.2;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .cloud-billing-health-list {
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+    }
+
+    .cloud-billing-health-row {
+      display: grid;
+      grid-template-columns: minmax(110px, 1fr) auto;
+      gap: 6px;
+      align-items: center;
+      min-width: 0;
+      padding: 6px;
+      border: 1px solid color-mix(in srgb, var(--border) 62%, transparent);
+      border-radius: 6px;
+      background: color-mix(in srgb, var(--fg) 2%, transparent);
+    }
+
+    .cloud-billing-health-main {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      min-width: 0;
+    }
+
+    .cloud-billing-health-main strong,
+    .cloud-billing-health-main span {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .cloud-billing-health-main strong {
+      color: var(--fg);
+      font-size: 11px;
+      font-weight: 650;
+    }
+
+    .cloud-billing-health-main span {
+      color: color-mix(in srgb, var(--fg) 52%, transparent);
+      font-size: 10px;
+    }
+
+    .cloud-billing-health-chips {
+      display: flex;
+      justify-content: flex-end;
+      flex-wrap: wrap;
+      gap: 4px;
+      min-width: 0;
+    }
+
+    .cloud-billing-health-chip {
+      display: inline-flex;
+      align-items: center;
+      min-height: 18px;
+      padding: 0 6px;
+      border: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
+      border-radius: 4px;
+      color: color-mix(in srgb, var(--fg) 62%, transparent);
+      font-size: 9px;
+      line-height: 1;
+      white-space: nowrap;
+    }
+
     .cloud-billing-control-grid {
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1771,6 +1931,18 @@ body.bg-pattern-sparkles {
 
       .cloud-billing-budget-cell {
         gap: 5px;
+      }
+
+      .cloud-billing-audit-grid {
+        grid-template-columns: minmax(0, 1fr);
+      }
+
+      .cloud-billing-health-row {
+        grid-template-columns: minmax(0, 1fr);
+      }
+
+      .cloud-billing-health-chips {
+        justify-content: flex-start;
       }
 
       .cloud-billing-add-copy {

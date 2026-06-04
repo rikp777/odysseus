@@ -8,6 +8,7 @@ from decimal import Decimal
 from typing import Any, Callable, Dict, MutableMapping, Optional
 
 from src.billing.common import decimal_or_zero, money, utc_now_iso
+from src.billing.diagnostics import attach_billing_diagnostics
 
 
 SettingsLoader = Callable[[], Dict[str, Any]]
@@ -38,6 +39,9 @@ class BillingStatusService:
     fetch_account_spend: AccountSpendFetcher
     apply_primary_spend_source: PrimarySpendSelector
     clamp_refresh_seconds: Callable[[Any], int]
+
+    def _with_diagnostics(self, payload: Dict[str, Any], *, cache_age_seconds: int = 0) -> Dict[str, Any]:
+        return attach_billing_diagnostics(payload, cache_age_seconds=cache_age_seconds)
 
     def monthly_spend_status(
         self,
@@ -72,7 +76,7 @@ class BillingStatusService:
         ]
 
         if not enabled:
-            return self.attach_local_usage(self.empty_payload(
+            return self._with_diagnostics(self.attach_local_usage(self.empty_payload(
                 enabled=False,
                 configured=any(item["configured"] for item in account_summaries),
                 warning_usd=warning_usd,
@@ -81,17 +85,17 @@ class BillingStatusService:
                 status="disabled",
                 error="Cloud billing display is disabled",
                 accounts=account_summaries,
-            ))
+            )))
 
         if not visible_accounts:
             if not forced_provider and settings.get("cloud_billing_usage_ledger_enabled") is not False:
-                return self.local_only_payload(
+                return self._with_diagnostics(self.local_only_payload(
                     period="month",
                     warning_usd=warning_usd,
                     limit_usd=limit_usd,
                     refresh_seconds=refresh_seconds,
-                )
-            return self.attach_local_usage(self.empty_payload(
+                ))
+            return self._with_diagnostics(self.attach_local_usage(self.empty_payload(
                 enabled=True,
                 configured=False,
                 warning_usd=warning_usd,
@@ -100,7 +104,7 @@ class BillingStatusService:
                 status="missing_account",
                 error="No enabled cloud billing accounts are configured",
                 accounts=account_summaries,
-            ))
+            )))
 
         fingerprint_parts = [
             str(enabled),
@@ -124,17 +128,20 @@ class BillingStatusService:
             and self.cache.get("payload")
             and float(self.cache.get("expires_at") or 0) > now
         ):
+            expires_at = float(self.cache.get("expires_at") or 0)
+            cached_at = max(0.0, expires_at - refresh_seconds)
+            cache_age_seconds = max(0, int(now - cached_at)) if cached_at else 0
             payload = dict(self.cache["payload"])
             payload["accounts"] = [dict(item) for item in payload.get("accounts", [])]
             payload["cached"] = True
             self.attach_local_usage(payload)
-            return self.apply_primary_spend_source(
+            return self._with_diagnostics(self.apply_primary_spend_source(
                 payload,
                 settings=settings,
                 warning=warning,
                 limit=limit,
                 forced_provider=forced_provider,
-            )
+            ), cache_age_seconds=cache_age_seconds)
 
         account_results = [
             self.fetch_account_spend(
@@ -218,4 +225,4 @@ class BillingStatusService:
             "expires_at": now + refresh_seconds,
             "payload": provider_payload,
         })
-        return payload
+        return self._with_diagnostics(payload)
