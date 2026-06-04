@@ -604,14 +604,24 @@ async function _connectionAction(connectionId, action) {
   _render();
 }
 
-export async function openAtlas({ refresh = false } = {}) {
+export async function openAtlas({ refresh = false, tab = '', personId = '', locationId = '' } = {}) {
   if (Modals.isMinimized(MODAL_ID)) {
     Modals.restore(MODAL_ID);
     _open = true;
-    return;
   }
   _open = true;
   _error = '';
+  if (tab && ['people', 'locations', 'map', 'connections'].includes(tab)) _tab = tab;
+  if (personId) {
+    _tab = 'people';
+    _selectedPersonId = personId;
+    _personDetail = null;
+  }
+  if (locationId) {
+    _tab = 'locations';
+    _selectedLocationId = locationId;
+    _locationDetail = null;
+  }
   const modal = _renderShell();
   modal.classList.remove('hidden');
   if (refresh || !_atlas.people?.length && !_atlas.locations?.length) {

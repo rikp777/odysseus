@@ -37589,6 +37589,108 @@ body.theme-frosted .modal {
   line-height: 1.45;
 }
 
+.logbook-rendered-preview {
+  display: grid;
+  gap: 6px;
+}
+
+.logbook-rendered-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.55;
+  font-size: 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px;
+  background: color-mix(in srgb, var(--fg) 4%, transparent);
+}
+
+.logbook-person-link {
+  position: relative;
+  display: inline;
+  color: var(--accent, var(--red));
+  border-bottom: 1px dotted currentColor;
+  cursor: pointer;
+}
+
+.logbook-person-link:focus {
+  outline: 1px solid var(--accent, var(--red));
+  outline-offset: 2px;
+}
+
+.logbook-person-card {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 8px);
+  z-index: 20;
+  display: none;
+  width: min(260px, 78vw);
+  white-space: normal;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--fg);
+  box-shadow: 0 14px 32px color-mix(in srgb, var(--bg) 65%, transparent);
+  padding: 10px;
+  cursor: default;
+}
+
+.logbook-person-link:hover .logbook-person-card,
+.logbook-person-link:focus .logbook-person-card {
+  display: grid;
+  gap: 7px;
+}
+
+.logbook-person-card-head {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+}
+
+.logbook-person-card-head img,
+.logbook-person-initial {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+}
+
+.logbook-person-card-head img {
+  object-fit: cover;
+}
+
+.logbook-person-initial {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+  font-weight: 650;
+}
+
+.logbook-person-card-head strong,
+.logbook-person-card-head em,
+.logbook-person-card-note,
+.logbook-person-card-link {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.logbook-person-card-head em,
+.logbook-person-card-note {
+  font-size: 12px;
+  opacity: 0.72;
+  font-style: normal;
+  line-height: 1.35;
+}
+
+.logbook-person-card-link {
+  font-size: 12px;
+  color: var(--accent, var(--red));
+}
+
 .logbook-chip-wrap,
 .logbook-known-people {
   display: flex;

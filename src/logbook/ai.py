@@ -23,6 +23,7 @@ from src.logbook.utils import (
     pair_ids,
     parse_locations,
     parse_mentions,
+    parse_person_links,
     validate_date,
 )
 
@@ -30,6 +31,17 @@ from src.logbook.utils import (
 def deterministic_ai_suggestions(content: str) -> Dict[str, Any]:
     people = []
     seen = set()
+    for link in parse_person_links(content or ""):
+        canonical = link["target_name"]
+        if canonical in seen:
+            continue
+        seen.add(canonical)
+        people.append({
+            "display_name": link["target_display_name"] or link["name"],
+            "surface_text": link["surface_text"],
+            "confidence": 98,
+            "reason": "Person link",
+        })
     for mention in parse_mentions(content or ""):
         canonical = canonical_name(mention["name"])
         if canonical in seen:
@@ -115,6 +127,9 @@ def ai_system_prompt(mode: str, locale: str) -> str:
         "For ask_questions, ask at most three short questions that can be answered in a few words. "
         "For reflect, give a gentle reflection, not therapy or medical advice. "
         "For people, locations, and connections, use only evidence from the supplied logbook text. "
+        "When mode is structure_day or extract_all, return preview_content that preserves the user's text but marks "
+        "confident person mentions as Markdown links like [Jeanine](person:jeanine_peeters). "
+        "Use lower_snake_case for the person slug. Do not link uncertain names. "
         "Locations are places such as home, gym, office, city, route, venue, or clinic. "
         "Connections are possible suggestions, not facts, unless the user accepts them. "
         f"Locale: {locale}. Mode: {mode}. "

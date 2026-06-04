@@ -28,6 +28,10 @@ LOCATION_RE = re.compile(
     r"(?:\s+(?:[A-ZÀ-ÖØ-Þ][A-Za-z0-9À-ÖØ-öø-ÿ0-9_-]*|van|de|der|den|ten|ter|von|da|del|di|la|le|du)){0,3})"
     r")"
 )
+PERSON_LINK_RE = re.compile(
+    r"\[(?P<label>[^\]\n]{1,120})\]"
+    r"\((?P<target>person:[A-Za-z0-9_-]{2,100}|[a-z][a-z0-9]*(?:_[a-z0-9]+)+)\)"
+)
 
 
 def validate_date(value: str) -> str:
@@ -78,12 +82,29 @@ def aliases(row: Any) -> List[str]:
 
 def canonical_name(name: str) -> str:
     value = (name or "").strip().strip("@").strip()
+    if value.lower().startswith("person:"):
+        value = value.split(":", 1)[1]
     value = value.strip("\"'[]")
     value = unicodedata.normalize("NFKD", value)
     value = "".join(ch for ch in value if not unicodedata.combining(ch))
     value = re.sub(r"[^\w\s-]+", " ", value, flags=re.UNICODE)
     value = re.sub(r"[_\s-]+", " ", value, flags=re.UNICODE)
     return value.strip().lower()
+
+
+def slug_name(name: str) -> str:
+    return canonical_name(name).replace(" ", "_")
+
+
+def display_name_from_slug(slug: str) -> str:
+    canonical = canonical_name(slug)
+    if not canonical:
+        return ""
+    particles = {"van", "de", "der", "den", "ten", "ter", "von", "da", "del", "di", "la", "le", "du"}
+    parts = []
+    for index, part in enumerate(canonical.split()):
+        parts.append(part if index > 0 and part in particles else part.capitalize())
+    return " ".join(parts)
 
 
 def clean_key(value: str, fallback: str = "datapoint") -> str:
@@ -142,6 +163,77 @@ def parse_locations(content: str) -> List[Dict[str, Any]]:
             "end_offset": match.end(),
         })
     return locations
+
+
+def parse_person_links(content: str) -> List[Dict[str, Any]]:
+    links: List[Dict[str, Any]] = []
+    for match in PERSON_LINK_RE.finditer(content or ""):
+        label = re.sub(r"\s+", " ", (match.group("label") or "").strip())
+        raw_target = (match.group("target") or "").strip()
+        target = raw_target.split(":", 1)[1] if raw_target.lower().startswith("person:") else raw_target
+        target_name = canonical_name(target)
+        if not label or not target_name:
+            continue
+        links.append({
+            "name": label,
+            "target_name": target_name,
+            "target_slug": slug_name(target),
+            "target_display_name": display_name_from_slug(target),
+            "surface_text": match.group(0),
+            "start_offset": match.start(),
+            "end_offset": match.end(),
+        })
+    return links
+
+
+def _overlaps_any(start: int, end: int, ranges: List[tuple[int, int]]) -> bool:
+    return any(start < blocked_end and end > blocked_start for blocked_start, blocked_end in ranges)
+
+
+def known_entity_matches(
+    content: str,
+    rows: List[Any],
+    blocked_ranges: Optional[List[tuple[int, int]]] = None,
+) -> List[Dict[str, Any]]:
+    text = content or ""
+    blocked = blocked_ranges or []
+    candidates: List[Dict[str, Any]] = []
+    for row in rows or []:
+        labels = [getattr(row, "display_name", "")] + aliases(row)
+        seen_labels = set()
+        for label in labels:
+            label = re.sub(r"\s+", " ", str(label or "").strip())
+            canonical = canonical_name(label)
+            compact = canonical.replace(" ", "")
+            if not label or len(compact) < 2 or canonical in seen_labels:
+                continue
+            seen_labels.add(canonical)
+            parts = [re.escape(part) for part in re.split(r"\s+", label)]
+            body = r"\s+".join(parts)
+            flags = 0 if len(compact) <= 3 else re.IGNORECASE
+            pattern = re.compile(rf"(?<![\w@#]){body}(?![\w-])", flags)
+            for match in pattern.finditer(text):
+                if _overlaps_any(match.start(), match.end(), blocked):
+                    continue
+                candidates.append({
+                    "row": row,
+                    "name": label,
+                    "surface_text": match.group(0),
+                    "start_offset": match.start(),
+                    "end_offset": match.end(),
+                })
+    candidates.sort(key=lambda item: (-(item["end_offset"] - item["start_offset"]), item["start_offset"]))
+    occupied: List[tuple[int, int]] = []
+    out: List[Dict[str, Any]] = []
+    for item in candidates:
+        start = item["start_offset"]
+        end = item["end_offset"]
+        if any(start < used_end and end > used_start for used_start, used_end in occupied):
+            continue
+        occupied.append((start, end))
+        out.append(item)
+    out.sort(key=lambda item: item["start_offset"])
+    return out
 
 
 def entry_snippet(content: str, max_len: int = 220) -> str:

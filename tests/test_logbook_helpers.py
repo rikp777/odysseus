@@ -4,7 +4,7 @@ from datetime import datetime
 import src.logbook.utils as logbook_utils
 from src.logbook.ai import normalize_ai_payload
 from src.logbook.serializers import entry_to_dict
-from src.logbook.utils import canonical_name, parse_locations, parse_mentions
+from src.logbook.utils import canonical_name, known_entity_matches, parse_locations, parse_mentions, parse_person_links
 
 
 def test_logbook_mention_parser_supports_common_forms():
@@ -22,6 +22,38 @@ def test_logbook_location_parser_supports_common_forms():
 
 def test_logbook_canonical_name_normalizes_aliases():
     assert canonical_name("@Ján_Peter!") == "jan peter"
+    assert canonical_name("person:jeanine_peeters") == "jeanine peeters"
+
+
+def test_logbook_person_link_parser_supports_custom_markdown():
+    links = parse_person_links("Thee met [Jeanine](person:jeanine_peeters) en [Fien](fien_peeters).")
+
+    assert [(link["name"], link["target_name"], link["target_slug"]) for link in links] == [
+        ("Jeanine", "jeanine peeters", "jeanine_peeters"),
+        ("Fien", "fien peeters", "fien_peeters"),
+    ]
+
+
+def test_logbook_known_entity_matches_normal_text_without_marker():
+    thijmen = SimpleNamespace(id="p1", display_name="Thijmen van der Kop", aliases='["Thijmen"]')
+    ge = SimpleNamespace(id="p2", display_name="Ge", aliases=None)
+
+    matches = known_entity_matches(
+        "Rik zag Thijmen van der Kop en Ge in Panningen. @Thijmen telt niet dubbel.",
+        [thijmen, ge],
+    )
+
+    assert [(m["row"].id, m["surface_text"]) for m in matches] == [
+        ("p1", "Thijmen van der Kop"),
+        ("p2", "Ge"),
+    ]
+
+    blocked = known_entity_matches(
+        "Rik zag [Thijmen van der Kop](person:thijmen_van_der_kop).",
+        [thijmen],
+        blocked_ranges=[(8, 55)],
+    )
+    assert blocked == []
 
 
 def test_logbook_reconnect_suggestion_prefers_meetup_for_social_context(monkeypatch):

@@ -123,6 +123,13 @@ export function analyzeEntry(entryId) {
   });
 }
 
+export function applyEntrySuggestions(entryId, payload) {
+  return jsonFetch(`${API_BASE}/api/logbook/entry/${encodeURIComponent(entryId)}/apply-suggestions`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
 export function updateConnection(connectionId, action) {
   return jsonFetch(`${API_BASE}/api/logbook/connections/${encodeURIComponent(connectionId)}/${action}`, {
     method: 'POST',

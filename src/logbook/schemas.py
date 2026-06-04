@@ -110,6 +110,19 @@ class LogbookLocationsMerge(BaseModel):
     target_location_id: str
 
 
+class LogbookEntitySuggestion(BaseModel):
+    display_name: Optional[str] = None
+    surface_text: Optional[str] = None
+    aliases: Optional[List[str]] = None
+    confidence: Optional[int] = None
+    reason: Optional[str] = None
+
+
+class LogbookApplySuggestions(BaseModel):
+    people_suggestions: Optional[List[LogbookEntitySuggestion]] = None
+    location_suggestions: Optional[List[LogbookEntitySuggestion]] = None
+
+
 class LogbookAIAssist(BaseModel):
     entry_date: str
     content: str = ""

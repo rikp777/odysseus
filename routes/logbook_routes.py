@@ -28,6 +28,7 @@ from src.logbook import serializers as logbook_serializers
 from src.logbook import utils as logbook_utils
 from src.tool_security import owner_is_admin_or_single_user
 from src.logbook.schemas import (
+    LogbookApplySuggestions,
     LogbookAIAssist,
     LogbookEntryUpdate,
     LogbookEntryUpsert,
@@ -265,6 +266,33 @@ def setup_logbook_routes() -> APIRouter:
             db.delete(entry)
             db.commit()
             return {"ok": True}
+        finally:
+            db.close()
+
+    @router.post("/entry/{entry_id}/apply-suggestions")
+    def apply_entry_suggestions(request: Request, entry_id: str, body: LogbookApplySuggestions):
+        owner = _owner(request)
+        db = SessionLocal()
+        try:
+            entry = logbook_repo.load_entry_or_404(db, owner, entry_id)
+            people = []
+            locations = []
+            for item in body.people_suggestions or []:
+                person = logbook_repo.link_person_suggestion(db, owner, entry, item.dict(exclude_none=True))
+                if person:
+                    people.append(person)
+            for item in body.location_suggestions or []:
+                location = logbook_repo.link_location_suggestion(db, owner, entry, item.dict(exclude_none=True))
+                if location:
+                    locations.append(location)
+            db.commit()
+            entry = logbook_repo.entry_query(db, owner).filter(LogbookEntry.id == entry_id).first()
+            return {
+                "ok": True,
+                "entry": logbook_serializers.entry_to_dict(entry),
+                "people": [logbook_serializers.person_to_dict(person) for person in people],
+                "locations": [logbook_serializers.location_to_dict(location) for location in locations],
+            }
         finally:
             db.close()
 
