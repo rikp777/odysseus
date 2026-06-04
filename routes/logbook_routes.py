@@ -309,6 +309,8 @@ def setup_logbook_routes() -> APIRouter:
         try:
             existing = logbook_repo.find_person(db, owner, body.display_name)
             person = logbook_repo.get_or_create_person(db, owner, body.display_name, body.aliases, body.notes, update_existing=not existing)
+            if body.notes is not None:
+                person.notes = body.notes
             if body.relationship_label is not None:
                 person.relationship_label = _clean_optional(body.relationship_label)
             if body.llm_context is not None:
@@ -533,6 +535,8 @@ def setup_logbook_routes() -> APIRouter:
         try:
             existing = logbook_repo.find_location(db, owner, body.display_name)
             location = logbook_repo.get_or_create_location(db, owner, body.display_name, body.aliases, body.notes, update_existing=not existing)
+            if body.notes is not None:
+                location.notes = body.notes
             if body.address is not None:
                 location.address = _clean_optional(body.address)
             if body.latitude is not None:

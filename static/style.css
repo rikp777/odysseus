@@ -37904,6 +37904,13 @@ body.theme-frosted .modal {
   gap: 8px;
 }
 
+.logbook-atlas-list-tools {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
 .logbook-atlas-scroll {
   min-height: 0;
   overflow: auto;
@@ -38199,6 +38206,7 @@ body.theme-frosted .modal {
   }
 
   .logbook-atlas-coordinates,
+  .logbook-atlas-list-tools,
   .logbook-contact-linked,
   .logbook-contact-candidate,
   .logbook-atlas-entry {

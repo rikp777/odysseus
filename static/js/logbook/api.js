@@ -44,6 +44,13 @@ export function getPerson(personId, params = new URLSearchParams()) {
   return jsonFetch(`${API_BASE}/api/logbook/people/${encodeURIComponent(personId)}${query ? `?${query}` : ''}`);
 }
 
+export function createPerson(payload) {
+  return jsonFetch(`${API_BASE}/api/logbook/people`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
 export function updatePerson(personId, payload) {
   return jsonFetch(`${API_BASE}/api/logbook/people/${encodeURIComponent(personId)}`, {
     method: 'PUT',
@@ -86,10 +93,10 @@ export function updateLocation(locationId, payload) {
   });
 }
 
-export function createLocation(displayName) {
+export function createLocation(payload) {
   return jsonFetch(`${API_BASE}/api/logbook/locations`, {
     method: 'POST',
-    body: JSON.stringify({ display_name: displayName }),
+    body: JSON.stringify(typeof payload === 'string' ? { display_name: payload } : payload),
   });
 }
 

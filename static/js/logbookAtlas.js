@@ -7,6 +7,8 @@ import * as Modals from './modalManager.js';
 import { makeWindowDraggable } from './windowDrag.js';
 import { applyEdgeDock } from './modalSnap.js';
 import {
+  createLocation,
+  createPerson,
   getAtlas,
   getPerson,
   getLocation,
@@ -28,6 +30,8 @@ let _selectedPersonId = '';
 let _selectedLocationId = '';
 let _personDetail = null;
 let _locationDetail = null;
+let _creatingPerson = false;
+let _creatingLocation = false;
 let _peopleSearch = '';
 let _locationSearch = '';
 let _locationTypeFilter = '';
@@ -99,6 +103,7 @@ async function _loadAtlas() {
 }
 
 async function _selectPerson(personId) {
+  _creatingPerson = false;
   _selectedPersonId = personId;
   _personDetail = personId ? await getPerson(personId, new URLSearchParams({ limit: '30' })) : null;
   _contactCandidates = [];
@@ -107,8 +112,25 @@ async function _selectPerson(personId) {
 }
 
 async function _selectLocation(locationId) {
+  _creatingLocation = false;
   _selectedLocationId = locationId;
   _locationDetail = locationId ? await getLocation(locationId, new URLSearchParams({ limit: '30' })) : null;
+  _render();
+}
+
+function _newPerson() {
+  _creatingPerson = true;
+  _selectedPersonId = '';
+  _personDetail = null;
+  _contactCandidates = [];
+  _contactQuery = '';
+  _render();
+}
+
+function _newLocation() {
+  _creatingLocation = true;
+  _selectedLocationId = '';
+  _locationDetail = null;
   _render();
 }
 
@@ -261,7 +283,10 @@ function _peopleTabHtml() {
   `).join('') || '<div class="logbook-empty">No people yet.</div>';
   return `
     <aside class="logbook-atlas-list">
-      <input id="atlas-people-search" class="memory-search-input" placeholder="Find people" value="${_e(_peopleSearch)}">
+      <div class="logbook-atlas-list-tools">
+        <input id="atlas-people-search" class="memory-search-input" placeholder="Find people" value="${_e(_peopleSearch)}">
+        <button type="button" class="cal-btn" id="atlas-new-person">New person</button>
+      </div>
       ${reconnect ? `<div class="logbook-reconnect-list"><div class="logbook-subtitle">Reconnect</div>${reconnect}</div>` : ''}
       <div class="logbook-atlas-scroll">${rows}</div>
     </aside>
@@ -270,7 +295,9 @@ function _peopleTabHtml() {
 }
 
 function _personDetailHtml() {
-  const detail = _personDetail?.person || (_atlas.people || []).find(p => p.id === _selectedPersonId);
+  const detail = _creatingPerson
+    ? { display_name: '', aliases: [], relationship_label: '', notes: '', llm_context: '', contact_snapshot: null }
+    : _personDetail?.person || (_atlas.people || []).find(p => p.id === _selectedPersonId);
   if (!detail) return '<div class="logbook-empty">Select a person.</div>';
   const aliases = (detail.aliases || []).join(', ');
   const snapshot = detail.contact_snapshot || null;
@@ -288,7 +315,7 @@ function _personDetailHtml() {
   `).join('');
   return `
     <div class="logbook-atlas-form">
-      <div class="logbook-section-head"><h5>Person</h5><button type="button" class="cal-btn cal-btn-primary" id="atlas-save-person">Save</button></div>
+      <div class="logbook-section-head"><h5>${_creatingPerson ? 'New person' : 'Person'}</h5><button type="button" class="cal-btn cal-btn-primary" id="atlas-save-person">Save</button></div>
       ${_reconnectCardHtml(detail)}
       <label>Name<input id="atlas-person-name" class="memory-search-input" value="${_e(detail.display_name || '')}"></label>
       <label>Aliases<input id="atlas-person-aliases" class="memory-search-input" value="${_e(aliases)}" placeholder="Jan, JP"></label>
@@ -297,8 +324,8 @@ function _personDetailHtml() {
       <label>LLM context<textarea id="atlas-person-context" class="logbook-atlas-text" placeholder="Context the assistant may use about this person.">${_e(detail.llm_context || '')}</textarea></label>
       <div class="logbook-atlas-contact">
         <div class="logbook-subtitle">Linked contact</div>
-        ${snapshot ? `<div class="logbook-contact-linked"><strong>${_e(snapshot.name || detail.display_name)}</strong><span>${_e((snapshot.emails || []).join(', '))}</span><button type="button" class="cal-btn" id="atlas-unlink-contact">Unlink</button></div>` : '<div class="logbook-empty">No linked contact.</div>'}
-        ${_atlas.contacts_available ? `<div class="logbook-directory-tools"><input id="atlas-contact-search" class="memory-search-input" placeholder="Find contact" value="${_e(_contactQuery)}"><button type="button" class="cal-btn" id="atlas-contact-search-btn">Search</button></div>${candidates}` : '<div class="logbook-empty">Contacts unavailable for this user.</div>'}
+        ${_creatingPerson ? '<div class="logbook-empty">Save this person before linking a contact.</div>' : snapshot ? `<div class="logbook-contact-linked"><strong>${_e(snapshot.name || detail.display_name)}</strong><span>${_e((snapshot.emails || []).join(', '))}</span><button type="button" class="cal-btn" id="atlas-unlink-contact">Unlink</button></div>` : '<div class="logbook-empty">No linked contact.</div>'}
+        ${!_creatingPerson && _atlas.contacts_available ? `<div class="logbook-directory-tools"><input id="atlas-contact-search" class="memory-search-input" placeholder="Find contact" value="${_e(_contactQuery)}"><button type="button" class="cal-btn" id="atlas-contact-search-btn">Search</button></div>${candidates}` : !_creatingPerson ? '<div class="logbook-empty">Contacts unavailable for this user.</div>' : ''}
       </div>
       <div class="logbook-subtitle">Recent entries</div>
       <div class="logbook-atlas-entry-list">${entries}</div>
@@ -316,7 +343,10 @@ function _locationsTabHtml() {
   `).join('') || '<div class="logbook-empty">No places yet.</div>';
   return `
     <aside class="logbook-atlas-list">
-      <input id="atlas-location-search" class="memory-search-input" placeholder="Find places" value="${_e(_locationSearch)}">
+      <div class="logbook-atlas-list-tools">
+        <input id="atlas-location-search" class="memory-search-input" placeholder="Find places" value="${_e(_locationSearch)}">
+        <button type="button" class="cal-btn" id="atlas-new-location">New place</button>
+      </div>
       <select id="atlas-location-type" class="logbook-select"><option value="">Any type</option>${types}</select>
       <div class="logbook-atlas-scroll">${rows}</div>
     </aside>
@@ -325,7 +355,9 @@ function _locationsTabHtml() {
 }
 
 function _locationDetailHtml() {
-  const detail = _locationDetail?.location || (_atlas.locations || []).find(l => l.id === _selectedLocationId);
+  const detail = _creatingLocation
+    ? { display_name: '', aliases: [], location_type: '', address: '', latitude: null, longitude: null, notes: '', llm_context: '' }
+    : _locationDetail?.location || (_atlas.locations || []).find(l => l.id === _selectedLocationId);
   if (!detail) return '<div class="logbook-empty">Select a place.</div>';
   const aliases = (detail.aliases || []).join(', ');
   const entries = (_locationDetail?.entries || []).map(entry => `
@@ -336,7 +368,7 @@ function _locationDetailHtml() {
   `).join('') || '<div class="logbook-empty">No linked entries.</div>';
   return `
     <div class="logbook-atlas-form">
-      <div class="logbook-section-head"><h5>Place</h5><button type="button" class="cal-btn cal-btn-primary" id="atlas-save-location">Save</button></div>
+      <div class="logbook-section-head"><h5>${_creatingLocation ? 'New place' : 'Place'}</h5><button type="button" class="cal-btn cal-btn-primary" id="atlas-save-location">Save</button></div>
       <label>Name<input id="atlas-location-name" class="memory-search-input" value="${_e(detail.display_name || '')}"></label>
       <label>Aliases<input id="atlas-location-aliases" class="memory-search-input" value="${_e(aliases)}" placeholder="office, gym"></label>
       <label>Type<input id="atlas-location-kind" class="memory-search-input" value="${_e(detail.location_type || '')}" placeholder="home, work, gym"></label>
@@ -429,6 +461,7 @@ function _bindPeople() {
   document.querySelectorAll('[data-reconnect-person]').forEach(btn => {
     btn.addEventListener('click', () => _selectPerson(btn.dataset.reconnectPerson).catch(_setError));
   });
+  document.getElementById('atlas-new-person')?.addEventListener('click', _newPerson);
   document.getElementById('atlas-save-person')?.addEventListener('click', () => _savePerson().catch(_setError));
   document.getElementById('atlas-unlink-contact')?.addEventListener('click', () => _unlinkContact().catch(_setError));
   const contactSearch = document.getElementById('atlas-contact-search');
@@ -462,6 +495,7 @@ function _bindLocations() {
   document.querySelectorAll('[data-location-id]').forEach(btn => {
     btn.addEventListener('click', () => _selectLocation(btn.dataset.locationId).catch(_setError));
   });
+  document.getElementById('atlas-new-location')?.addEventListener('click', _newLocation);
   document.getElementById('atlas-save-location')?.addEventListener('click', () => _saveLocation().catch(_setError));
 }
 
@@ -488,20 +522,26 @@ function _aliases(value) {
 }
 
 async function _savePerson() {
-  if (!_selectedPersonId) return;
+  if (!_selectedPersonId && !_creatingPerson) return;
+  const payload = {
+    display_name: document.getElementById('atlas-person-name')?.value || '',
+    aliases: _aliases(document.getElementById('atlas-person-aliases')?.value),
+    relationship_label: document.getElementById('atlas-person-relation')?.value || null,
+    notes: document.getElementById('atlas-person-notes')?.value || null,
+    llm_context: document.getElementById('atlas-person-context')?.value || null,
+  };
+  if (!payload.display_name.trim()) throw new Error('Name is required');
   _busy = true;
   _render();
   try {
-    const result = await updatePerson(_selectedPersonId, {
-      display_name: document.getElementById('atlas-person-name')?.value || '',
-      aliases: _aliases(document.getElementById('atlas-person-aliases')?.value),
-      relationship_label: document.getElementById('atlas-person-relation')?.value || null,
-      notes: document.getElementById('atlas-person-notes')?.value || null,
-      llm_context: document.getElementById('atlas-person-context')?.value || null,
-    });
+    const result = _creatingPerson
+      ? await createPerson(payload)
+      : await updatePerson(_selectedPersonId, payload);
+    _creatingPerson = false;
+    _selectedPersonId = result.person.id;
     await _loadAtlas();
     _personDetail = await getPerson(result.person.id, new URLSearchParams({ limit: '30' }));
-    uiModule?.showToast?.('Saved');
+    uiModule?.showToast?.(result.duplicate ? 'Opened existing person' : 'Saved');
   } finally {
     _busy = false;
     _render();
@@ -509,25 +549,31 @@ async function _savePerson() {
 }
 
 async function _saveLocation() {
-  if (!_selectedLocationId) return;
+  if (!_selectedLocationId && !_creatingLocation) return;
+  const latRaw = document.getElementById('atlas-location-lat')?.value || '';
+  const lonRaw = document.getElementById('atlas-location-lon')?.value || '';
+  const payload = {
+    display_name: document.getElementById('atlas-location-name')?.value || '',
+    aliases: _aliases(document.getElementById('atlas-location-aliases')?.value),
+    location_type: document.getElementById('atlas-location-kind')?.value || null,
+    address: document.getElementById('atlas-location-address')?.value || null,
+    latitude: latRaw === '' ? null : Number(latRaw),
+    longitude: lonRaw === '' ? null : Number(lonRaw),
+    notes: document.getElementById('atlas-location-notes')?.value || null,
+    llm_context: document.getElementById('atlas-location-context')?.value || null,
+  };
+  if (!payload.display_name.trim()) throw new Error('Name is required');
   _busy = true;
   _render();
   try {
-    const latRaw = document.getElementById('atlas-location-lat')?.value || '';
-    const lonRaw = document.getElementById('atlas-location-lon')?.value || '';
-    const result = await updateLocation(_selectedLocationId, {
-      display_name: document.getElementById('atlas-location-name')?.value || '',
-      aliases: _aliases(document.getElementById('atlas-location-aliases')?.value),
-      location_type: document.getElementById('atlas-location-kind')?.value || null,
-      address: document.getElementById('atlas-location-address')?.value || null,
-      latitude: latRaw === '' ? null : Number(latRaw),
-      longitude: lonRaw === '' ? null : Number(lonRaw),
-      notes: document.getElementById('atlas-location-notes')?.value || null,
-      llm_context: document.getElementById('atlas-location-context')?.value || null,
-    });
+    const result = _creatingLocation
+      ? await createLocation(payload)
+      : await updateLocation(_selectedLocationId, payload);
+    _creatingLocation = false;
+    _selectedLocationId = result.location.id;
     await _loadAtlas();
     _locationDetail = await getLocation(result.location.id, new URLSearchParams({ limit: '30' }));
-    uiModule?.showToast?.('Saved');
+    uiModule?.showToast?.(result.duplicate ? 'Opened existing place' : 'Saved');
   } finally {
     _busy = false;
     _render();
