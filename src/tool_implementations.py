@@ -2091,6 +2091,128 @@ async def do_manage_notes(content: str, owner: Optional[str] = None) -> Dict:
 
 
 # ---------------------------------------------------------------------------
+# Daily Logbook read tool
+# ---------------------------------------------------------------------------
+
+def _format_logbook_entry(entry: Dict[str, Any], *, full: bool = False) -> str:
+    date_text = entry.get("date") or "(unknown date)"
+    title = entry.get("title") or "Daily log"
+    lines = [f"## {date_text} - {title}"]
+    if entry.get("summary"):
+        lines.append(f"Summary: {entry['summary']}")
+    content = entry.get("content") if full else entry.get("snippet")
+    if content:
+        label = "Content" if full else "Snippet"
+        lines.append(f"{label}: {content}")
+    mood = entry.get("mood") or {}
+    mood_bits = []
+    if mood.get("label"):
+        mood_bits.append(str(mood["label"]))
+    if mood.get("score") is not None:
+        mood_bits.append(f"mood {mood['score']}/5")
+    if mood.get("energy") is not None:
+        mood_bits.append(f"energy {mood['energy']}/5")
+    if mood.get("stress") is not None:
+        mood_bits.append(f"stress {mood['stress']}/5")
+    if mood_bits:
+        lines.append("Mood: " + ", ".join(mood_bits))
+    if entry.get("people"):
+        lines.append("People: " + ", ".join(entry["people"]))
+    if entry.get("places"):
+        lines.append("Places: " + ", ".join(entry["places"]))
+    datapoints = entry.get("datapoints") or []
+    if datapoints:
+        rendered = []
+        for dp in datapoints[:12]:
+            key = dp.get("label") or dp.get("key") or "data"
+            value = dp.get("value_text")
+            if value is None:
+                value = dp.get("value_number")
+            if value is None:
+                continue
+            unit = f" {dp.get('unit')}" if dp.get("unit") else ""
+            rendered.append(f"{key}: {value}{unit}")
+        if rendered:
+            lines.append("Data: " + "; ".join(rendered))
+    return "\n".join(lines)
+
+
+def _format_logbook_tool_output(result: Dict[str, Any]) -> str:
+    if not result.get("ok", True):
+        return result.get("error") or "Logbook lookup failed."
+    if "entry" in result:
+        entry = result.get("entry")
+        return _format_logbook_entry(entry, full=True) if entry else "No Daily Logbook entry found for that day."
+    if "entries" in result:
+        entries = result.get("entries") or []
+        if not entries:
+            return "No Daily Logbook entries matched."
+        header = "Daily Logbook entries"
+        if result.get("start") or result.get("end"):
+            header += f" ({result.get('start') or '...'} to {result.get('end') or '...'})"
+        lines = [header]
+        for entry in entries:
+            lines.append(_format_logbook_entry(entry, full=False))
+        return "\n\n".join(lines)
+    if "people" in result or "places" in result:
+        lines = []
+        people = result.get("people") or []
+        places = result.get("places") or []
+        if people:
+            lines.append("People: " + ", ".join(p.get("name") or p.get("id") or "" for p in people if p))
+        if places:
+            lines.append("Places: " + ", ".join(p.get("name") or p.get("id") or "" for p in places if p))
+        return "\n".join(lines) if lines else "No Logbook people or places found."
+    if "connections" in result:
+        rows = result.get("connections") or []
+        if not rows:
+            return "No Logbook connections matched."
+        lines = ["Logbook person connections:"]
+        for row in rows:
+            pair = f"{row.get('person_a') or '?'} - {row.get('person_b') or '?'}"
+            bits = [
+                pair,
+                row.get("type") or "unknown",
+                f"status {row.get('status') or 'unknown'}",
+                f"confidence {row.get('confidence')}%" if row.get("confidence") is not None else "",
+            ]
+            desc = row.get("description")
+            line = " | ".join(b for b in bits if b)
+            if desc:
+                line += f" | {desc}"
+            evidence = row.get("evidence") or []
+            snippets = []
+            for ev in evidence[:2]:
+                if isinstance(ev, dict):
+                    date_text = ev.get("date") or "unknown date"
+                    snippet = ev.get("snippet") or ev.get("evidence") or ""
+                    snippets.append(f"{date_text}: {snippet}")
+            if snippets:
+                line += " | evidence: " + " / ".join(snippets)
+            lines.append("- " + line)
+        return "\n".join(lines)
+    return json.dumps(result, indent=2, default=str)
+
+
+async def do_manage_logbook(content: str, owner: Optional[str] = None) -> Dict:
+    """Read owner-scoped Daily Logbook context for the assistant."""
+    try:
+        args = _parse_tool_args(content)
+    except ValueError:
+        return {"error": "Invalid JSON arguments", "exit_code": 1}
+
+    try:
+        from src.logbook_context import run_tool
+        result = run_tool(owner, args)
+        result["exit_code"] = 0 if result.get("ok", False) else int(result.get("exit_code") or 1)
+        result["output"] = _format_logbook_tool_output(result)
+        return result
+    except Exception as e:
+        logger.error("manage_logbook error: %s", e)
+        return {"error": str(e), "exit_code": 1}
+
+
+# ---------------------------------------------------------------------------
 # Calendar tool — CalDAV-backed event CRUD
 # ---------------------------------------------------------------------------
 

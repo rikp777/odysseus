@@ -487,6 +487,38 @@ FUNCTION_TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
+            "name": "manage_logbook",
+            "description": "Read the user's owner-scoped Daily Logbook entries, people, places, mood, datapoints, and accepted/suggested connections. Use for questions about what happened on a date, this/last week or month, timelines, when a person/place was mentioned, moods or datapoints over time, and diary/journal/logbook recall. This tool is read-only; do not create or edit logbook entries from chat.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": ["get_day", "list_range", "timeline", "search", "people", "places", "locations", "directories", "connections"],
+                        "description": "Read action to perform"
+                    },
+                    "date": {"type": "string", "description": "Date for get_day. Accepts YYYY-MM-DD, today, yesterday, tomorrow, last monday, etc."},
+                    "start": {"type": "string", "description": "Range start. Accepts YYYY-MM-DD, this week, last week, this month, or last month."},
+                    "end": {"type": "string", "description": "Range end as YYYY-MM-DD or simple relative date."},
+                    "q": {"type": "string", "description": "Text search query for entry title/content/summary."},
+                    "query": {"type": "string", "description": "Alias for q."},
+                    "person": {"type": "string", "description": "Filter by a person's display name or alias."},
+                    "person_id": {"type": "string", "description": "Filter by exact logbook person id."},
+                    "place": {"type": "string", "description": "Filter by a place/location display name or alias."},
+                    "location": {"type": "string", "description": "Alias for place."},
+                    "location_id": {"type": "string", "description": "Filter by exact logbook location id."},
+                    "mood": {"type": "string", "description": "Filter by mood label."},
+                    "datapoint_key": {"type": "string", "description": "Filter by datapoint key such as sleep, energy, workout, gratitude."},
+                    "status": {"type": "string", "enum": ["accepted", "suggested", "hidden"], "description": "Connection status filter. Defaults to accepted."},
+                    "limit": {"type": "integer", "description": "Maximum rows to return."}
+                },
+                "required": ["action"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "api_call",
             "description": "Call a registered API integration (RSS reader, git forge, bookmark manager, smart home, etc.). Check the system context for available integrations and their endpoints.",
             "parameters": {
@@ -1242,7 +1274,7 @@ def function_call_to_tool_block(name: str, arguments: str) -> Optional[ToolBlock
                     content += f" {ak}={colors[ak]}"
         else:
             content = action
-    elif tool_type in ("manage_tasks", "manage_skills", "api_call",
+    elif tool_type in ("manage_tasks", "manage_skills", "manage_logbook", "api_call",
                         "manage_endpoints", "manage_mcp", "manage_webhooks",
                         "manage_tokens", "manage_documents", "manage_settings",
                         "manage_billing"):
