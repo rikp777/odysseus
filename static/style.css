@@ -7760,6 +7760,7 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
       #cookbook-modal .modal-content,
       #tasks-modal .modal-content,
       #calendar-modal .modal-content,
+      #logbook-modal .modal-content,
       #logbook-atlas-modal .modal-content,
       #memory-modal .memory-modal-content,
       #settings-modal .settings-modal-content,
@@ -7811,6 +7812,7 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
          them; padding-top reset is in the per-modal rules below. */
       #cookbook-modal .modal-content,
       #calendar-modal .modal-content,
+      #logbook-modal .modal-content,
       #logbook-atlas-modal .modal-content,
       #email-lib-modal .modal-content,
       #doclib-modal .modal-content,
@@ -7829,6 +7831,7 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
       /* Anchor those modals to the top so the full height is usable */
       #cookbook-modal,
       #calendar-modal,
+      #logbook-modal,
       #logbook-atlas-modal,
       #email-lib-modal,
       #doclib-modal,
@@ -37196,10 +37199,6 @@ body.theme-frosted .modal {
   min-width: 72px;
   text-align: right;
   margin-left: auto;
-}
-
-.logbook-minimize {
-  color: var(--fg);
 }
 
 .logbook-mobile-tabs {

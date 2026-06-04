@@ -212,7 +212,6 @@ function _render() {
     <div class="modal-content logbook-atlas-content" role="dialog" aria-label="Logbook People and Places">
       <div class="modal-header logbook-atlas-header">
         <h4>People & Places</h4>
-        <button type="button" class="modal-minimize-btn" id="logbook-atlas-minimize" title="Minimize" aria-label="Minimize"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><line x1="5" y1="18" x2="19" y2="18"/></svg></button>
         <button type="button" class="close-btn" id="logbook-atlas-close" title="Close" aria-label="Close">&#x2716;</button>
       </div>
       ${_error ? `<div class="logbook-atlas-error">${_e(_error)}</div>` : ''}
@@ -228,6 +227,7 @@ function _render() {
       </div>
     </div>
   `;
+  Modals.injectMinimizeButton(modal, MODAL_ID);
   _wireWindow(modal);
   _bind();
 }
@@ -424,7 +424,6 @@ function _connectionsTabHtml() {
 
 function _bind() {
   document.getElementById('logbook-atlas-close')?.addEventListener('click', closeAtlas);
-  document.getElementById('logbook-atlas-minimize')?.addEventListener('click', () => Modals.minimize(MODAL_ID));
   document.getElementById('logbook-atlas-refresh')?.addEventListener('click', () => openAtlas({ refresh: true }).catch(_setError));
   document.querySelectorAll('[data-atlas-tab]').forEach(btn => {
     btn.addEventListener('click', async () => {
@@ -606,6 +605,11 @@ async function _connectionAction(connectionId, action) {
 }
 
 export async function openAtlas({ refresh = false } = {}) {
+  if (Modals.isMinimized(MODAL_ID)) {
+    Modals.restore(MODAL_ID);
+    _open = true;
+    return;
+  }
   _open = true;
   _error = '';
   const modal = _renderShell();
@@ -635,6 +639,10 @@ export function closeAtlas() {
 }
 
 export function toggleAtlas() {
+  if (Modals.toggle(MODAL_ID)) {
+    _open = true;
+    return;
+  }
   if (_open) closeAtlas();
   else openAtlas().catch(_setError);
 }

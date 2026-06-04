@@ -278,8 +278,7 @@ function _render() {
         </div>
         <span id="logbook-save-status" class="logbook-save-status">${_e(_saveStatus)}</span>
         <button type="button" class="cal-btn cal-btn-primary" id="logbook-manual-save">Save</button>
-        <button type="button" class="modal-minimize-btn logbook-minimize" id="logbook-minimize" aria-label="Minimize">_</button>
-        <button type="button" class="close-btn" id="logbook-close" aria-label="Close">x</button>
+        <button type="button" class="close-btn" id="logbook-close" title="Close" aria-label="Close">&#x2716;</button>
       </div>
       <div class="logbook-mobile-tabs">
         ${['write', 'mood', 'data', 'people', 'places', 'ai'].map(tab => `<button type="button" class="logbook-tab ${_activeTab === tab ? 'active' : ''}" data-logbook-tab="${tab}">${tab === 'ai' ? 'AI' : tab[0].toUpperCase() + tab.slice(1)}</button>`).join('')}
@@ -306,6 +305,7 @@ function _render() {
       </div>
     </div>
   `;
+  Modals.injectMinimizeButton(modal, MODAL_ID);
   _wireLogbookWindow(modal);
   _bindEvents();
   _renderMentionMenu();
@@ -623,7 +623,6 @@ function _aiPreviewHtml() {
 
 function _bindEvents() {
   document.getElementById('logbook-close')?.addEventListener('click', closeLogbook);
-  document.getElementById('logbook-minimize')?.addEventListener('click', () => Modals.minimize(MODAL_ID));
   document.getElementById('logbook-prev-day')?.addEventListener('click', () => _loadDate(_dateAdd(_date, -1)).catch(_showError));
   document.getElementById('logbook-next-day')?.addEventListener('click', () => _loadDate(_dateAdd(_date, 1)).catch(_showError));
   document.getElementById('logbook-today-btn')?.addEventListener('click', () => _loadDate(_today()).catch(_showError));
