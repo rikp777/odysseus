@@ -503,6 +503,115 @@ def test_monthly_spend_prefers_digitalocean_inference_insights(monkeypatch):
     assert result["accounts"][0]["model_display"] == "$0.68"
 
 
+def test_monthly_spend_exposes_provider_health_and_spend_audit(monkeypatch):
+    monkeypatch.setattr(
+        billing_routes,
+        "_load_settings",
+        lambda: {
+            "cloud_billing_enabled": True,
+            "cloud_billing_accounts": [_account(account_id="do-main", token="do-token", label="DigitalOcean")],
+            "cloud_billing_refresh_seconds": 300,
+            "cloud_billing_monthly_warning_usd": "1",
+            "cloud_billing_monthly_limit_usd": "1",
+            "cloud_billing_usage_ledger_enabled": True,
+        },
+    )
+    _set_digitalocean_fetch(
+        monkeypatch,
+        lambda token: {
+            "month_to_date_usage": "6.44",
+            "_odysseus_model_billing": {
+                "amount_decimal": Decimal("0.68"),
+                "label": "DigitalOcean GenAI Serverless Inference",
+                "source_label": "Provider model billing",
+            },
+        },
+    )
+
+    result = _endpoint()(_request())
+
+    health = result["provider_health"][0]
+    assert health["account_id"] == "do-main"
+    assert health["provider_label"] == "DigitalOcean"
+    assert health["status_label"] == "Model and account"
+    assert health["can_read_account_total"] is True
+    assert health["account_total_display"] == "$6.44"
+    assert health["can_read_model_usage"] is True
+    assert health["model_spend_display"] == "$0.68"
+    assert health["last_success_at"]
+    assert health["last_error"] == ""
+
+    audit = result["spend_audit"]
+    assert audit["model_spend_display"] == "$0.68"
+    assert audit["model_spend_used_for_limits"] is True
+    assert audit["selected_source"] == "Provider model billing"
+    assert audit["provider_model_billing"] == {
+        "available": True,
+        "display": "$0.68",
+        "accounts": 1,
+    }
+    assert audit["provider_account_total"] == {
+        "available": True,
+        "display": "$6.44",
+        "accounts": 1,
+        "scope": "all provider services",
+    }
+    assert audit["provider_health"]["connected"] == 1
+    assert audit["provider_health"]["errors"] == 0
+
+
+def test_monthly_spend_health_reports_account_only_provider_access(monkeypatch):
+    monkeypatch.setattr(
+        billing_routes,
+        "_load_settings",
+        lambda: {
+            "cloud_billing_enabled": True,
+            "cloud_billing_accounts": [_account(account_id="do-main", token="do-token", label="DigitalOcean")],
+            "cloud_billing_refresh_seconds": 300,
+            "cloud_billing_usage_ledger_enabled": False,
+        },
+    )
+    _set_digitalocean_fetch(monkeypatch, lambda token: {"month_to_date_usage": "6.44"})
+
+    result = _endpoint()(_request())
+
+    health = result["provider_health"][0]
+    assert health["status_label"] == "Account total"
+    assert health["can_read_account_total"] is True
+    assert health["account_total_display"] == "$6.44"
+    assert health["can_read_model_usage"] is False
+    assert health["model_spend_display"] == ""
+    audit = result["spend_audit"]
+    assert audit["model_spend_display"] == ""
+    assert audit["model_spend_used_for_limits"] is False
+    assert audit["provider_model_billing"]["available"] is False
+    assert audit["provider_account_total"]["display"] == "$6.44"
+
+
+def test_monthly_spend_health_reports_provider_errors(monkeypatch):
+    monkeypatch.setattr(
+        billing_routes,
+        "_load_settings",
+        lambda: {
+            "cloud_billing_enabled": True,
+            "cloud_billing_accounts": [_account(provider="examplecloud", token="bad-token", label="Example")],
+            "cloud_billing_refresh_seconds": 300,
+            "cloud_billing_usage_ledger_enabled": False,
+        },
+    )
+
+    result = _endpoint()(_request())
+
+    health = result["provider_health"][0]
+    assert health["status_label"] == "Unsupported"
+    assert health["ok"] is False
+    assert health["configured"] is True
+    assert health["can_read_account_total"] is False
+    assert health["can_read_model_usage"] is False
+    assert health["last_error"] == "Cloud billing provider 'examplecloud' is not supported yet"
+    assert result["spend_audit"]["provider_health"]["errors"] == 1
+
+
 def test_monthly_spend_supports_openai_account_and_model_usage(monkeypatch):
     monkeypatch.setattr(
         billing_routes,

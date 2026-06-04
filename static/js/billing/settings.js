@@ -23,6 +23,8 @@ export async function initCloudBillingSettings() {
   var toggleBtn = el('set-cloudBillingToggle');
   var summaryEl = el('set-cloudBillingSummary');
   var currentSpendEl = el('set-cloudBillingCurrentSpend');
+  var auditEl = el('set-cloudBillingAudit');
+  var auditSummaryEl = el('set-cloudBillingAuditSummary');
   var refreshSelect = el('set-cloudBillingRefresh');
   var dailyWarningToggle = el('set-cloudBillingDailyWarningToggle');
   var dailyWarningInput = el('set-cloudBillingDailyWarning');
@@ -123,6 +125,79 @@ export async function initCloudBillingSettings() {
     return usage.amount_display || usage.display || '';
   }
 
+  function auditItem(label, value, meta) {
+    return '<div class="cloud-billing-audit-item">' +
+      '<span>' + esc(label) + '</span>' +
+      '<strong>' + esc(value || '--') + '</strong>' +
+      (meta ? '<span>' + esc(meta) + '</span>' : '') +
+    '</div>';
+  }
+
+  function accountHealthTone(row) {
+    if (!row || row.enabled === false) return 'muted';
+    if (!row.configured) return 'warning';
+    if (!row.ok) return 'danger';
+    return 'ok';
+  }
+
+  function accountHealthMeta(row) {
+    if (!row) return '';
+    if (row.last_error) return row.last_error;
+    var parts = [];
+    if (row.last_success_at) parts.push('Success ' + row.last_success_at);
+    else if (row.last_checked_at) parts.push('Checked ' + row.last_checked_at);
+    if (row.cached && row.cache_age_seconds) parts.push('cached ' + row.cache_age_seconds + 's');
+    return parts.join(' · ');
+  }
+
+  function renderDiagnostics(statusData) {
+    if (!auditEl) return;
+    var audit = statusData && statusData.spend_audit;
+    var health = statusData && Array.isArray(statusData.provider_health) ? statusData.provider_health : [];
+    if (!audit) {
+      auditEl.innerHTML = '<div class="admin-empty">No billing data yet.</div>';
+      if (auditSummaryEl) auditSummaryEl.textContent = 'No data';
+      return;
+    }
+
+    var providerModel = audit.provider_model_billing || {};
+    var providerAccount = audit.provider_account_total || {};
+    var localUsage = audit.local_usage || {};
+    var healthSummary = audit.provider_health || {};
+    var selectedSource = audit.selected_source || statusData.source_label || statusData.spend_source || '';
+    var summaryParts = [];
+    if (audit.model_spend_display) summaryParts.push(audit.model_spend_display);
+    if (selectedSource) summaryParts.push(selectedSource);
+    if (auditSummaryEl) auditSummaryEl.textContent = summaryParts.join(' · ') || 'Audit';
+
+    var healthHtml = health.length ? health.map(function(row) {
+      var tone = accountHealthTone(row);
+      var chips = [
+        '<span class="cloud-billing-account-badge billing-account-' + tone + '">' + esc(row.status_label || row.status || 'Status') + '</span>',
+        '<span class="cloud-billing-health-chip">' + esc(row.can_read_model_usage ? 'Model billing' : 'No model billing') + '</span>',
+        '<span class="cloud-billing-health-chip">' + esc(row.can_read_account_total ? 'Account total' : 'No account total') + '</span>',
+      ].join('');
+      return '<div class="cloud-billing-health-row">' +
+        '<div class="cloud-billing-health-main">' +
+          '<strong>' + esc(row.account_label || row.provider_label || 'Provider') + '</strong>' +
+          '<span>' + esc(accountHealthMeta(row)) + '</span>' +
+        '</div>' +
+        '<div class="cloud-billing-health-chips">' + chips + '</div>' +
+      '</div>';
+    }).join('') : '<div class="admin-empty">No provider accounts configured.</div>';
+
+    auditEl.innerHTML =
+      '<div class="cloud-billing-audit-grid">' +
+        auditItem('Current AI spend', audit.model_spend_display || '', selectedSource || 'No model spend source') +
+        auditItem('Provider model billing', providerModel.display || '', providerModel.available ? providerModel.accounts + ' account(s)' : 'Unavailable') +
+        auditItem('Usage ledger', localUsage.display || '', (localUsage.events || 0) + ' events · ' + (localUsage.unknown_cost_events || 0) + ' unpriced') +
+        auditItem('Provider account total', providerAccount.display || '', providerAccount.available ? 'All services' : 'Unavailable') +
+        auditItem('Provider health', (healthSummary.connected || 0) + '/' + (healthSummary.accounts || 0) + ' connected', (healthSummary.errors || 0) + ' error(s)') +
+        auditItem('Last refresh', audit.last_refreshed_at || '', audit.cached ? 'Cached ' + (audit.cache_age_seconds || 0) + 's' : 'Live') +
+      '</div>' +
+      '<div class="cloud-billing-health-list">' + healthHtml + '</div>';
+  }
+
   function currentSpendChips(statusData, fallbackSource) {
     var chips = [];
     var source = statusData && statusData.source_label ? statusData.source_label : fallbackSource;
@@ -219,6 +294,7 @@ export async function initCloudBillingSettings() {
       else summaryEl.textContent = 'Configured';
     }
     renderCurrentSpend(statusData || (configured ? null : { enabled: false, configured: false }));
+    renderDiagnostics(statusData || (configured ? null : { enabled: false, configured: false }));
   }
 
   function setMsg(text, isError) {
@@ -300,6 +376,9 @@ export async function initCloudBillingSettings() {
       return account && account.api_token_set
         ? 'Saved token; refresh to check account billing.'
         : 'Add a billing token, then save.';
+    }
+    if (result.ok && result.model_display && result.amount_scope === 'provider_account') {
+      return 'Model usage: ' + result.model_display + '; account total: ' + (result.display || '--') + ' this month (all services).';
     }
     if (result.ok && result.amount_scope === 'model_usage') {
       return 'Provider model usage: ' + (result.model_display || result.display || '--') + ' this month.';
@@ -459,6 +538,31 @@ export async function initCloudBillingSettings() {
     } catch (_) {}
   }
 
+  function billingTestResult(data) {
+    var health = data && Array.isArray(data.provider_health) ? data.provider_health : [];
+    if (!health.length) {
+      return {
+        ok: !!(data && data.ok),
+        message: data && data.ok ? 'Billing connected' : 'Billing check failed',
+      };
+    }
+    var enabled = health.filter(function(row) { return row && row.enabled !== false && row.configured; });
+    var failed = enabled.filter(function(row) { return !row.ok; });
+    if (failed.length) {
+      var first = failed[0];
+      return {
+        ok: false,
+        message: 'Token saved; ' + (first.provider_label || first.account_label || 'provider') + ' check failed: ' + (first.last_error || first.status_label || first.status || 'error'),
+      };
+    }
+    var model = enabled.filter(function(row) { return row.can_read_model_usage; });
+    var account = enabled.filter(function(row) { return row.can_read_account_total; });
+    if (model.length && account.length) return { ok: true, message: 'Token saved; model billing and account total connected' };
+    if (model.length) return { ok: true, message: 'Token saved; model billing connected' };
+    if (account.length) return { ok: true, message: 'Token saved; account total connected; model billing unavailable' };
+    return { ok: false, message: 'Token saved; no billing data returned' };
+  }
+
   async function saveBilling(options) {
     options = options || {};
     var testing = !!options.testing;
@@ -484,8 +588,8 @@ export async function initCloudBillingSettings() {
       notifyBillingChanged();
       var data = await refreshStatus(true);
       if (testing) {
-        var ok = !!(data && data.configured && data.ok);
-        setMsg(ok ? 'Token saved and connected' : 'Token saved; billing check failed', !ok);
+        var testResult = billingTestResult(data);
+        setMsg(testResult.message, !testResult.ok);
       } else {
         setMsg('Saved', false);
         setTimeout(function() { setMsg('', false); }, 1800);
