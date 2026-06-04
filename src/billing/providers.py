@@ -56,6 +56,19 @@ def create_provider_registry() -> Dict[str, BillingProvider]:
 _PROVIDERS = create_provider_registry()
 
 
+def provider_catalog(registry: Optional[Dict[str, BillingProvider]] = None) -> list[Dict[str, str]]:
+    providers = _PROVIDERS if registry is None else registry
+    return [
+        {
+            "id": provider.id,
+            "label": provider.label,
+            "short_label": provider.short_label,
+            "token_hint": provider.token_hint,
+        }
+        for provider in providers.values()
+    ]
+
+
 def provider_meta(provider: str, definition: Optional[BillingProvider] = None) -> Dict[str, str]:
     definition = definition or _PROVIDERS.get(provider)
     label = definition.label if definition else provider or "Cloud provider"

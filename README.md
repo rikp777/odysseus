@@ -294,6 +294,28 @@ Local GPU *serving* of vLLM/SGLang needs Linux/WSL2; for a local model on Window
 Open `http://localhost:7000`, log in with the generated admin password,
 and configure everything else inside **Settings**.
 
+## Model Spend Tracking
+Admins can enable optional model spend tracking from **Settings -> Models -> Model Spend**.
+This is useful when you use paid API models and want Odysseus to show what the
+app itself is spending, without mixing in unrelated cloud costs.
+
+1. Turn on **Enabled** to show model spend in the sidebar, chat cost labels, and
+   model picker price badges.
+2. Keep **Usage Ledger** on to record token usage from Odysseus model calls. This
+   local ledger is provider-generic and is the best source for AI/model spend
+   graphs and budgets.
+3. Optional: add one or more **Provider Accounts** with billing API tokens. These
+   are used for provider billing checks and context. Provider account totals may
+   include non-AI services, such as droplets, storage, networking, or other cloud
+   resources, so Odysseus does not add those totals to AI/model spend.
+4. Set daily/monthly warning and **Max usage** values if you want visible budget
+   warnings or remote model calls to be blocked after a spend limit is reached.
+
+After setup, current month-to-date AI spend appears in the navbar. In chat, ask
+for `/billing` or "show me a spending graph" to render a spend chart. The chart
+can group by provider or model, show usage data points, and include warning/limit
+lines when monthly thresholds are configured.
+
 ## Troubleshooting & Advanced Setup
 
 ### `chromadb-client` conflicts with embedded ChromaDB

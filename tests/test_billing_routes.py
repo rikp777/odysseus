@@ -41,6 +41,22 @@ def _graph_endpoint():
     raise AssertionError("Cloud spending graph route not found")
 
 
+def _providers_endpoint():
+    router = billing_routes.setup_billing_routes()
+    for route in router.routes:
+        if getattr(route, "path", "") == "/api/billing/providers":
+            return route.endpoint
+    raise AssertionError("Cloud billing providers route not found")
+
+
+def _session_usage_endpoint():
+    router = billing_routes.setup_billing_routes()
+    for route in router.routes:
+        if getattr(route, "path", "") == "/api/billing/session/{session_id}/usage":
+            return route.endpoint
+    raise AssertionError("Cloud billing session usage route not found")
+
+
 def _reset_cache():
     billing_routes._CACHE.update({"fingerprint": "", "expires_at": 0.0, "payload": None})
 
@@ -96,6 +112,62 @@ def test_provider_registry_uses_billing_provider_objects():
     assert billing_routes._PROVIDERS["digitalocean"].id == "digitalocean"
     assert callable(billing_routes._PROVIDERS["digitalocean"].fetch)
     assert callable(billing_routes._PROVIDERS["digitalocean"].normalize)
+
+
+def test_billing_providers_requires_admin():
+    with pytest.raises(HTTPException) as exc:
+        _providers_endpoint()(_request(user="regular"))
+    assert exc.value.status_code == 403
+
+
+def test_billing_providers_returns_safe_registry_metadata(monkeypatch):
+    provider = _example_provider(lambda token: {}, lambda payload: {})
+    monkeypatch.setitem(billing_routes._PROVIDERS, provider.id, provider)
+
+    result = _providers_endpoint()(_request())
+
+    assert result["providers"][-1] == {
+        "id": "examplecloud",
+        "label": "ExampleCloud",
+        "short_label": "EX",
+        "token_hint": "ExampleCloud billing token",
+    }
+    assert "fetch" not in result["providers"][-1]
+    assert "normalize" not in result["providers"][-1]
+
+
+def test_billing_session_usage_requires_admin():
+    with pytest.raises(HTTPException) as exc:
+        _session_usage_endpoint()("session-1", _request(user="regular"))
+    assert exc.value.status_code == 403
+
+
+def test_billing_session_usage_returns_public_summary(monkeypatch):
+    monkeypatch.setattr(
+        billing_routes,
+        "get_session_usage_summary",
+        lambda session_id: {
+            "session_id": session_id,
+            "period": "session",
+            "amount_decimal": Decimal("0.003"),
+            "projected_decimal": Decimal("0.003"),
+            "amount": "0.003000",
+            "amount_float": 0.003,
+            "display": "$0.0030",
+            "events": 2,
+            "known_cost_events": 2,
+            "unknown_cost_events": 0,
+            "messages": [{"message_id": "msg-1", "display": "$0.0010"}],
+        },
+    )
+
+    result = _session_usage_endpoint()("session-1", _request())
+
+    assert result["session_id"] == "session-1"
+    assert result["display"] == "$0.0030"
+    assert result["messages"] == [{"message_id": "msg-1", "display": "$0.0010"}]
+    assert "amount_decimal" not in result
+    assert "projected_decimal" not in result
 
 
 @pytest.fixture(autouse=True)
