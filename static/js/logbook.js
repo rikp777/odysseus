@@ -6,31 +6,26 @@ import uiModule from './ui.js';
 import * as Modals from './modalManager.js';
 import { makeWindowDraggable } from './windowDrag.js';
 import { applyEdgeDock } from './modalSnap.js';
-
-const API_BASE = window.location.origin;
-const MODAL_ID = 'logbook-modal';
-const SAVE_DELAY = 900;
-
-const MOODS = [
-  { label: 'Bad', value: 'bad', score: 1 },
-  { label: 'Meh', value: 'meh', score: 2 },
-  { label: 'Okay', value: 'okay', score: 3 },
-  { label: 'Good', value: 'good', score: 4 },
-  { label: 'Great', value: 'great', score: 5 },
-];
-
-const QUICK_DATA = [
-  ['sleep', 'Sleep'],
-  ['energy', 'Energy'],
-  ['stress', 'Stress'],
-  ['workout', 'Workout'],
-  ['food', 'Food'],
-  ['pain', 'Pain'],
-  ['work', 'Work'],
-  ['social', 'Social'],
-  ['medication', 'Medication'],
-  ['gratitude', 'Gratitude'],
-];
+import {
+  analyzeEntry,
+  assistLogbook,
+  createLocation,
+  getEntry,
+  listConnections,
+  listEntries,
+  listLocations,
+  listPeople,
+  saveEntry,
+  updateConnection,
+} from './logbook/api.js';
+import { MODAL_ID, MOODS, QUICK_DATA, SAVE_DELAY } from './logbook/constants.js';
+import {
+  cleanKey as _cleanKey,
+  dateAdd as _dateAdd,
+  dateLabel as _dateLabel,
+  escapeHtml as _e,
+  today as _today,
+} from './logbook/utils.js';
 
 let _open = false;
 let _date = _today();
@@ -57,61 +52,6 @@ let _peopleSearch = '';
 let _locationSearch = '';
 let _peopleSort = 'recent';
 let _locationSort = 'recent';
-
-function _e(value) {
-  return String(value ?? '').replace(/[&<>"']/g, ch => ({
-    '&': '&amp;',
-    '<': '&lt;',
-    '>': '&gt;',
-    '"': '&quot;',
-    "'": '&#39;',
-  }[ch]));
-}
-
-function _today() {
-  const d = new Date();
-  return _dateString(d);
-}
-
-function _dateString(d) {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${y}-${m}-${day}`;
-}
-
-function _dateAdd(value, days) {
-  const d = new Date(`${value}T12:00:00`);
-  d.setDate(d.getDate() + days);
-  return _dateString(d);
-}
-
-function _dateLabel(value) {
-  const today = _today();
-  if (value === today) return 'Today';
-  if (value === _dateAdd(today, -1)) return 'Yesterday';
-  if (value === _dateAdd(today, 1)) return 'Tomorrow';
-  return value;
-}
-
-function _cleanKey(value) {
-  return String(value || 'datapoint').trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'datapoint';
-}
-
-async function _jsonFetch(url, opts = {}) {
-  const res = await fetch(url, {
-    credentials: 'same-origin',
-    headers: { 'Content-Type': 'application/json', ...(opts.headers || {}) },
-    ...opts,
-  });
-  let data = null;
-  try { data = await res.json(); } catch (_) {}
-  if (!res.ok) {
-    const msg = data?.error || data?.detail || `Request failed (${res.status})`;
-    throw new Error(typeof msg === 'string' ? msg : JSON.stringify(msg));
-  }
-  return data;
-}
 
 function _setStatus(text) {
   _saveStatus = text;
@@ -158,10 +98,7 @@ async function _saveNow({ silent = false } = {}) {
   _saving = true;
   _setStatus('Saving...');
   try {
-    const saved = await _jsonFetch(`${API_BASE}/api/logbook/entry/${encodeURIComponent(_date)}`, {
-      method: 'POST',
-      body: JSON.stringify(_entryPayload()),
-    });
+    const saved = await saveEntry(_date, _entryPayload());
     _entry = saved;
     _dirty = false;
     _setStatus('Saved');
@@ -180,7 +117,7 @@ async function _saveNow({ silent = false } = {}) {
 }
 
 async function _loadEntry(date) {
-  _entry = await _jsonFetch(`${API_BASE}/api/logbook/entry/${encodeURIComponent(date)}`);
+  _entry = await getEntry(date);
   if (!_entry.datapoints) _entry.datapoints = [];
   if (!_entry.people) _entry.people = [];
   if (!_entry.mentions) _entry.mentions = [];
@@ -199,22 +136,22 @@ async function _loadEntries() {
   if (_filterLocation) params.set('location_id', _filterLocation);
   if (_filterMood) params.set('mood', _filterMood);
   if (_filterDataKey.trim()) params.set('datapoint_key', _filterDataKey.trim());
-  const data = await _jsonFetch(`${API_BASE}/api/logbook/entries?${params.toString()}`);
+  const data = await listEntries(params);
   _entries = data.entries || [];
 }
 
 async function _loadPeople() {
-  const data = await _jsonFetch(`${API_BASE}/api/logbook/people`);
+  const data = await listPeople();
   _people = data.people || [];
 }
 
 async function _loadLocations() {
-  const data = await _jsonFetch(`${API_BASE}/api/logbook/locations`);
+  const data = await listLocations();
   _locations = data.locations || [];
 }
 
 async function _loadConnections() {
-  const data = await _jsonFetch(`${API_BASE}/api/logbook/connections`);
+  const data = await listConnections();
   _connections = data.connections || [];
 }
 
@@ -1171,10 +1108,7 @@ async function _createLocation() {
   const input = document.getElementById('logbook-location-new');
   const name = (input?.value || '').trim();
   if (!name) return;
-  await _jsonFetch(`${API_BASE}/api/logbook/locations`, {
-    method: 'POST',
-    body: JSON.stringify({ display_name: name }),
-  });
+  await createLocation(name);
   if (input) input.value = '';
   await _loadLocations();
   _renderLocationsPanel();
@@ -1192,15 +1126,12 @@ async function _runAI(mode) {
     ? `${_entry?.content || ''}\n\nExtra thoughts:\n${draft.trim()}`.trim()
     : (_entry?.content || '');
   try {
-    const result = await _jsonFetch(`${API_BASE}/api/logbook/ai/assist`, {
-      method: 'POST',
-      body: JSON.stringify({
-        entry_date: _date,
-        content,
-        mode,
-        locale: (navigator.language || 'en').toLowerCase().startsWith('nl') ? 'nl' : 'en',
-        current_entry: _entry || {},
-      }),
+    const result = await assistLogbook({
+      entry_date: _date,
+      content,
+      mode,
+      locale: (navigator.language || 'en').toLowerCase().startsWith('nl') ? 'nl' : 'en',
+      current_entry: _entry || {},
     });
     _aiPreview = result;
   } catch (err) {
@@ -1220,7 +1151,7 @@ async function _analyzeEntry() {
   _aiError = '';
   _render();
   try {
-    const result = await _jsonFetch(`${API_BASE}/api/logbook/ai/analyze-entry/${encodeURIComponent(_entry.id)}`, { method: 'POST' });
+    const result = await analyzeEntry(_entry.id);
     _aiPreview = result;
     await _loadConnections();
   } catch (err) {
@@ -1279,7 +1210,7 @@ function _applyAIMood() {
 }
 
 async function _connectionAction(id, action) {
-  await _jsonFetch(`${API_BASE}/api/logbook/connections/${encodeURIComponent(id)}/${action}`, { method: 'POST' });
+  await updateConnection(id, action);
   await _loadConnections();
   _render();
 }
