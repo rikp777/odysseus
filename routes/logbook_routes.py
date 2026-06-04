@@ -11,13 +11,15 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
-from sqlalchemy import or_
+from sqlalchemy import func, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 
 from core.database import (
     LogbookDataPoint,
     LogbookEntry,
+    LogbookLocation,
+    LogbookLocationMention,
     LogbookMention,
     LogbookPerson,
     LogbookPersonConnection,
@@ -35,10 +37,18 @@ MENTION_RE = re.compile(
     r"(?:\s+(?:[A-ZÀ-ÖØ-Þ][A-Za-z0-9À-ÖØ-öø-ÿ0-9_-]*|van|de|der|den|ten|ter|von|da|del|di|la|le|du)){0,3})"
     r")"
 )
+LOCATION_RE = re.compile(
+    r"(?<![\w#])#(?:"
+    r"\"(?P<quoted>[^\"\n]{1,80})\""
+    r"|\[(?P<bracket>[^\]\n]{1,80})\]"
+    r"|(?P<bare>[A-Za-zÀ-ÖØ-öø-ÿ][A-Za-z0-9À-ÖØ-öø-ÿ_-]*"
+    r"(?:\s+(?:[A-ZÀ-ÖØ-Þ][A-Za-z0-9À-ÖØ-öø-ÿ0-9_-]*|van|de|der|den|ten|ter|von|da|del|di|la|le|du)){0,3})"
+    r")"
+)
 
 ALLOWED_CONNECTION_TYPES = {"co_mentioned", "family", "friend", "work", "training", "conflict", "unknown"}
 ALLOWED_CONNECTION_STATUS = {"suggested", "accepted", "hidden"}
-AI_MODES = {"clean_spelling", "structure_day", "summarize", "ask_questions", "extract_people", "reflect", "extract_all"}
+AI_MODES = {"clean_spelling", "structure_day", "summarize", "ask_questions", "extract_people", "extract_locations", "reflect", "extract_all"}
 
 
 class LogbookDataPointIn(BaseModel):
@@ -89,6 +99,23 @@ class LogbookPersonUpdate(BaseModel):
 class LogbookPeopleMerge(BaseModel):
     source_person_id: str
     target_person_id: str
+
+
+class LogbookLocationCreate(BaseModel):
+    display_name: str
+    aliases: Optional[List[str]] = None
+    notes: Optional[str] = None
+
+
+class LogbookLocationUpdate(BaseModel):
+    display_name: Optional[str] = None
+    aliases: Optional[List[str]] = None
+    notes: Optional[str] = None
+
+
+class LogbookLocationsMerge(BaseModel):
+    source_location_id: str
+    target_location_id: str
 
 
 class LogbookAIAssist(BaseModel):
@@ -210,6 +237,22 @@ def _parse_mentions(content: str) -> List[Dict[str, Any]]:
     return mentions
 
 
+def _parse_locations(content: str) -> List[Dict[str, Any]]:
+    locations: List[Dict[str, Any]] = []
+    for match in LOCATION_RE.finditer(content or ""):
+        name = (match.group("quoted") or match.group("bracket") or match.group("bare") or "").strip()
+        name = re.sub(r"\s+", " ", name)
+        if not name:
+            continue
+        locations.append({
+            "name": name,
+            "surface_text": match.group(0),
+            "start_offset": match.start(),
+            "end_offset": match.end(),
+        })
+    return locations
+
+
 def _person_to_dict(person: LogbookPerson) -> Dict[str, Any]:
     return {
         "id": person.id,
@@ -220,6 +263,19 @@ def _person_to_dict(person: LogbookPerson) -> Dict[str, Any]:
         "notes": person.notes,
         "created_at": person.created_at.isoformat() if person.created_at else None,
         "updated_at": person.updated_at.isoformat() if person.updated_at else None,
+    }
+
+
+def _location_to_dict(location: LogbookLocation) -> Dict[str, Any]:
+    return {
+        "id": location.id,
+        "owner": location.owner,
+        "display_name": location.display_name,
+        "canonical_name": location.canonical_name,
+        "aliases": _aliases(location),
+        "notes": location.notes,
+        "created_at": location.created_at.isoformat() if location.created_at else None,
+        "updated_at": location.updated_at.isoformat() if location.updated_at else None,
     }
 
 
@@ -254,6 +310,21 @@ def _mention_to_dict(mention: LogbookMention) -> Dict[str, Any]:
     }
 
 
+def _location_mention_to_dict(mention: LogbookLocationMention) -> Dict[str, Any]:
+    return {
+        "id": mention.id,
+        "entry_id": mention.entry_id,
+        "location_id": mention.location_id,
+        "surface_text": mention.surface_text,
+        "start_offset": mention.start_offset,
+        "end_offset": mention.end_offset,
+        "source": mention.source,
+        "confidence": mention.confidence,
+        "created_at": mention.created_at.isoformat() if mention.created_at else None,
+        "location": _location_to_dict(mention.location) if mention.location else None,
+    }
+
+
 def _connection_to_dict(conn: LogbookPersonConnection) -> Dict[str, Any]:
     evidence = _json_load(conn.evidence_json, [])
     return {
@@ -276,10 +347,15 @@ def _connection_to_dict(conn: LogbookPersonConnection) -> Dict[str, Any]:
 
 def _entry_to_dict(entry: LogbookEntry, *, full: bool = True) -> Dict[str, Any]:
     mentions = list(entry.mentions or [])
+    location_mentions = list(entry.location_mentions or [])
     people_by_id: Dict[str, LogbookPerson] = {}
     for mention in mentions:
         if mention.person:
             people_by_id[mention.person.id] = mention.person
+    locations_by_id: Dict[str, LogbookLocation] = {}
+    for mention in location_mentions:
+        if mention.location:
+            locations_by_id[mention.location.id] = mention.location
     data = {
         "exists": True,
         "id": entry.id,
@@ -296,6 +372,8 @@ def _entry_to_dict(entry: LogbookEntry, *, full: bool = True) -> Dict[str, Any]:
         "datapoint_count": len(entry.datapoints or []),
         "mention_count": len(mentions),
         "people_count": len(people_by_id),
+        "location_mention_count": len(location_mentions),
+        "location_count": len(locations_by_id),
         "created_at": entry.created_at.isoformat() if entry.created_at else None,
         "updated_at": entry.updated_at.isoformat() if entry.updated_at else None,
     }
@@ -303,6 +381,8 @@ def _entry_to_dict(entry: LogbookEntry, *, full: bool = True) -> Dict[str, Any]:
         data["datapoints"] = [_datapoint_to_dict(dp) for dp in (entry.datapoints or [])]
         data["mentions"] = [_mention_to_dict(m) for m in mentions]
         data["people"] = [_person_to_dict(p) for p in sorted(people_by_id.values(), key=lambda x: x.display_name.lower())]
+        data["location_mentions"] = [_location_mention_to_dict(m) for m in location_mentions]
+        data["locations"] = [_location_to_dict(l) for l in sorted(locations_by_id.values(), key=lambda x: x.display_name.lower())]
     return data
 
 
@@ -321,6 +401,8 @@ def _empty_entry_shape(entry_date: str) -> Dict[str, Any]:
         "datapoints": [],
         "mentions": [],
         "people": [],
+        "location_mentions": [],
+        "locations": [],
     }
 
 
@@ -387,6 +469,71 @@ def _get_or_create_person(
     db.add(person)
     db.flush()
     return person
+
+
+def _find_location(db, owner: str, name: str, locations: Optional[List[LogbookLocation]] = None) -> Optional[LogbookLocation]:
+    canonical = _canonical_name(name)
+    if not canonical:
+        return None
+    candidates = locations
+    if candidates is None:
+        candidates = db.query(LogbookLocation).filter(LogbookLocation.owner == owner).all()
+    for location in candidates:
+        if location.canonical_name == canonical:
+            return location
+        for alias in _aliases(location):
+            if _canonical_name(alias) == canonical:
+                return location
+    return None
+
+
+def _merge_location_aliases(location: LogbookLocation, names: List[str]) -> None:
+    existing = _aliases(location)
+    seen = {_canonical_name(location.display_name), *[_canonical_name(a) for a in existing]}
+    for name in names:
+        label = str(name or "").strip()
+        canonical = _canonical_name(label)
+        if not label or not canonical or canonical in seen:
+            continue
+        existing.append(label)
+        seen.add(canonical)
+    location.aliases = json.dumps(existing, ensure_ascii=False) if existing else None
+
+
+def _get_or_create_location(
+    db,
+    owner: str,
+    display_name: str,
+    aliases: Optional[List[str]] = None,
+    notes: Optional[str] = None,
+    *,
+    update_existing: bool = False,
+) -> LogbookLocation:
+    name = re.sub(r"\s+", " ", (display_name or "").strip())
+    canonical = _canonical_name(name)
+    if not canonical:
+        raise HTTPException(400, "display_name is required")
+    location = _find_location(db, owner, name)
+    if location:
+        if update_existing:
+            location.display_name = name
+            location.canonical_name = canonical
+            location.notes = notes
+        if aliases:
+            _merge_location_aliases(location, aliases)
+        db.flush()
+        return location
+    location = LogbookLocation(
+        id=str(uuid.uuid4()),
+        owner=owner,
+        display_name=name,
+        canonical_name=canonical,
+        aliases=json.dumps([a for a in (aliases or []) if str(a).strip()], ensure_ascii=False) if aliases else None,
+        notes=notes,
+    )
+    db.add(location)
+    db.flush()
+    return location
 
 
 def _replace_datapoints(db, entry: LogbookEntry, datapoints: List[LogbookDataPointIn]) -> None:
@@ -505,6 +652,40 @@ def _rebuild_mentions(db, owner: str, entry: LogbookEntry) -> List[LogbookPerson
     return mentioned_people
 
 
+def _rebuild_location_mentions(db, owner: str, entry: LogbookEntry) -> List[LogbookLocation]:
+    db.query(LogbookLocationMention).filter(LogbookLocationMention.entry_id == entry.id).delete(synchronize_session=False)
+    db.flush()
+    locations_cache = db.query(LogbookLocation).filter(LogbookLocation.owner == owner).all()
+    mentioned_locations: List[LogbookLocation] = []
+    seen_mentions = set()
+    for parsed in _parse_locations(entry.content or ""):
+        location = _find_location(db, owner, parsed["name"], locations_cache)
+        if not location:
+            location = _get_or_create_location(db, owner, parsed["name"])
+            locations_cache.append(location)
+        key = (location.id, parsed["start_offset"], parsed["end_offset"])
+        if key in seen_mentions:
+            continue
+        seen_mentions.add(key)
+        db.add(LogbookLocationMention(
+            id=str(uuid.uuid4()),
+            entry_id=entry.id,
+            location_id=location.id,
+            surface_text=parsed["surface_text"],
+            start_offset=parsed["start_offset"],
+            end_offset=parsed["end_offset"],
+            source="location",
+            confidence=100,
+        ))
+        mentioned_locations.append(location)
+    return mentioned_locations
+
+
+def _rebuild_entry_links(db, owner: str, entry: LogbookEntry) -> None:
+    _rebuild_mentions(db, owner, entry)
+    _rebuild_location_mentions(db, owner, entry)
+
+
 def _apply_entry_fields(entry: LogbookEntry, body: BaseModel) -> bool:
     content_changed = False
     data = body.dict(exclude_unset=True)
@@ -532,6 +713,7 @@ def _entry_query(db, owner: str):
     return db.query(LogbookEntry).options(
         selectinload(LogbookEntry.datapoints),
         selectinload(LogbookEntry.mentions).selectinload(LogbookMention.person),
+        selectinload(LogbookEntry.location_mentions).selectinload(LogbookLocationMention.location),
     ).filter(LogbookEntry.owner == owner)
 
 
@@ -553,6 +735,17 @@ def _load_person_or_404(db, owner: str, person_id: str) -> LogbookPerson:
     return person
 
 
+def _location_query(db, owner: str):
+    return db.query(LogbookLocation).filter(LogbookLocation.owner == owner)
+
+
+def _load_location_or_404(db, owner: str, location_id: str) -> LogbookLocation:
+    location = _location_query(db, owner).filter(LogbookLocation.id == location_id).first()
+    if not location:
+        raise HTTPException(404, "Location not found")
+    return location
+
+
 def _load_connection_or_404(db, owner: str, connection_id: str) -> LogbookPersonConnection:
     conn = db.query(LogbookPersonConnection).options(
         selectinload(LogbookPersonConnection.person_a),
@@ -564,6 +757,42 @@ def _load_connection_or_404(db, owner: str, connection_id: str) -> LogbookPerson
     if not conn:
         raise HTTPException(404, "Connection not found")
     return conn
+
+
+def _person_stats(db, owner: str) -> Dict[str, Dict[str, Any]]:
+    rows = db.query(
+        LogbookMention.person_id,
+        func.count(LogbookMention.id),
+        func.max(LogbookEntry.entry_date),
+    ).join(LogbookEntry, LogbookMention.entry_id == LogbookEntry.id).filter(
+        LogbookEntry.owner == owner,
+    ).group_by(LogbookMention.person_id).all()
+    return {
+        person_id: {"mention_count": int(count or 0), "last_mentioned": last_date}
+        for person_id, count, last_date in rows
+    }
+
+
+def _location_stats(db, owner: str) -> Dict[str, Dict[str, Any]]:
+    rows = db.query(
+        LogbookLocationMention.location_id,
+        func.count(LogbookLocationMention.id),
+        func.max(LogbookEntry.entry_date),
+    ).join(LogbookEntry, LogbookLocationMention.entry_id == LogbookEntry.id).filter(
+        LogbookEntry.owner == owner,
+    ).group_by(LogbookLocationMention.location_id).all()
+    return {
+        location_id: {"mention_count": int(count or 0), "last_mentioned": last_date}
+        for location_id, count, last_date in rows
+    }
+
+
+def _with_stats(data: Dict[str, Any], stats: Dict[str, Any]) -> Dict[str, Any]:
+    data.update({
+        "mention_count": int(stats.get("mention_count") or 0),
+        "last_mentioned": stats.get("last_mentioned"),
+    })
+    return data
 
 
 def _extract_json_object(text: str) -> Dict[str, Any]:
@@ -613,7 +842,24 @@ def _deterministic_ai_suggestions(content: str) -> Dict[str, Any]:
             "confidence": 65,
             "evidence": _entry_snippet(content),
         })
-    return {"people_suggestions": people, "connection_suggestions": connections}
+    locations = []
+    seen_locations = set()
+    for mention in _parse_locations(content or ""):
+        canonical = _canonical_name(mention["name"])
+        if canonical in seen_locations:
+            continue
+        seen_locations.add(canonical)
+        locations.append({
+            "display_name": mention["name"],
+            "surface_text": mention["surface_text"],
+            "confidence": 95,
+            "reason": "Explicit #location",
+        })
+    return {
+        "people_suggestions": people,
+        "location_suggestions": locations,
+        "connection_suggestions": connections,
+    }
 
 
 def _normalize_ai_payload(mode: str, raw: Dict[str, Any], content: str) -> Dict[str, Any]:
@@ -626,6 +872,7 @@ def _normalize_ai_payload(mode: str, raw: Dict[str, Any], content: str) -> Dict[
         "mood_suggestion": raw.get("mood_suggestion") if isinstance(raw.get("mood_suggestion"), dict) else None,
         "datapoint_suggestions": raw.get("datapoint_suggestions") if isinstance(raw.get("datapoint_suggestions"), list) else [],
         "people_suggestions": raw.get("people_suggestions") if isinstance(raw.get("people_suggestions"), list) else [],
+        "location_suggestions": raw.get("location_suggestions") if isinstance(raw.get("location_suggestions"), list) else [],
         "connection_suggestions": raw.get("connection_suggestions") if isinstance(raw.get("connection_suggestions"), list) else [],
         "reflection": raw.get("reflection"),
     }
@@ -641,6 +888,10 @@ def _normalize_ai_payload(mode: str, raw: Dict[str, Any], content: str) -> Dict[
     for person in deterministic["people_suggestions"]:
         if _canonical_name(person["display_name"]) not in seen_people:
             out["people_suggestions"].append(person)
+    seen_locations = {_canonical_name(l.get("display_name", "")) for l in out["location_suggestions"] if isinstance(l, dict)}
+    for location in deterministic["location_suggestions"]:
+        if _canonical_name(location["display_name"]) not in seen_locations:
+            out["location_suggestions"].append(location)
     if not out["connection_suggestions"]:
         out["connection_suggestions"] = deterministic["connection_suggestions"]
     return out
@@ -654,11 +905,12 @@ def _ai_system_prompt(mode: str, locale: str) -> str:
         "For structure_day, turn messy notes into a readable daily log without inventing facts. "
         "For ask_questions, ask at most three short questions that can be answered in a few words. "
         "For reflect, give a gentle reflection, not therapy or medical advice. "
-        "For people and connections, use only evidence from the supplied logbook text. "
+        "For people, locations, and connections, use only evidence from the supplied logbook text. "
+        "Locations are places such as home, gym, office, city, route, venue, or clinic. "
         "Connections are possible suggestions, not facts, unless the user accepts them. "
         f"Locale: {locale}. Mode: {mode}. "
         "Return strict JSON only with keys: ok, mode, preview_content, summary, questions, mood_suggestion, "
-        "datapoint_suggestions, people_suggestions, connection_suggestions, reflection. "
+        "datapoint_suggestions, people_suggestions, location_suggestions, connection_suggestions, reflection. "
         "connection_suggestions items must include person_a, person_b, connection_type, description, confidence, evidence."
     )
 
@@ -790,7 +1042,9 @@ def setup_logbook_routes() -> APIRouter:
         end: Optional[str] = None,
         q: Optional[str] = None,
         person_id: Optional[str] = None,
+        location_id: Optional[str] = None,
         mood: Optional[str] = None,
+        datapoint_key: Optional[str] = None,
     ):
         owner = _owner(request)
         if start:
@@ -815,6 +1069,12 @@ def setup_logbook_routes() -> APIRouter:
                 query = query.filter(LogbookEntry.mood_label == mood)
             if person_id:
                 query = query.join(LogbookMention, LogbookMention.entry_id == LogbookEntry.id).filter(LogbookMention.person_id == person_id)
+            if location_id:
+                query = query.join(LogbookLocationMention, LogbookLocationMention.entry_id == LogbookEntry.id).filter(LogbookLocationMention.location_id == location_id)
+            if datapoint_key:
+                query = query.join(LogbookDataPoint, LogbookDataPoint.entry_id == LogbookEntry.id).filter(LogbookDataPoint.key == _clean_key(datapoint_key))
+            if person_id or location_id or datapoint_key:
+                query = query.distinct()
             entries = query.order_by(LogbookEntry.entry_date.desc(), LogbookEntry.updated_at.desc()).all()
             return {"entries": [_entry_to_dict(entry, full=False) for entry in entries]}
         finally:
@@ -856,8 +1116,8 @@ def setup_logbook_routes() -> APIRouter:
             content_changed = _apply_entry_fields(entry, body)
             if body.datapoints is not None:
                 _replace_datapoints(db, entry, body.datapoints)
-            if content_changed or not entry.mentions:
-                _rebuild_mentions(db, owner, entry)
+            if content_changed or not entry.mentions or not entry.location_mentions:
+                _rebuild_entry_links(db, owner, entry)
             db.commit()
             entry = _entry_query(db, owner).filter(LogbookEntry.id == entry.id).first()
             return _entry_to_dict(entry)
@@ -877,7 +1137,7 @@ def setup_logbook_routes() -> APIRouter:
             if body.datapoints is not None:
                 _replace_datapoints(db, entry, body.datapoints)
             if content_changed:
-                _rebuild_mentions(db, owner, entry)
+                _rebuild_entry_links(db, owner, entry)
             db.commit()
             entry = _entry_query(db, owner).filter(LogbookEntry.id == entry_id).first()
             return _entry_to_dict(entry)
@@ -902,6 +1162,7 @@ def setup_logbook_routes() -> APIRouter:
         db = SessionLocal()
         try:
             people = _person_query(db, owner).all()
+            stats = _person_stats(db, owner)
             term = _canonical_name(q or "")
             if term:
                 people = [
@@ -916,7 +1177,7 @@ def setup_logbook_routes() -> APIRouter:
                 prefix = person.canonical_name.startswith(term) or any(a.startswith(term) for a in aliases)
                 return (0 if exact else 1 if prefix else 2, person.display_name.lower())
             people.sort(key=score)
-            return {"people": [_person_to_dict(p) for p in people]}
+            return {"people": [_with_stats(_person_to_dict(p), stats.get(p.id, {})) for p in people]}
         finally:
             db.close()
 
@@ -1019,6 +1280,91 @@ def setup_logbook_routes() -> APIRouter:
             db.delete(source)
             db.commit()
             return {"ok": True, "person": _person_to_dict(target)}
+        finally:
+            db.close()
+
+    @router.get("/locations")
+    def list_locations(request: Request, q: Optional[str] = None):
+        owner = _owner(request)
+        db = SessionLocal()
+        try:
+            locations = _location_query(db, owner).all()
+            stats = _location_stats(db, owner)
+            term = _canonical_name(q or "")
+            if term:
+                locations = [
+                    loc for loc in locations
+                    if term in loc.canonical_name or any(term in _canonical_name(a) for a in _aliases(loc))
+                ]
+            def score(location: LogbookLocation):
+                if not term:
+                    return (1, location.display_name.lower())
+                aliases = [_canonical_name(a) for a in _aliases(location)]
+                exact = location.canonical_name == term or term in aliases
+                prefix = location.canonical_name.startswith(term) or any(a.startswith(term) for a in aliases)
+                return (0 if exact else 1 if prefix else 2, location.display_name.lower())
+            locations.sort(key=score)
+            return {"locations": [_with_stats(_location_to_dict(loc), stats.get(loc.id, {})) for loc in locations]}
+        finally:
+            db.close()
+
+    @router.post("/locations")
+    def create_location(request: Request, body: LogbookLocationCreate):
+        owner = _owner(request)
+        db = SessionLocal()
+        try:
+            existing = _find_location(db, owner, body.display_name)
+            location = _get_or_create_location(db, owner, body.display_name, body.aliases, body.notes, update_existing=not existing)
+            db.commit()
+            return {"ok": True, "duplicate": bool(existing), "location": _location_to_dict(location)}
+        finally:
+            db.close()
+
+    @router.put("/locations/{location_id}")
+    def update_location(request: Request, location_id: str, body: LogbookLocationUpdate):
+        owner = _owner(request)
+        db = SessionLocal()
+        try:
+            location = _load_location_or_404(db, owner, location_id)
+            if body.display_name is not None:
+                canonical = _canonical_name(body.display_name)
+                if not canonical:
+                    raise HTTPException(400, "display_name is required")
+                duplicate = _location_query(db, owner).filter(
+                    LogbookLocation.canonical_name == canonical,
+                    LogbookLocation.id != location.id,
+                ).first()
+                if duplicate:
+                    raise HTTPException(409, "A location with that name already exists")
+                location.display_name = body.display_name.strip()
+                location.canonical_name = canonical
+            if body.aliases is not None:
+                aliases = [a.strip() for a in body.aliases if str(a).strip()]
+                location.aliases = json.dumps(aliases, ensure_ascii=False) if aliases else None
+            if body.notes is not None:
+                location.notes = body.notes
+            db.commit()
+            return {"ok": True, "location": _location_to_dict(location)}
+        finally:
+            db.close()
+
+    @router.post("/locations/merge")
+    def merge_locations(request: Request, body: LogbookLocationsMerge):
+        owner = _owner(request)
+        if body.source_location_id == body.target_location_id:
+            raise HTTPException(400, "Choose two different locations")
+        db = SessionLocal()
+        try:
+            source = _load_location_or_404(db, owner, body.source_location_id)
+            target = _load_location_or_404(db, owner, body.target_location_id)
+            db.query(LogbookLocationMention).filter(LogbookLocationMention.location_id == source.id).update(
+                {LogbookLocationMention.location_id: target.id},
+                synchronize_session=False,
+            )
+            _merge_location_aliases(target, [source.display_name] + _aliases(source))
+            db.delete(source)
+            db.commit()
+            return {"ok": True, "location": _location_to_dict(target)}
         finally:
             db.close()
 

@@ -37255,7 +37255,7 @@ body.theme-frosted .modal {
 
 .logbook-side {
   display: grid;
-  grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-rows: minmax(0, .9fr) minmax(0, 1fr) minmax(0, .9fr);
   gap: 10px;
 }
 
@@ -37267,6 +37267,7 @@ body.theme-frosted .modal {
 .logbook-nav-actions,
 .logbook-chip-row,
 .logbook-quick-row,
+.logbook-directory-tools,
 .logbook-ai-buttons,
 .logbook-preview-actions,
 .logbook-connection-actions {
@@ -37280,11 +37281,29 @@ body.theme-frosted .modal {
 }
 
 .logbook-select,
-#logbook-entry-search {
+#logbook-entry-search,
+#logbook-data-filter {
   width: 100%;
   min-height: 32px;
   margin-bottom: 8px;
   box-sizing: border-box;
+}
+
+.logbook-directory-tools {
+  margin-top: 8px;
+  align-items: center;
+}
+
+.logbook-directory-tools .memory-search-input {
+  flex: 1 1 130px;
+  min-width: 0;
+  margin: 0;
+}
+
+.logbook-directory-tools .logbook-select {
+  flex: 0 0 104px;
+  width: auto;
+  margin: 0;
 }
 
 .logbook-recent-title,
@@ -37575,6 +37594,59 @@ body.theme-frosted .modal {
   gap: 6px;
 }
 
+.logbook-directory-list {
+  display: grid;
+  gap: 6px;
+  max-height: 220px;
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.logbook-directory-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 30px;
+  gap: 6px;
+  align-items: stretch;
+}
+
+.logbook-directory-row.active .logbook-directory-main {
+  border-color: var(--accent, var(--red));
+  background: color-mix(in srgb, var(--accent, var(--red)) 12%, transparent);
+}
+
+.logbook-directory-main {
+  min-width: 0;
+  min-height: 34px;
+  display: grid;
+  gap: 2px;
+  align-content: center;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg);
+  padding: 5px 8px;
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+}
+
+.logbook-directory-main:hover {
+  background: color-mix(in srgb, var(--fg) 7%, transparent);
+}
+
+.logbook-directory-main strong,
+.logbook-directory-main span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.logbook-directory-main span {
+  font-size: 11px;
+  opacity: 0.68;
+}
+
 .logbook-person-row {
   min-height: 30px;
   border: 1px solid var(--border);
@@ -37655,11 +37727,13 @@ body.theme-frosted .modal {
   .logbook-body[data-active-tab="mood"] [data-mobile-section="mood"],
   .logbook-body[data-active-tab="data"] [data-mobile-section="data"],
   .logbook-body[data-active-tab="people"] [data-mobile-section="people"],
+  .logbook-body[data-active-tab="places"] [data-mobile-section="places"],
   .logbook-body[data-active-tab="ai"] [data-mobile-section="ai"] {
     display: block;
   }
 
   .logbook-body[data-active-tab="people"] .logbook-side,
+  .logbook-body[data-active-tab="places"] .logbook-side,
   .logbook-body[data-active-tab="ai"] .logbook-side {
     display: block;
   }
@@ -37685,6 +37759,10 @@ body.theme-frosted .modal {
 
   .logbook-panel {
     height: 100%;
+  }
+
+  .logbook-directory-list {
+    max-height: none;
   }
 
   .logbook-content {

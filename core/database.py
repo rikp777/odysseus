@@ -1025,6 +1025,25 @@ def _migrate_logbook_schema():
             "confidence": "INTEGER",
             "created_at": "DATETIME",
         },
+        "logbook_locations": {
+            "owner": "TEXT",
+            "display_name": "TEXT",
+            "canonical_name": "TEXT",
+            "aliases": "TEXT",
+            "notes": "TEXT",
+            "created_at": "DATETIME",
+            "updated_at": "DATETIME",
+        },
+        "logbook_location_mentions": {
+            "entry_id": "TEXT",
+            "location_id": "TEXT",
+            "surface_text": "TEXT",
+            "start_offset": "INTEGER",
+            "end_offset": "INTEGER",
+            "source": "TEXT DEFAULT 'location'",
+            "confidence": "INTEGER",
+            "created_at": "DATETIME",
+        },
         "logbook_person_connections": {
             "owner": "TEXT",
             "person_a_id": "TEXT",
@@ -1053,6 +1072,13 @@ def _migrate_logbook_schema():
         "CREATE INDEX IF NOT EXISTS ix_logbook_mentions_entry_id ON logbook_mentions(entry_id)",
         "CREATE INDEX IF NOT EXISTS ix_logbook_mentions_person_id ON logbook_mentions(person_id)",
         "CREATE INDEX IF NOT EXISTS ix_logbook_mentions_entry_person ON logbook_mentions(entry_id, person_id)",
+        "CREATE INDEX IF NOT EXISTS ix_logbook_locations_owner ON logbook_locations(owner)",
+        "CREATE INDEX IF NOT EXISTS ix_logbook_locations_canonical_name ON logbook_locations(canonical_name)",
+        "CREATE INDEX IF NOT EXISTS ix_logbook_locations_owner_canonical ON logbook_locations(owner, canonical_name)",
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_logbook_locations_owner_canonical ON logbook_locations(owner, canonical_name)",
+        "CREATE INDEX IF NOT EXISTS ix_logbook_location_mentions_entry_id ON logbook_location_mentions(entry_id)",
+        "CREATE INDEX IF NOT EXISTS ix_logbook_location_mentions_location_id ON logbook_location_mentions(location_id)",
+        "CREATE INDEX IF NOT EXISTS ix_logbook_location_mentions_entry_location ON logbook_location_mentions(entry_id, location_id)",
         "CREATE INDEX IF NOT EXISTS ix_logbook_person_connections_owner ON logbook_person_connections(owner)",
         "CREATE INDEX IF NOT EXISTS ix_logbook_connections_owner_status ON logbook_person_connections(owner, status)",
         "CREATE INDEX IF NOT EXISTS ix_logbook_connections_pair ON logbook_person_connections(person_a_id, person_b_id)",
@@ -1243,6 +1269,7 @@ def _migrate_assign_legacy_owner():
             "gallery_albums", "gallery_people", "user_tool_data",
             "api_tokens", "webhooks", "logbook_entries",
             "logbook_people", "logbook_person_connections",
+            "logbook_locations",
         ]
         for table in tables:
             try:
@@ -1593,6 +1620,7 @@ class LogbookEntry(TimestampMixin, Base):
 
     datapoints = relationship("LogbookDataPoint", back_populates="entry", cascade="all, delete-orphan", order_by="LogbookDataPoint.sort_order")
     mentions = relationship("LogbookMention", back_populates="entry", cascade="all, delete-orphan")
+    location_mentions = relationship("LogbookLocationMention", back_populates="entry", cascade="all, delete-orphan")
 
     __table_args__ = (
         UniqueConstraint("owner", "entry_date", name="uq_logbook_entries_owner_date"),
@@ -1655,6 +1683,47 @@ class LogbookMention(Base):
 
     __table_args__ = (
         Index("ix_logbook_mentions_entry_person", "entry_id", "person_id"),
+    )
+
+
+class LogbookLocation(TimestampMixin, Base):
+    """A place/location mentioned in daily logbook entries."""
+    __tablename__ = "logbook_locations"
+
+    id             = Column(String, primary_key=True, index=True)
+    owner          = Column(String, nullable=True, index=True)
+    display_name   = Column(String, nullable=False)
+    canonical_name = Column(String, nullable=False, index=True)
+    aliases        = Column(Text, nullable=True)
+    notes          = Column(Text, nullable=True)
+
+    mentions = relationship("LogbookLocationMention", back_populates="location", cascade="all, delete-orphan")
+
+    __table_args__ = (
+        UniqueConstraint("owner", "canonical_name", name="uq_logbook_locations_owner_canonical"),
+        Index("ix_logbook_locations_owner_canonical", "owner", "canonical_name"),
+    )
+
+
+class LogbookLocationMention(Base):
+    """A linked location mention in one logbook entry."""
+    __tablename__ = "logbook_location_mentions"
+
+    id           = Column(String, primary_key=True, index=True)
+    entry_id     = Column(String, ForeignKey("logbook_entries.id", ondelete="CASCADE"), nullable=False, index=True)
+    location_id  = Column(String, ForeignKey("logbook_locations.id", ondelete="CASCADE"), nullable=False, index=True)
+    surface_text = Column(String, nullable=False)
+    start_offset = Column(Integer, nullable=True)
+    end_offset   = Column(Integer, nullable=True)
+    source       = Column(String, nullable=False, default="location")
+    confidence   = Column(Integer, nullable=True)
+    created_at   = Column(DateTime, default=utcnow_naive, nullable=False)
+
+    entry = relationship("LogbookEntry", back_populates="location_mentions")
+    location = relationship("LogbookLocation", back_populates="mentions")
+
+    __table_args__ = (
+        Index("ix_logbook_location_mentions_entry_location", "entry_id", "location_id"),
     )
 
 

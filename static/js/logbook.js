@@ -4,6 +4,8 @@
 
 import uiModule from './ui.js';
 import * as Modals from './modalManager.js';
+import { makeWindowDraggable } from './windowDrag.js';
+import { applyEdgeDock } from './modalSnap.js';
 
 const API_BASE = window.location.origin;
 const MODAL_ID = 'logbook-modal';
@@ -35,6 +37,7 @@ let _date = _today();
 let _entry = null;
 let _entries = [];
 let _people = [];
+let _locations = [];
 let _connections = [];
 let _saveTimer = null;
 let _dirty = false;
@@ -46,7 +49,14 @@ let _aiBusy = false;
 let _aiError = '';
 let _search = '';
 let _filterPerson = '';
+let _filterLocation = '';
 let _filterMood = '';
+let _filterDataKey = '';
+let _windowRect = null;
+let _peopleSearch = '';
+let _locationSearch = '';
+let _peopleSort = 'recent';
+let _locationSort = 'recent';
 
 function _e(value) {
   return String(value ?? '').replace(/[&<>"']/g, ch => ({
@@ -155,8 +165,9 @@ async function _saveNow({ silent = false } = {}) {
     _entry = saved;
     _dirty = false;
     _setStatus('Saved');
-    await Promise.all([_loadPeople(), _loadConnections(), _loadEntries()]);
+    await Promise.all([_loadPeople(), _loadLocations(), _loadConnections(), _loadEntries()]);
     _renderPeoplePanel();
+    _renderLocationsPanel();
     _renderNavigator();
     if (!silent) uiModule?.showToast?.('Saved');
   } catch (err) {
@@ -173,6 +184,8 @@ async function _loadEntry(date) {
   if (!_entry.datapoints) _entry.datapoints = [];
   if (!_entry.people) _entry.people = [];
   if (!_entry.mentions) _entry.mentions = [];
+  if (!_entry.locations) _entry.locations = [];
+  if (!_entry.location_mentions) _entry.location_mentions = [];
   _dirty = false;
   _setStatus('Saved');
 }
@@ -183,7 +196,9 @@ async function _loadEntries() {
   const params = new URLSearchParams({ start, end });
   if (_search.trim()) params.set('q', _search.trim());
   if (_filterPerson) params.set('person_id', _filterPerson);
+  if (_filterLocation) params.set('location_id', _filterLocation);
   if (_filterMood) params.set('mood', _filterMood);
+  if (_filterDataKey.trim()) params.set('datapoint_key', _filterDataKey.trim());
   const data = await _jsonFetch(`${API_BASE}/api/logbook/entries?${params.toString()}`);
   _entries = data.entries || [];
 }
@@ -191,6 +206,11 @@ async function _loadEntries() {
 async function _loadPeople() {
   const data = await _jsonFetch(`${API_BASE}/api/logbook/people`);
   _people = data.people || [];
+}
+
+async function _loadLocations() {
+  const data = await _jsonFetch(`${API_BASE}/api/logbook/locations`);
+  _locations = data.locations || [];
 }
 
 async function _loadConnections() {
@@ -205,7 +225,7 @@ async function _loadDate(date) {
   _date = date;
   _aiPreview = null;
   _aiError = '';
-  await Promise.all([_loadEntry(_date), _loadPeople(), _loadConnections(), _loadEntries()]);
+  await Promise.all([_loadEntry(_date), _loadPeople(), _loadLocations(), _loadConnections(), _loadEntries()]);
   _render();
 }
 
@@ -216,6 +236,7 @@ function _iconBook(size = 16) {
 function _entryStatus(entry) {
   if (!entry || !entry.exists) return 'empty';
   if (entry.people_count) return 'people';
+  if (entry.location_count) return 'places';
   if (entry.mood_label) return 'mood';
   return 'entry';
 }
@@ -249,8 +270,65 @@ function _renderShell() {
   return modal;
 }
 
+function _captureWindowRect(modal) {
+  if (!modal || window.innerWidth <= 980) return;
+  if (modal.classList.contains('modal-left-docked') || modal.classList.contains('modal-right-docked')) return;
+  const content = modal.querySelector('.logbook-modal-content');
+  if (!content) return;
+  const rect = content.getBoundingClientRect();
+  if (!rect.width || !rect.height) return;
+  _windowRect = {
+    left: rect.left,
+    top: rect.top,
+    width: rect.width,
+    height: rect.height,
+  };
+}
+
+function _restoreWindowRect(modal) {
+  if (!modal || window.innerWidth <= 980) return;
+  const content = modal.querySelector('.logbook-modal-content');
+  if (!content) return;
+  const dockSide = modal.classList.contains('modal-left-docked')
+    ? 'left'
+    : modal.classList.contains('modal-right-docked') ? 'right' : null;
+  if (dockSide) {
+    applyEdgeDock(modal, dockSide);
+    return;
+  }
+  if (!_windowRect) return;
+  const width = Math.min(_windowRect.width, window.innerWidth - 16);
+  const height = Math.min(_windowRect.height, window.innerHeight - 16);
+  const left = Math.max(8, Math.min(_windowRect.left, window.innerWidth - width - 8));
+  const top = Math.max(8, Math.min(_windowRect.top, window.innerHeight - height - 8));
+  content.style.position = 'fixed';
+  content.style.left = `${left}px`;
+  content.style.top = `${top}px`;
+  content.style.width = `${width}px`;
+  content.style.height = `${height}px`;
+  content.style.maxHeight = `${height}px`;
+  content.style.transform = 'none';
+  content.style.margin = '0';
+}
+
+function _wireLogbookWindow(modal) {
+  const content = modal?.querySelector('.logbook-modal-content');
+  const header = modal?.querySelector('.logbook-modal-header');
+  if (!modal || !content || !header) return;
+  _restoreWindowRect(modal);
+  makeWindowDraggable(modal, {
+    content,
+    header,
+    skipSelector: 'button, input, select, textarea, label',
+    mobileSkip: 980,
+    enableDock: true,
+    onDragEnd: () => _captureWindowRect(modal),
+  });
+}
+
 function _render() {
   const modal = _renderShell();
+  _captureWindowRect(modal);
   modal.innerHTML = `
     <div class="modal-content logbook-modal-content" role="dialog" aria-label="Daily Logbook">
       <div class="modal-header logbook-modal-header">
@@ -267,7 +345,7 @@ function _render() {
         <button type="button" class="close-btn" id="logbook-close" aria-label="Close">x</button>
       </div>
       <div class="logbook-mobile-tabs">
-        ${['write', 'mood', 'data', 'people', 'ai'].map(tab => `<button type="button" class="logbook-tab ${_activeTab === tab ? 'active' : ''}" data-logbook-tab="${tab}">${tab === 'ai' ? 'AI' : tab[0].toUpperCase() + tab.slice(1)}</button>`).join('')}
+        ${['write', 'mood', 'data', 'people', 'places', 'ai'].map(tab => `<button type="button" class="logbook-tab ${_activeTab === tab ? 'active' : ''}" data-logbook-tab="${tab}">${tab === 'ai' ? 'AI' : tab[0].toUpperCase() + tab.slice(1)}</button>`).join('')}
       </div>
       <div class="modal-body logbook-body" data-active-tab="${_e(_activeTab)}">
         <aside class="logbook-nav" data-mobile-section="write">
@@ -284,10 +362,14 @@ function _render() {
             ${_peopleHtml()}
             ${_connectionsHtml()}
           </section>
+          <section class="logbook-panel" data-mobile-section="places">
+            ${_locationsHtml()}
+          </section>
         </aside>
       </div>
     </div>
   `;
+  _wireLogbookWindow(modal);
   _bindEvents();
   _renderMentionMenu();
 }
@@ -300,21 +382,34 @@ function _navigatorHtml() {
     </button>
   `).join('') || '<div class="logbook-empty">No entries in this range.</div>';
   const personOptions = _people.map(p => `<option value="${_e(p.id)}" ${_filterPerson === p.id ? 'selected' : ''}>${_e(p.display_name)}</option>`).join('');
+  const locationOptions = _locations.map(l => `<option value="${_e(l.id)}" ${_filterLocation === l.id ? 'selected' : ''}>${_e(l.display_name)}</option>`).join('');
   const moodOptions = MOODS.map(m => `<option value="${_e(m.value)}" ${_filterMood === m.value ? 'selected' : ''}>${_e(m.label)}</option>`).join('');
+  const activeFilters = [
+    _filterPerson ? 'person' : '',
+    _filterLocation ? 'place' : '',
+    _filterMood ? 'mood' : '',
+    _filterDataKey.trim() ? 'data' : '',
+  ].filter(Boolean);
   return `
     <div class="logbook-nav-actions">
       <button type="button" class="cal-btn" data-jump-date="${_e(_today())}">Today</button>
       <button type="button" class="cal-btn" data-jump-date="${_e(_dateAdd(_today(), -1))}">Yesterday</button>
+      ${activeFilters.length ? '<button type="button" class="cal-btn" id="logbook-clear-filters">Clear</button>' : ''}
     </div>
     <input id="logbook-entry-search" class="memory-search-input" placeholder="Search" value="${_e(_search)}">
     <select id="logbook-person-filter" class="logbook-select">
       <option value="">Any person</option>
       ${personOptions}
     </select>
+    <select id="logbook-location-filter" class="logbook-select">
+      <option value="">Any place</option>
+      ${locationOptions}
+    </select>
     <select id="logbook-mood-filter" class="logbook-select">
       <option value="">Any mood</option>
       ${moodOptions}
     </select>
+    <input id="logbook-data-filter" class="memory-search-input" placeholder="Data key" value="${_e(_filterDataKey)}">
     <div class="logbook-recent-title">Recent days</div>
     <div class="logbook-day-list">${rows}</div>
   `;
@@ -375,7 +470,6 @@ function _peopleHtml() {
   const today = todayPeople.length
     ? todayPeople.map(p => `<span class="logbook-person-chip">@${_e(p.display_name)}</span>`).join('')
     : '<div class="logbook-empty">No people mentioned today.</div>';
-  const known = _people.slice(0, 20).map(p => `<button type="button" class="logbook-person-row" data-insert-person="${_e(p.display_name)}">@${_e(p.display_name)}</button>`).join('');
   const suggestions = (_aiPreview?.people_suggestions || []).map(p => `
     <div class="logbook-suggestion-row">
       <strong>${_e(p.display_name || p.surface_text || 'Person')}</strong>
@@ -386,9 +480,125 @@ function _peopleHtml() {
     <div class="logbook-section-head"><h5>People</h5></div>
     <div class="logbook-chip-wrap">${today}</div>
     ${suggestions ? `<div class="logbook-subtitle">Suggested people</div>${suggestions}` : ''}
-    <div class="logbook-subtitle">Known people</div>
-    <div class="logbook-known-people">${known || '<div class="logbook-empty">No known people yet.</div>'}</div>
+    <div class="logbook-directory-tools">
+      <input id="logbook-people-search" class="memory-search-input" placeholder="Find people" value="${_e(_peopleSearch)}">
+      <select id="logbook-people-sort" class="logbook-select">
+        <option value="recent" ${_peopleSort === 'recent' ? 'selected' : ''}>Recent</option>
+        <option value="count" ${_peopleSort === 'count' ? 'selected' : ''}>Most used</option>
+        <option value="name" ${_peopleSort === 'name' ? 'selected' : ''}>Name</option>
+      </select>
+    </div>
+    <div class="logbook-subtitle">All people</div>
+    <div id="logbook-people-list" class="logbook-directory-list">${_peopleRowsHtml()}</div>
   `;
+}
+
+function _peopleRowsHtml() {
+  const people = _visiblePeople();
+  return people.map(p => {
+    const aliases = (p.aliases || []).slice(0, 3).join(', ');
+    const meta = _directoryMeta(p, aliases);
+    const active = _filterPerson === p.id ? ' active' : '';
+    return `
+      <div class="logbook-directory-row${active}">
+        <button type="button" class="logbook-directory-main" data-filter-person="${_e(p.id)}">
+          <strong>@${_e(p.display_name)}</strong>
+          <span>${_e(meta)}</span>
+        </button>
+        <button type="button" class="logbook-icon-btn" data-insert-person="${_e(p.display_name)}" aria-label="Insert">+</button>
+      </div>
+    `;
+  }).join('') || '<div class="logbook-empty">No known people yet.</div>';
+}
+
+function _locationsHtml() {
+  const todayLocations = _entry?.locations || [];
+  const today = todayLocations.length
+    ? todayLocations.map(l => `<span class="logbook-person-chip">#${_e(l.display_name)}</span>`).join('')
+    : '<div class="logbook-empty">No places mentioned today.</div>';
+  const suggestions = (_aiPreview?.location_suggestions || []).map(loc => `
+    <div class="logbook-suggestion-row">
+      <strong>${_e(loc.display_name || loc.surface_text || 'Place')}</strong>
+      <span>${_e(loc.reason || 'Suggested from entry')}</span>
+    </div>
+  `).join('');
+  return `
+    <div class="logbook-section-head"><h5>Places</h5></div>
+    <div class="logbook-chip-wrap">${today}</div>
+    ${suggestions ? `<div class="logbook-subtitle">Suggested places</div>${suggestions}` : ''}
+    <div class="logbook-directory-tools">
+      <input id="logbook-location-new" class="memory-search-input" placeholder="New place">
+      <button type="button" class="cal-btn" id="logbook-create-location">Add</button>
+    </div>
+    <div class="logbook-directory-tools">
+      <input id="logbook-location-search" class="memory-search-input" placeholder="Find places" value="${_e(_locationSearch)}">
+      <select id="logbook-location-sort" class="logbook-select">
+        <option value="recent" ${_locationSort === 'recent' ? 'selected' : ''}>Recent</option>
+        <option value="count" ${_locationSort === 'count' ? 'selected' : ''}>Most used</option>
+        <option value="name" ${_locationSort === 'name' ? 'selected' : ''}>Name</option>
+      </select>
+    </div>
+    <div class="logbook-subtitle">All places</div>
+    <div id="logbook-location-list" class="logbook-directory-list">${_locationRowsHtml()}</div>
+  `;
+}
+
+function _locationRowsHtml() {
+  const locations = _visibleLocations();
+  return locations.map(loc => {
+    const aliases = (loc.aliases || []).slice(0, 3).join(', ');
+    const meta = _directoryMeta(loc, aliases);
+    const active = _filterLocation === loc.id ? ' active' : '';
+    return `
+      <div class="logbook-directory-row${active}">
+        <button type="button" class="logbook-directory-main" data-filter-location="${_e(loc.id)}">
+          <strong>#${_e(loc.display_name)}</strong>
+          <span>${_e(meta)}</span>
+        </button>
+        <button type="button" class="logbook-icon-btn" data-insert-location="${_e(loc.display_name)}" aria-label="Insert">+</button>
+      </div>
+    `;
+  }).join('') || '<div class="logbook-empty">No places yet.</div>';
+}
+
+function _directoryMeta(item, aliases = '') {
+  const count = Number(item.mention_count || 0);
+  const bits = [];
+  bits.push(`${count} ${count === 1 ? 'entry' : 'entries'}`);
+  if (item.last_mentioned) bits.push(`last ${item.last_mentioned}`);
+  if (aliases) bits.push(aliases);
+  return bits.join(' | ');
+}
+
+function _visiblePeople() {
+  const term = _peopleSearch.trim().toLowerCase();
+  const list = _people.filter(p => {
+    if (!term) return true;
+    const names = [p.display_name, ...(p.aliases || [])].map(x => String(x || '').toLowerCase());
+    return names.some(name => name.includes(term));
+  });
+  list.sort((a, b) => _directorySort(a, b, _peopleSort));
+  return list;
+}
+
+function _visibleLocations() {
+  const term = _locationSearch.trim().toLowerCase();
+  const list = _locations.filter(loc => {
+    if (!term) return true;
+    const names = [loc.display_name, ...(loc.aliases || [])].map(x => String(x || '').toLowerCase());
+    return names.some(name => name.includes(term));
+  });
+  list.sort((a, b) => _directorySort(a, b, _locationSort));
+  return list;
+}
+
+function _directorySort(a, b, sort) {
+  if (sort === 'name') return String(a.display_name || '').localeCompare(String(b.display_name || ''));
+  if (sort === 'count') return Number(b.mention_count || 0) - Number(a.mention_count || 0)
+    || String(a.display_name || '').localeCompare(String(b.display_name || ''));
+  return String(b.last_mentioned || '').localeCompare(String(a.last_mentioned || ''))
+    || Number(b.mention_count || 0) - Number(a.mention_count || 0)
+    || String(a.display_name || '').localeCompare(String(b.display_name || ''));
 }
 
 function _connectionsHtml() {
@@ -425,6 +635,7 @@ function _aiHtml() {
       <button type="button" class="cal-btn" data-ai-mode="clean_spelling">Clean spelling</button>
       <button type="button" class="cal-btn" data-ai-mode="ask_questions">Ask 3 questions</button>
       <button type="button" class="cal-btn" data-ai-mode="extract_people">Extract people</button>
+      <button type="button" class="cal-btn" data-ai-mode="extract_locations">Extract places</button>
       <button type="button" class="cal-btn" data-ai-mode="summarize">Summarize</button>
       <button type="button" class="cal-btn" data-ai-mode="reflect">Reflect</button>
       <button type="button" class="cal-btn" id="logbook-analyze-entry">Analyze saved</button>
@@ -444,6 +655,12 @@ function _aiPreviewHtml() {
       <span>${_e(d.value_text || d.value_number || '')}${d.unit ? ` ${_e(d.unit)}` : ''}</span>
     </div>
   `).join('');
+  const locations = (p.location_suggestions || []).map(loc => `
+    <div class="logbook-suggestion-row">
+      <strong>${_e(loc.display_name || loc.surface_text || 'Place')}</strong>
+      <span>${_e(loc.reason || 'Suggested from entry')}</span>
+    </div>
+  `).join('');
   const connections = (p.connection_suggestions || []).map(c => `
     <div class="logbook-suggestion-row">
       <strong>${_e(c.person_a || 'Person')} + ${_e(c.person_b || 'Person')}</strong>
@@ -457,6 +674,7 @@ function _aiPreviewHtml() {
     ${questions ? `<div class="logbook-preview-block"><div class="logbook-subtitle">Questions</div><ul>${questions}</ul></div>` : ''}
     ${p.mood_suggestion ? `<div class="logbook-preview-block"><div class="logbook-subtitle">Mood</div><p>${_e(p.mood_suggestion.label || '')} ${p.mood_suggestion.score ? `(${_e(p.mood_suggestion.score)})` : ''}</p><button type="button" class="cal-btn" id="logbook-apply-ai-mood">Use mood</button></div>` : ''}
     ${data ? `<div class="logbook-preview-block"><div class="logbook-subtitle">Data suggestions</div>${data}<button type="button" class="cal-btn" id="logbook-add-ai-data">Add data</button></div>` : ''}
+    ${locations ? `<div class="logbook-preview-block"><div class="logbook-subtitle">Place suggestions</div>${locations}</div>` : ''}
     ${connections ? `<div class="logbook-preview-block"><div class="logbook-subtitle">Connection suggestions</div>${connections}</div>` : ''}
     <div class="logbook-preview-actions">
       ${p.preview_content ? '<button type="button" class="cal-btn cal-btn-primary" id="logbook-apply-ai">Apply</button>' : ''}
@@ -487,6 +705,13 @@ function _bindEvents() {
   });
   document.querySelectorAll('[data-date]').forEach(btn => {
     btn.addEventListener('click', () => _loadDate(btn.dataset.date).catch(_showError));
+  });
+  document.getElementById('logbook-clear-filters')?.addEventListener('click', () => {
+    _filterPerson = '';
+    _filterLocation = '';
+    _filterMood = '';
+    _filterDataKey = '';
+    _loadEntries().then(_renderNavigator).catch(_showError);
   });
 
   const title = document.getElementById('logbook-title-input');
@@ -577,14 +802,25 @@ function _bindEvents() {
     _filterPerson = e.target.value;
     _loadEntries().then(_renderNavigator).catch(_showError);
   });
+  document.getElementById('logbook-location-filter')?.addEventListener('change', e => {
+    _filterLocation = e.target.value;
+    _loadEntries().then(_renderNavigator).catch(_showError);
+  });
   document.getElementById('logbook-mood-filter')?.addEventListener('change', e => {
     _filterMood = e.target.value;
     _loadEntries().then(_renderNavigator).catch(_showError);
   });
-
-  document.querySelectorAll('[data-insert-person]').forEach(btn => {
-    btn.addEventListener('click', () => _insertMention(btn.dataset.insertPerson));
+  const dataFilter = document.getElementById('logbook-data-filter');
+  dataFilter?.addEventListener('input', () => {
+    _filterDataKey = dataFilter.value;
+    clearTimeout(dataFilter._timer);
+    dataFilter._timer = setTimeout(() => _loadEntries().then(_renderNavigator).catch(_showError), 250);
   });
+
+  _bindPeopleRowEvents();
+  _bindLocationRowEvents();
+  _bindPeopleDirectoryEvents();
+  _bindLocationDirectoryEvents();
   document.querySelectorAll('[data-ai-mode]').forEach(btn => {
     btn.addEventListener('click', () => _runAI(btn.dataset.aiMode).catch(_showError));
   });
@@ -613,6 +849,13 @@ function _bindNavigatorEvents() {
   document.querySelectorAll('.logbook-nav [data-date]').forEach(btn => {
     btn.addEventListener('click', () => _loadDate(btn.dataset.date).catch(_showError));
   });
+  document.getElementById('logbook-clear-filters')?.addEventListener('click', () => {
+    _filterPerson = '';
+    _filterLocation = '';
+    _filterMood = '';
+    _filterDataKey = '';
+    _loadEntries().then(_renderNavigator).catch(_showError);
+  });
   const search = document.getElementById('logbook-entry-search');
   search?.addEventListener('input', () => {
     _search = search.value;
@@ -623,9 +866,19 @@ function _bindNavigatorEvents() {
     _filterPerson = e.target.value;
     _loadEntries().then(_renderNavigator).catch(_showError);
   });
+  document.getElementById('logbook-location-filter')?.addEventListener('change', e => {
+    _filterLocation = e.target.value;
+    _loadEntries().then(_renderNavigator).catch(_showError);
+  });
   document.getElementById('logbook-mood-filter')?.addEventListener('change', e => {
     _filterMood = e.target.value;
     _loadEntries().then(_renderNavigator).catch(_showError);
+  });
+  const dataFilter = document.getElementById('logbook-data-filter');
+  dataFilter?.addEventListener('input', () => {
+    _filterDataKey = dataFilter.value;
+    clearTimeout(dataFilter._timer);
+    dataFilter._timer = setTimeout(() => _loadEntries().then(_renderNavigator).catch(_showError), 250);
   });
 }
 
@@ -663,15 +916,84 @@ function _bindDataEvents() {
 }
 
 function _bindPeoplePanelEvents() {
-  document.querySelectorAll('[data-insert-person]').forEach(btn => {
-    btn.addEventListener('click', () => _insertMention(btn.dataset.insertPerson));
-  });
+  _bindPeopleRowEvents();
   document.querySelectorAll('[data-accept-connection]').forEach(btn => {
     btn.addEventListener('click', () => _connectionAction(btn.dataset.acceptConnection, 'accept').catch(_showError));
   });
   document.querySelectorAll('[data-hide-connection]').forEach(btn => {
     btn.addEventListener('click', () => _connectionAction(btn.dataset.hideConnection, 'hide').catch(_showError));
   });
+  _bindPeopleDirectoryEvents();
+}
+
+function _bindLocationsPanelEvents() {
+  _bindLocationRowEvents();
+  _bindLocationDirectoryEvents();
+}
+
+function _bindPeopleRowEvents() {
+  document.querySelectorAll('[data-insert-person]').forEach(btn => {
+    btn.addEventListener('click', () => _insertMention(btn.dataset.insertPerson));
+  });
+  document.querySelectorAll('[data-filter-person]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      _filterPerson = btn.dataset.filterPerson || '';
+      _loadEntries().then(_renderNavigator).catch(_showError);
+    });
+  });
+}
+
+function _bindLocationRowEvents() {
+  document.querySelectorAll('[data-insert-location]').forEach(btn => {
+    btn.addEventListener('click', () => _insertLocation(btn.dataset.insertLocation));
+  });
+  document.querySelectorAll('[data-filter-location]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      _filterLocation = btn.dataset.filterLocation || '';
+      _loadEntries().then(_renderNavigator).catch(_showError);
+    });
+  });
+}
+
+function _bindPeopleDirectoryEvents() {
+  const peopleSearch = document.getElementById('logbook-people-search');
+  peopleSearch?.addEventListener('input', () => {
+    _peopleSearch = peopleSearch.value;
+    const list = document.getElementById('logbook-people-list');
+    if (list) {
+      list.innerHTML = _peopleRowsHtml();
+      _bindPeopleRowEvents();
+    }
+  });
+  document.getElementById('logbook-people-sort')?.addEventListener('change', e => {
+    _peopleSort = e.target.value || 'recent';
+    const list = document.getElementById('logbook-people-list');
+    if (list) {
+      list.innerHTML = _peopleRowsHtml();
+      _bindPeopleRowEvents();
+    }
+  });
+}
+
+function _bindLocationDirectoryEvents() {
+  const locationSearch = document.getElementById('logbook-location-search');
+  locationSearch?.addEventListener('input', () => {
+    _locationSearch = locationSearch.value;
+    const list = document.getElementById('logbook-location-list');
+    if (list) {
+      list.innerHTML = _locationRowsHtml();
+      _bindLocationRowEvents();
+    }
+  });
+  document.getElementById('logbook-location-sort')?.addEventListener('change', e => {
+    _locationSort = e.target.value || 'recent';
+    const list = document.getElementById('logbook-location-list');
+    if (list) {
+      list.innerHTML = _locationRowsHtml();
+      _bindLocationRowEvents();
+    }
+  });
+  document.getElementById('logbook-create-location')?.addEventListener('click', () => _createLocation().catch(_showError));
 }
 
 function _renderPeoplePanel() {
@@ -679,6 +1001,13 @@ function _renderPeoplePanel() {
   if (!panel) return;
   panel.innerHTML = `${_peopleHtml()}${_connectionsHtml()}`;
   _bindPeoplePanelEvents();
+}
+
+function _renderLocationsPanel() {
+  const panel = document.querySelector('.logbook-panel[data-mobile-section="places"]');
+  if (!panel) return;
+  panel.innerHTML = _locationsHtml();
+  _bindLocationsPanelEvents();
 }
 
 function _renderNavigator() {
@@ -725,28 +1054,52 @@ function _mentionContext() {
   };
 }
 
+function _locationContext() {
+  const ta = document.getElementById('logbook-content');
+  if (!ta) return null;
+  const pos = ta.selectionStart ?? 0;
+  const before = ta.value.slice(0, pos);
+  const match = before.match(/(^|[\s(])#([A-Za-z0-9_-]{0,40})$/);
+  if (!match) return null;
+  return {
+    textarea: ta,
+    start: pos - match[2].length - 1,
+    end: pos,
+    query: match[2].toLowerCase(),
+  };
+}
+
 function _renderMentionMenu() {
   const menu = document.getElementById('logbook-mention-menu');
   const ctx = _mentionContext();
-  if (!menu || !ctx) {
+  const locCtx = ctx ? null : _locationContext();
+  if (!menu || (!ctx && !locCtx)) {
     _hideMentionMenu();
     return;
   }
-  const query = ctx.query;
-  const matches = _people.filter(p => {
-    const names = [p.display_name, ...(p.aliases || [])].map(x => String(x || '').toLowerCase());
-    return !query || names.some(name => name.startsWith(query) || name.includes(query));
-  }).slice(0, 8);
+  const query = (ctx || locCtx).query;
+  const matches = ctx
+    ? _people.filter(p => {
+        const names = [p.display_name, ...(p.aliases || [])].map(x => String(x || '').toLowerCase());
+        return !query || names.some(name => name.startsWith(query) || name.includes(query));
+      }).slice(0, 8)
+    : _locations.filter(loc => {
+        const names = [loc.display_name, ...(loc.aliases || [])].map(x => String(x || '').toLowerCase());
+        return !query || names.some(name => name.startsWith(query) || name.includes(query));
+      }).slice(0, 8);
   if (!matches.length) {
     _hideMentionMenu();
     return;
   }
   menu.classList.remove('hidden');
-  menu.innerHTML = matches.map(p => `<button type="button" data-mention-person="${_e(p.display_name)}">@${_e(p.display_name)}</button>`).join('');
-  menu.querySelectorAll('[data-mention-person]').forEach(btn => {
+  menu.innerHTML = ctx
+    ? matches.map(p => `<button type="button" data-mention-person="${_e(p.display_name)}">@${_e(p.display_name)}</button>`).join('')
+    : matches.map(loc => `<button type="button" data-mention-location="${_e(loc.display_name)}">#${_e(loc.display_name)}</button>`).join('');
+  menu.querySelectorAll('[data-mention-person], [data-mention-location]').forEach(btn => {
     btn.addEventListener('mousedown', e => {
       e.preventDefault();
-      _replaceMention(ctx, btn.dataset.mentionPerson);
+      if (btn.dataset.mentionPerson) _replaceMention(ctx, btn.dataset.mentionPerson);
+      else _replaceLocation(locCtx, btn.dataset.mentionLocation);
     });
   });
 }
@@ -760,9 +1113,25 @@ function _mentionText(name) {
   return /\s/.test(name) ? `@[${name}]` : `@${name}`;
 }
 
+function _locationText(name) {
+  return /\s/.test(name) ? `#[${name}]` : `#${name}`;
+}
+
 function _replaceMention(ctx, name) {
   const ta = ctx.textarea;
   const text = _mentionText(name);
+  ta.value = ta.value.slice(0, ctx.start) + text + ' ' + ta.value.slice(ctx.end);
+  const pos = ctx.start + text.length + 1;
+  ta.focus();
+  ta.setSelectionRange(pos, pos);
+  _entry.content = ta.value;
+  _markDirty();
+  _hideMentionMenu();
+}
+
+function _replaceLocation(ctx, name) {
+  const ta = ctx.textarea;
+  const text = _locationText(name);
   ta.value = ta.value.slice(0, ctx.start) + text + ' ' + ta.value.slice(ctx.end);
   const pos = ctx.start + text.length + 1;
   ta.focus();
@@ -783,6 +1152,33 @@ function _insertMention(name) {
   ta.setSelectionRange(next, next);
   _entry.content = ta.value;
   _markDirty();
+}
+
+function _insertLocation(name) {
+  const ta = document.getElementById('logbook-content');
+  if (!ta || !name) return;
+  const insert = `${ta.value && !/\s$/.test(ta.value) ? ' ' : ''}${_locationText(name)} `;
+  const pos = ta.selectionStart ?? ta.value.length;
+  ta.value = ta.value.slice(0, pos) + insert + ta.value.slice(pos);
+  const next = pos + insert.length;
+  ta.focus();
+  ta.setSelectionRange(next, next);
+  _entry.content = ta.value;
+  _markDirty();
+}
+
+async function _createLocation() {
+  const input = document.getElementById('logbook-location-new');
+  const name = (input?.value || '').trim();
+  if (!name) return;
+  await _jsonFetch(`${API_BASE}/api/logbook/locations`, {
+    method: 'POST',
+    body: JSON.stringify({ display_name: name }),
+  });
+  if (input) input.value = '';
+  await _loadLocations();
+  _renderLocationsPanel();
+  _renderNavigator();
 }
 
 async function _runAI(mode) {
@@ -816,7 +1212,7 @@ async function _runAI(mode) {
 }
 
 async function _analyzeEntry() {
-  if (!_entry?.id) {
+  if (!_entry?.id || _dirty) {
     await _saveNow({ silent: true });
   }
   if (!_entry?.id) return;
