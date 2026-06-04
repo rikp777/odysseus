@@ -40,6 +40,8 @@ from src.logbook.utils import (
     known_entity_matches,
     normalized_title,
     pair_ids,
+    parse_data_links,
+    parse_location_links,
     parse_locations,
     parse_mentions,
     parse_person_links,
@@ -192,6 +194,42 @@ def replace_datapoints(db, entry: LogbookEntry, datapoints: List[LogbookDataPoin
             value_json=json_dump(item.value_json),
             sort_order=item.sort_order if item.sort_order is not None else index,
         ))
+
+
+def sync_linked_datapoints(db, entry: LogbookEntry) -> None:
+    links = parse_data_links(entry.content or "")
+    if not links:
+        return
+    existing = db.query(LogbookDataPoint).filter(LogbookDataPoint.entry_id == entry.id).all()
+    seen = {
+        (str(dp.key or "").strip().lower(), str(dp.value_text or "").strip().lower())
+        for dp in existing
+    }
+    sort_order = max([int(dp.sort_order or 0) for dp in existing] or [-1]) + 1
+    for item in links:
+        key = clean_key(item.get("key") or item.get("label") or "datapoint")
+        value_text = str(item.get("value_text") or "").strip()
+        if not key or not value_text:
+            continue
+        dedupe = (key.lower(), value_text.lower())
+        if dedupe in seen:
+            continue
+        seen.add(dedupe)
+        db.add(LogbookDataPoint(
+            id=str(uuid.uuid4()),
+            entry_id=entry.id,
+            key=key,
+            label=str(item.get("label") or "").strip() or key.replace("_", " ").title(),
+            value_text=value_text,
+            value_json=json_dump({
+                "source": "markdown_link",
+                "surface_text": item.get("surface_text"),
+                "start_offset": item.get("start_offset"),
+                "end_offset": item.get("end_offset"),
+            }),
+            sort_order=sort_order,
+        ))
+        sort_order += 1
 
 
 def upsert_co_mentioned_connection(db, owner: str, entry: LogbookEntry, person_a_id: str, person_b_id: str, snippet: str) -> None:
@@ -417,7 +455,41 @@ def rebuild_location_mentions(db, owner: str, entry: LogbookEntry) -> List[Logbo
     locations_cache = db.query(LogbookLocation).filter(LogbookLocation.owner == owner).all()
     mentioned_locations: List[LogbookLocation] = []
     seen_mentions = set()
+    blocked_ranges: List[tuple[int, int]] = []
+    for parsed in parse_location_links(entry.content or ""):
+        location = find_location(db, owner, parsed["target_name"], locations_cache)
+        if not location:
+            location = find_location(db, owner, parsed["name"], locations_cache)
+        if not location:
+            aliases_ = [parsed["name"]] if canonical_name(parsed["name"]) != parsed["target_name"] else None
+            location = get_or_create_location(
+                db,
+                owner,
+                parsed["target_display_name"] or parsed["name"],
+                aliases_,
+            )
+            locations_cache.append(location)
+        elif canonical_name(parsed["name"]) != location.canonical_name:
+            merge_location_aliases(location, [parsed["name"]])
+        key = (location.id, parsed["start_offset"], parsed["end_offset"])
+        if key in seen_mentions:
+            continue
+        seen_mentions.add(key)
+        blocked_ranges.append((parsed["start_offset"], parsed["end_offset"]))
+        db.add(LogbookLocationMention(
+            id=str(uuid.uuid4()),
+            entry_id=entry.id,
+            location_id=location.id,
+            surface_text=parsed["surface_text"],
+            start_offset=parsed["start_offset"],
+            end_offset=parsed["end_offset"],
+            source="location",
+            confidence=100,
+        ))
+        mentioned_locations.append(location)
     for parsed in parse_locations(entry.content or ""):
+        if any(parsed["start_offset"] < end and parsed["end_offset"] > start for start, end in blocked_ranges):
+            continue
         location = find_location(db, owner, parsed["name"], locations_cache)
         if not location:
             location = get_or_create_location(db, owner, parsed["name"])
@@ -437,7 +509,8 @@ def rebuild_location_mentions(db, owner: str, entry: LogbookEntry) -> List[Logbo
             confidence=100,
         ))
         mentioned_locations.append(location)
-    for parsed in known_entity_matches(entry.content or "", locations_cache):
+        blocked_ranges.append((parsed["start_offset"], parsed["end_offset"]))
+    for parsed in known_entity_matches(entry.content or "", locations_cache, blocked_ranges):
         location = parsed["row"]
         key = (location.id, parsed["start_offset"], parsed["end_offset"])
         if key in seen_mentions:

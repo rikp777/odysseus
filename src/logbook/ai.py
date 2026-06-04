@@ -21,6 +21,8 @@ from src.logbook.utils import (
     extract_json_object,
     json_load,
     pair_ids,
+    parse_data_links,
+    parse_location_links,
     parse_locations,
     parse_mentions,
     parse_person_links,
@@ -53,6 +55,24 @@ def deterministic_ai_suggestions(content: str) -> Dict[str, Any]:
             "confidence": 95,
             "reason": "Explicit @mention",
         })
+    datapoints = []
+    seen_data = set()
+    for link in parse_data_links(content or ""):
+        key = canonical_name(link["key"]).replace(" ", "_")
+        value = str(link.get("value_text") or "").strip()
+        dedupe = (key, value.lower())
+        if not key or not value or dedupe in seen_data:
+            continue
+        seen_data.add(dedupe)
+        datapoints.append({
+            "key": key,
+            "label": link.get("label") or key.replace("_", " ").title(),
+            "value_text": value,
+            "value_number": None,
+            "unit": None,
+            "confidence": 95,
+            "reason": "Structured data link",
+        })
     connections = []
     for a, b in itertools.combinations(people, 2):
         connections.append({
@@ -65,6 +85,17 @@ def deterministic_ai_suggestions(content: str) -> Dict[str, Any]:
         })
     locations = []
     seen_locations = set()
+    for link in parse_location_links(content or ""):
+        canonical = link["target_name"]
+        if canonical in seen_locations:
+            continue
+        seen_locations.add(canonical)
+        locations.append({
+            "display_name": link["target_display_name"] or link["name"],
+            "surface_text": link["surface_text"],
+            "confidence": 98,
+            "reason": "Location link",
+        })
     for mention in parse_locations(content or ""):
         canonical = canonical_name(mention["name"])
         if canonical in seen_locations:
@@ -78,6 +109,7 @@ def deterministic_ai_suggestions(content: str) -> Dict[str, Any]:
         })
     return {
         "people_suggestions": people,
+        "datapoint_suggestions": datapoints,
         "location_suggestions": locations,
         "connection_suggestions": connections,
     }
@@ -113,6 +145,15 @@ def normalize_ai_payload(mode: str, raw: Dict[str, Any], content: str) -> Dict[s
     for location in deterministic["location_suggestions"]:
         if canonical_name(location["display_name"]) not in seen_locations:
             out["location_suggestions"].append(location)
+    seen_data = {
+        (canonical_name(d.get("key", "")).replace(" ", "_"), str(d.get("value_text") or "").strip().lower())
+        for d in out["datapoint_suggestions"] if isinstance(d, dict)
+    }
+    for datapoint in deterministic["datapoint_suggestions"]:
+        key = canonical_name(datapoint.get("key", "")).replace(" ", "_")
+        value = str(datapoint.get("value_text") or "").strip().lower()
+        if (key, value) not in seen_data:
+            out["datapoint_suggestions"].append(datapoint)
     if not out["connection_suggestions"]:
         out["connection_suggestions"] = deterministic["connection_suggestions"]
     return out
@@ -129,7 +170,9 @@ def ai_system_prompt(mode: str, locale: str) -> str:
         "For people, locations, and connections, use only evidence from the supplied logbook text. "
         "When mode is structure_day or extract_all, return preview_content that preserves the user's text but marks "
         "confident person mentions as Markdown links like [Jeanine](person:jeanine_peeters). "
-        "Use lower_snake_case for the person slug. Do not link uncertain names. "
+        "Mark confident locations as Markdown links like [Panningen](place:panningen). "
+        "Mark food or other trackable daily data as data links like [eiwitrijk ontbijt](data:food). "
+        "Use lower_snake_case slugs. Do not link uncertain names or vague places. "
         "Locations are places such as home, gym, office, city, route, venue, or clinic. "
         "Connections are possible suggestions, not facts, unless the user accepts them. "
         f"Locale: {locale}. Mode: {mode}. "

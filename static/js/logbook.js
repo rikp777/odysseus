@@ -29,7 +29,7 @@ import {
   today as _today,
 } from './logbook/utils.js';
 
-const PERSON_LINK_RE = /\[([^\]\n]{1,120})\]\((person:[A-Za-z0-9_-]{2,100}|[a-z][a-z0-9]*(?:_[a-z0-9]+)+)\)/g;
+const LOGBOOK_LINK_RE = /\[([^\]\n]{1,160})\]\((person:[A-Za-z0-9_-]{2,100}|place:[A-Za-z0-9_-]{2,100}|location:[A-Za-z0-9_-]{2,100}|data:[A-Za-z0-9_-]{2,80}|food:[A-Za-z0-9_-]{2,100}|[a-z][a-z0-9]*(?:_[a-z0-9]+)+)\)/g;
 
 let _open = false;
 let _date = _today();
@@ -111,6 +111,7 @@ async function _saveNow({ silent = false } = {}) {
     _renderPeoplePanel();
     _renderLocationsPanel();
     _renderNavigator();
+    _refreshContentPreview();
     if (!silent) uiModule?.showToast?.('Saved');
   } catch (err) {
     _setStatus('Save failed');
@@ -190,10 +191,17 @@ function _slugName(value) {
   return String(value || '')
     .normalize('NFKD')
     .replace(/[\u0300-\u036f]/g, '')
-    .replace(/^person:/i, '')
+    .replace(/^(person|place|location|data|food):/i, '')
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '_')
     .replace(/^_+|_+$/g, '');
+}
+
+function _linkKind(target) {
+  const value = String(target || '').toLowerCase();
+  if (value.startsWith('place:') || value.startsWith('location:')) return 'location';
+  if (value.startsWith('data:') || value.startsWith('food:')) return 'data';
+  return 'person';
 }
 
 function _personForLink(target, label = '') {
@@ -204,6 +212,19 @@ function _personForLink(target, label = '') {
       person.canonical_name,
       person.display_name,
       ...(person.aliases || []),
+    ].map(_slugName).filter(Boolean);
+    return slugs.includes(targetSlug) || Boolean(labelSlug && slugs.includes(labelSlug));
+  }) || null;
+}
+
+function _locationForLink(target, label = '') {
+  const targetSlug = _slugName(target);
+  const labelSlug = _slugName(label);
+  return (_locations || []).find(location => {
+    const slugs = [
+      location.canonical_name,
+      location.display_name,
+      ...(location.aliases || []),
     ].map(_slugName).filter(Boolean);
     return slugs.includes(targetSlug) || Boolean(labelSlug && slugs.includes(labelSlug));
   }) || null;
@@ -250,18 +271,76 @@ function _renderPersonLink(label, target) {
   return `<span class="logbook-person-link" tabindex="0"${attrs}>${_e(label)}${_personCardHtml(person, label, target)}</span>`;
 }
 
+function _locationCardHtml(location, label, target) {
+  const name = location?.display_name || label || target || 'Place';
+  const kind = location?.location_type || '';
+  const address = location?.address || '';
+  const notes = location?.notes || location?.llm_context || '';
+  const coords = location?.latitude != null && location?.longitude != null
+    ? `${location.latitude}, ${location.longitude}`
+    : '';
+  return `
+    <span class="logbook-person-card logbook-location-card" role="tooltip">
+      <span class="logbook-person-card-head">
+        <span class="logbook-person-initial">#</span>
+        <span><strong>${_e(name)}</strong>${kind ? `<em>${_e(kind)}</em>` : ''}</span>
+      </span>
+      ${address ? `<span class="logbook-person-card-note">${_e(address)}</span>` : ''}
+      ${coords ? `<span class="logbook-person-card-note">${_e(coords)}</span>` : ''}
+      ${notes ? `<span class="logbook-person-card-note">${_e(notes)}</span>` : ''}
+      ${location?.id ? '<span class="logbook-person-card-link">Open place</span>' : '<span class="logbook-person-card-link">Save to create this place</span>'}
+    </span>
+  `;
+}
+
+function _renderLocationLink(label, target) {
+  const location = _locationForLink(target, label);
+  const attrs = location?.id ? ` data-open-location="${_e(location.id)}" role="button"` : ' role="text"';
+  return `<span class="logbook-person-link logbook-location-link" tabindex="0"${attrs}>${_e(label)}${_locationCardHtml(location, label, target)}</span>`;
+}
+
+function _dataCardHtml(label, target) {
+  const rawKey = String(target || '').split(':', 2);
+  const key = rawKey[0] === 'food' ? 'food' : _slugName(rawKey[1] || target || 'data');
+  const display = key.replace(/_/g, ' ').replace(/\b\w/g, ch => ch.toUpperCase());
+  return `
+    <span class="logbook-person-card logbook-data-card" role="tooltip">
+      <span class="logbook-person-card-head">
+        <span class="logbook-person-initial">D</span>
+        <span><strong>${_e(display)}</strong><em>Datapoint</em></span>
+      </span>
+      <span class="logbook-person-card-note">${_e(label)}</span>
+      <span class="logbook-person-card-link">Saved as structured data</span>
+    </span>
+  `;
+}
+
+function _renderDataLink(label, target) {
+  return `<span class="logbook-person-link logbook-data-link" tabindex="0" role="text">${_e(label)}${_dataCardHtml(label, target)}</span>`;
+}
+
 function _renderLogbookText(content) {
   const text = String(content || '');
   let html = '';
   let last = 0;
-  PERSON_LINK_RE.lastIndex = 0;
-  for (const match of text.matchAll(PERSON_LINK_RE)) {
+  LOGBOOK_LINK_RE.lastIndex = 0;
+  for (const match of text.matchAll(LOGBOOK_LINK_RE)) {
     html += _e(text.slice(last, match.index));
-    html += _renderPersonLink(match[1], match[2]);
+    const kind = _linkKind(match[2]);
+    if (kind === 'location') html += _renderLocationLink(match[1], match[2]);
+    else if (kind === 'data') html += _renderDataLink(match[1], match[2]);
+    else html += _renderPersonLink(match[1], match[2]);
     last = match.index + match[0].length;
   }
   html += _e(text.slice(last));
   return html || '<span class="logbook-empty">No text yet.</span>';
+}
+
+function _refreshContentPreview() {
+  const preview = document.getElementById('logbook-content-preview');
+  if (!preview) return;
+  preview.innerHTML = _renderLogbookText(_entry?.content || '');
+  _bindEntityLinkEvents(preview);
 }
 
 function _entryStatus(entry) {
@@ -460,7 +539,7 @@ function _editorHtml() {
       <input id="logbook-title-input" class="logbook-title-input" value="${_e(_entry?.title || 'Daily log')}" placeholder="Title">
     </div>
     <section class="logbook-write-section" data-mobile-section="write">
-      <textarea id="logbook-content" class="logbook-content" placeholder="Write messy notes. Example: work, training, tired, talked with @Jan. AI can clean it up later.">${_e(_entry?.content || '')}</textarea>
+      <textarea id="logbook-content" class="logbook-content" placeholder="Write messy notes. Example: tired, talked with @Jan, rode through [Panningen](place:panningen), ate [breakfast](data:food).">${_e(_entry?.content || '')}</textarea>
       <div id="logbook-mention-menu" class="logbook-mention-menu hidden"></div>
     </section>
     <section class="logbook-rendered-preview" data-mobile-section="write">
@@ -781,7 +860,7 @@ function _bindEvents() {
     const preview = document.getElementById('logbook-content-preview');
     if (preview) {
       preview.innerHTML = _renderLogbookText(content.value);
-      _bindPersonLinkEvents(preview);
+      _bindEntityLinkEvents(preview);
     }
     _renderMentionMenu();
   });
@@ -894,7 +973,7 @@ function _bindEvents() {
   document.getElementById('logbook-apply-ai-mood')?.addEventListener('click', () => _applyAIMood());
   document.getElementById('logbook-add-ai-data')?.addEventListener('click', () => _addAIData());
   _bindAISuggestionEvents();
-  _bindPersonLinkEvents();
+  _bindEntityLinkEvents();
   document.querySelectorAll('[data-accept-connection]').forEach(btn => {
     btn.addEventListener('click', () => _connectionAction(btn.dataset.acceptConnection, 'accept').catch(_showError));
   });
@@ -1003,7 +1082,7 @@ function _bindAISuggestionEvents() {
   });
 }
 
-function _bindPersonLinkEvents(root = document) {
+function _bindEntityLinkEvents(root = document) {
   root.querySelectorAll('[data-open-person]').forEach(link => {
     if (link.dataset.boundPersonLink === '1') return;
     link.dataset.boundPersonLink = '1';
@@ -1011,6 +1090,15 @@ function _bindPersonLinkEvents(root = document) {
       event.preventDefault();
       event.stopPropagation();
       await _openPerson(link.dataset.openPerson);
+    });
+  });
+  root.querySelectorAll('[data-open-location]').forEach(link => {
+    if (link.dataset.boundLocationLink === '1') return;
+    link.dataset.boundLocationLink = '1';
+    link.addEventListener('click', async event => {
+      event.preventDefault();
+      event.stopPropagation();
+      await _openLocation(link.dataset.openLocation);
     });
   });
 }
@@ -1023,6 +1111,19 @@ async function _openPerson(personId) {
   } catch (_) {
     _filterPerson = personId;
     _activeTab = 'people';
+    await _loadEntries();
+    _render();
+  }
+}
+
+async function _openLocation(locationId) {
+  if (!locationId) return;
+  try {
+    const atlas = await import('./logbookAtlas.js');
+    await atlas.openAtlas({ tab: 'locations', locationId });
+  } catch (_) {
+    _filterLocation = locationId;
+    _activeTab = 'places';
     await _loadEntries();
     _render();
   }

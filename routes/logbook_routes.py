@@ -231,6 +231,8 @@ def setup_logbook_routes() -> APIRouter:
                 logbook_repo.replace_datapoints(db, entry, body.datapoints)
             if content_changed or not entry.mentions or not entry.location_mentions:
                 logbook_repo.rebuild_entry_links(db, owner, entry)
+            if content_changed or body.datapoints is not None:
+                logbook_repo.sync_linked_datapoints(db, entry)
             db.commit()
             entry = logbook_repo.entry_query(db, owner).filter(LogbookEntry.id == entry.id).first()
             return logbook_serializers.entry_to_dict(entry)
@@ -251,6 +253,8 @@ def setup_logbook_routes() -> APIRouter:
                 logbook_repo.replace_datapoints(db, entry, body.datapoints)
             if content_changed:
                 logbook_repo.rebuild_entry_links(db, owner, entry)
+            if content_changed or body.datapoints is not None:
+                logbook_repo.sync_linked_datapoints(db, entry)
             db.commit()
             entry = logbook_repo.entry_query(db, owner).filter(LogbookEntry.id == entry_id).first()
             return logbook_serializers.entry_to_dict(entry)

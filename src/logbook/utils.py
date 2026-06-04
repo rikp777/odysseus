@@ -32,6 +32,15 @@ PERSON_LINK_RE = re.compile(
     r"\[(?P<label>[^\]\n]{1,120})\]"
     r"\((?P<target>person:[A-Za-z0-9_-]{2,100}|[a-z][a-z0-9]*(?:_[a-z0-9]+)+)\)"
 )
+LOCATION_LINK_RE = re.compile(
+    r"\[(?P<label>[^\]\n]{1,120})\]"
+    r"\((?P<target>(?:place|location):[A-Za-z0-9_-]{2,100})\)"
+)
+DATA_LINK_RE = re.compile(
+    r"\[(?P<label>[^\]\n]{1,160})\]"
+    r"\((?P<target>data:[A-Za-z0-9_-]{2,80}|food:[A-Za-z0-9_-]{2,100})\)"
+)
+LINK_PREFIXES = ("person:", "place:", "location:", "data:", "food:")
 
 
 def validate_date(value: str) -> str:
@@ -82,8 +91,10 @@ def aliases(row: Any) -> List[str]:
 
 def canonical_name(name: str) -> str:
     value = (name or "").strip().strip("@").strip()
-    if value.lower().startswith("person:"):
-        value = value.split(":", 1)[1]
+    for prefix in LINK_PREFIXES:
+        if value.lower().startswith(prefix):
+            value = value.split(":", 1)[1]
+            break
     value = value.strip("\"'[]")
     value = unicodedata.normalize("NFKD", value)
     value = "".join(ch for ch in value if not unicodedata.combining(ch))
@@ -179,6 +190,47 @@ def parse_person_links(content: str) -> List[Dict[str, Any]]:
             "target_name": target_name,
             "target_slug": slug_name(target),
             "target_display_name": display_name_from_slug(target),
+            "surface_text": match.group(0),
+            "start_offset": match.start(),
+            "end_offset": match.end(),
+        })
+    return links
+
+
+def parse_location_links(content: str) -> List[Dict[str, Any]]:
+    links: List[Dict[str, Any]] = []
+    for match in LOCATION_LINK_RE.finditer(content or ""):
+        label = re.sub(r"\s+", " ", (match.group("label") or "").strip())
+        raw_target = (match.group("target") or "").strip()
+        target = raw_target.split(":", 1)[1]
+        target_name = canonical_name(target)
+        if not label or not target_name:
+            continue
+        links.append({
+            "name": label,
+            "target_name": target_name,
+            "target_slug": slug_name(target),
+            "target_display_name": display_name_from_slug(target),
+            "surface_text": match.group(0),
+            "start_offset": match.start(),
+            "end_offset": match.end(),
+        })
+    return links
+
+
+def parse_data_links(content: str) -> List[Dict[str, Any]]:
+    links: List[Dict[str, Any]] = []
+    for match in DATA_LINK_RE.finditer(content or ""):
+        label = re.sub(r"\s+", " ", (match.group("label") or "").strip())
+        raw_target = (match.group("target") or "").strip()
+        kind, target = raw_target.split(":", 1)
+        key = "food" if kind.lower() == "food" else clean_key(target)
+        if not label or not key:
+            continue
+        links.append({
+            "key": key,
+            "label": display_name_from_slug(key),
+            "value_text": label,
             "surface_text": match.group(0),
             "start_offset": match.start(),
             "end_offset": match.end(),
