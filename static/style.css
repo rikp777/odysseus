@@ -953,6 +953,120 @@ body.bg-pattern-sparkles {
       white-space: nowrap;
     }
 
+    .cloud-billing-budget-state {
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+      padding: 7px;
+      border: 1px solid color-mix(in srgb, var(--border) 66%, transparent);
+      border-left-width: 3px;
+      border-radius: 6px;
+      background: color-mix(in srgb, var(--fg) 2%, transparent);
+    }
+
+    .cloud-billing-budget-state strong {
+      overflow: hidden;
+      color: var(--fg);
+      font-size: 11px;
+      font-weight: 650;
+      line-height: 1.2;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .cloud-billing-budget-state span,
+    .cloud-billing-budget-state small {
+      color: color-mix(in srgb, var(--fg) 56%, transparent);
+      font-size: 10px;
+      line-height: 1.3;
+    }
+
+    .cloud-billing-event-list {
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+    }
+
+    .cloud-billing-event-row {
+      display: grid;
+      grid-template-columns: 9px minmax(0, 1fr);
+      gap: 7px;
+      min-width: 0;
+      padding: 6px;
+      border: 1px solid color-mix(in srgb, var(--border) 62%, transparent);
+      border-radius: 6px;
+      background: color-mix(in srgb, var(--panel) 90%, var(--bg));
+    }
+
+    .cloud-billing-event-dot {
+      width: 7px;
+      height: 7px;
+      margin-top: 3px;
+      border-radius: 50%;
+      background: color-mix(in srgb, var(--fg) 38%, transparent);
+    }
+
+    .cloud-billing-event-copy {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      min-width: 0;
+    }
+
+    .cloud-billing-event-copy strong,
+    .cloud-billing-event-copy small {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .cloud-billing-event-copy strong {
+      color: var(--fg);
+      font-size: 11px;
+      font-weight: 650;
+    }
+
+    .cloud-billing-event-copy span,
+    .cloud-billing-event-copy small {
+      color: color-mix(in srgb, var(--fg) 54%, transparent);
+      font-size: 10px;
+      line-height: 1.25;
+    }
+
+    .cloud-billing-event-copy span {
+      overflow-wrap: anywhere;
+    }
+
+    .billing-event-danger {
+      border-color: color-mix(in srgb, var(--red) 42%, var(--border));
+    }
+
+    .billing-event-danger .cloud-billing-event-dot,
+    .cloud-billing-budget-state.billing-event-danger {
+      border-color: color-mix(in srgb, var(--red) 55%, var(--border));
+    }
+
+    .billing-event-danger .cloud-billing-event-dot {
+      background: color-mix(in srgb, var(--red) 78%, var(--fg));
+    }
+
+    .billing-event-warning {
+      border-color: color-mix(in srgb, #d59a2f 48%, var(--border));
+    }
+
+    .billing-event-warning .cloud-billing-event-dot,
+    .cloud-billing-budget-state.billing-event-warning {
+      border-color: color-mix(in srgb, #d59a2f 60%, var(--border));
+    }
+
+    .billing-event-warning .cloud-billing-event-dot {
+      background: #d59a2f;
+    }
+
+    .billing-event-info .cloud-billing-event-dot {
+      background: color-mix(in srgb, var(--accent-primary, var(--red)) 62%, var(--fg));
+    }
+
     .cloud-billing-control-grid {
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));

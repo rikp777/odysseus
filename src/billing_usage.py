@@ -344,8 +344,8 @@ def get_session_usage_summary(
     return summary
 
 
-def local_budget_block_reason(endpoint_url: str, model: str = "", owner: Optional[str] = None) -> Optional[str]:
-    """Return a block reason if local usage-ledger budgets are exceeded."""
+def local_budget_block(endpoint_url: str, model: str = "", owner: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    """Return structured local usage-ledger budget state when a remote call is blocked."""
     if not is_remote_billable_endpoint(endpoint_url):
         return None
     settings = load_settings()
@@ -368,9 +368,32 @@ def local_budget_block_reason(endpoint_url: str, model: str = "", owner: Optiona
         amount = summary["amount_decimal"]
         if amount >= limit:
             label = "daily" if period == "day" else "monthly"
-            return (
+            message = (
                 f"Cloud model budget reached: local {label} model spend is "
                 f"{_display_money(amount)}, limit is {_display_money(limit)}. "
                 "Remote model calls are blocked until the limit is raised or the period resets."
             )
+            return {
+                "blocked": True,
+                "code": f"{period}_limit_reached",
+                "period": period,
+                "period_label": label,
+                "source": "usage_ledger",
+                "spend_scope": "model_usage",
+                "provider": provider_from_endpoint(endpoint_url),
+                "model": model or "",
+                "amount": _stored_money(amount) or "0.000000",
+                "display": _display_money(amount),
+                "limit": _stored_money(limit) or "",
+                "limit_display": _display_money(limit),
+                "message": message,
+            }
     return None
+
+
+def local_budget_block_reason(endpoint_url: str, model: str = "", owner: Optional[str] = None) -> Optional[str]:
+    """Return a block reason if local usage-ledger budgets are exceeded."""
+    block = local_budget_block(endpoint_url, model=model, owner=owner)
+    if not block:
+        return None
+    return str(block.get("message") or "")
