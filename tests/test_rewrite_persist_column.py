@@ -40,8 +40,8 @@ def test_rewrite_query_selects_and_updates_latest_assistant_message():
             id=sid,
             owner="alice",
             name="c",
-            endpoint_url="https://example.test/v1/chat/completions",
             model="m",
+            endpoint_url="http://localhost:11434",
             archived=False,
         ))
         db.add(DBChatMessage(id="m1", session_id=sid, role="assistant", content="old first", timestamp=base))
