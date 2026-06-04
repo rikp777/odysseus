@@ -7760,6 +7760,7 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
       #cookbook-modal .modal-content,
       #tasks-modal .modal-content,
       #calendar-modal .modal-content,
+      #logbook-atlas-modal .modal-content,
       #memory-modal .memory-modal-content,
       #settings-modal .settings-modal-content,
       #email-lib-modal .modal-content,
@@ -7810,6 +7811,7 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
          them; padding-top reset is in the per-modal rules below. */
       #cookbook-modal .modal-content,
       #calendar-modal .modal-content,
+      #logbook-atlas-modal .modal-content,
       #email-lib-modal .modal-content,
       #doclib-modal .modal-content,
       #gallery-modal .modal-content,
@@ -7827,6 +7829,7 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
       /* Anchor those modals to the top so the full height is usable */
       #cookbook-modal,
       #calendar-modal,
+      #logbook-atlas-modal,
       #email-lib-modal,
       #doclib-modal,
       #gallery-modal,
@@ -37838,30 +37841,22 @@ body.theme-frosted .modal {
   overflow: hidden;
 }
 
-.logbook-atlas-header {
-  gap: 8px;
-  flex-wrap: wrap;
-  min-height: 48px;
-}
-
-.logbook-atlas-title {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  min-width: 156px;
-  margin: 0;
-}
-
-.logbook-atlas-title svg,
-.logbook-atlas-header svg {
-  flex-shrink: 0;
-}
-
 .logbook-atlas-tabs {
   display: inline-flex;
   gap: 6px;
-  flex: 1 1 320px;
-  max-width: 520px;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.logbook-atlas-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px 8px;
+  border-bottom: 1px solid var(--border);
+  flex: 0 0 auto;
 }
 
 .logbook-atlas-error,
@@ -38170,12 +38165,6 @@ body.theme-frosted .modal {
 }
 
 @media (max-width: 900px) {
-  .logbook-atlas-content {
-    width: calc(100vw - 16px);
-    height: calc(100vh - 16px);
-    max-height: calc(100vh - 16px);
-  }
-
   .logbook-atlas-body {
     grid-template-columns: 1fr;
     overflow: auto;
@@ -38188,17 +38177,9 @@ body.theme-frosted .modal {
 }
 
 @media (max-width: 620px) {
-  .logbook-atlas-content {
-    width: 100vw;
-    height: 100vh;
-    max-height: 100vh;
-    border-radius: 0;
-  }
-
-  .logbook-atlas-tabs {
-    order: 6;
-    flex-basis: 100%;
-    max-width: none;
+  .logbook-atlas-toolbar {
+    align-items: stretch;
+    flex-direction: column;
   }
 
   .logbook-atlas-body {

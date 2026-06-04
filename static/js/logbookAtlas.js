@@ -211,16 +211,18 @@ function _render() {
   modal.innerHTML = `
     <div class="modal-content logbook-atlas-content" role="dialog" aria-label="Logbook People and Places">
       <div class="modal-header logbook-atlas-header">
-        <h4 class="logbook-atlas-title">${_iconAtlas(14)}<span>People & Places</span></h4>
+        <h4>People & Places</h4>
+        <button type="button" class="modal-minimize-btn" id="logbook-atlas-minimize" title="Minimize" aria-label="Minimize"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><line x1="5" y1="18" x2="19" y2="18"/></svg></button>
+        <button type="button" class="close-btn" id="logbook-atlas-close" title="Close" aria-label="Close">&#x2716;</button>
+      </div>
+      ${_error ? `<div class="logbook-atlas-error">${_e(_error)}</div>` : ''}
+      ${_busy ? '<div class="logbook-atlas-status">Saving...</div>' : ''}
+      <div class="logbook-atlas-toolbar">
         <div class="logbook-atlas-tabs">
           ${['people', 'locations', 'map', 'connections'].map(tab => `<button type="button" class="logbook-tab ${_tab === tab ? 'active' : ''}" data-atlas-tab="${tab}">${tab === 'map' ? 'Map' : tab[0].toUpperCase() + tab.slice(1)}</button>`).join('')}
         </div>
         <button type="button" class="cal-btn" id="logbook-atlas-refresh">Refresh</button>
-        <button type="button" class="modal-minimize-btn" id="logbook-atlas-minimize" aria-label="Minimize">_</button>
-        <button type="button" class="close-btn" id="logbook-atlas-close" aria-label="Close">x</button>
       </div>
-      ${_error ? `<div class="logbook-atlas-error">${_e(_error)}</div>` : ''}
-      ${_busy ? '<div class="logbook-atlas-status">Saving...</div>' : ''}
       <div class="modal-body logbook-atlas-body" data-tab="${_e(_tab)}">
         ${_bodyHtml()}
       </div>
