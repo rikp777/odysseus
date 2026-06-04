@@ -7,12 +7,14 @@ from src import billing_usage, llm_core
 
 
 class _FakePostResponse:
-    status_code = 200
-    is_success = True
-    text = ""
+    def __init__(self, status_code=200, payload=None, text=""):
+        self.status_code = status_code
+        self.is_success = 200 <= status_code < 300
+        self.text = text
+        self._payload = payload
 
     def json(self):
-        return {
+        return self._payload if self._payload is not None else {
             "model": "gpt-4o-mini",
             "choices": [{"message": {"content": "hello"}}],
             "usage": {"prompt_tokens": 11, "completion_tokens": 7},
@@ -53,6 +55,16 @@ class _FakeClient:
 
     def stream(self, *args, **kwargs):
         return _FakeStreamContext(self._lines)
+
+
+class _FakeSequenceClient:
+    def __init__(self, responses):
+        self._responses = list(responses)
+        self.calls = 0
+
+    async def post(self, *args, **kwargs):
+        self.calls += 1
+        return self._responses.pop(0)
 
 
 def _stub_network(monkeypatch, client):
@@ -125,6 +137,33 @@ async def test_llm_call_async_records_real_provider_usage(monkeypatch):
     assert calls[0]["metrics"]["input_tokens"] == 11
     assert calls[0]["metrics"]["output_tokens"] == 7
     assert calls[0]["metrics"]["usage_source"] == "real"
+
+
+@pytest.mark.asyncio
+async def test_llm_call_async_retries_transient_upstream_status(monkeypatch):
+    llm_core._response_cache.clear()
+    client = _FakeSequenceClient([
+        _FakePostResponse(status_code=502, text="bad gateway"),
+        _FakePostResponse(),
+    ])
+    _stub_network(monkeypatch, client)
+
+    async def _no_sleep(_delay):
+        return None
+
+    monkeypatch.setattr(llm_core.asyncio, "sleep", _no_sleep)
+
+    result = await llm_core.llm_call_async(
+        "https://api.openai.com/v1/chat/completions",
+        "gpt-4o-mini",
+        [{"role": "user", "content": "hi"}],
+        headers={"Authorization": "Bearer test"},
+        owner="rik",
+        max_retries=2,
+    )
+
+    assert result == "hello"
+    assert client.calls == 2
 
 
 def test_stream_llm_records_usage_once_for_owned_call(monkeypatch):

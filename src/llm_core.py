@@ -105,6 +105,13 @@ class LLMConfig:
     STREAM_TIMEOUT = 300
 
 
+_RETRYABLE_HTTP_STATUSES = {408, 409, 425, 429, 500, 502, 503, 504}
+
+
+def _is_retryable_upstream_status(status_code: int) -> bool:
+    return status_code in _RETRYABLE_HTTP_STATUSES
+
+
 # Cache for LLM responses
 def _get_cache_key(url: str, model: str, messages: List[Dict], 
                    temperature: float, max_tokens: int) -> str:
@@ -1302,8 +1309,9 @@ async def llm_call_async(
         raise HTTPException(503, f"Upstream {_host_key(target_url)} marked unreachable (cooldown active)")
 
     call_timeout = httpx.Timeout(connect=3.0, read=float(timeout), write=10.0, pool=5.0)
+    attempt_limit = max(1, int(max_retries or 1))
     attempt = 0
-    while attempt < max_retries:
+    while attempt < attempt_limit:
         attempt += 1
         start = time.time()
         try:
@@ -1313,10 +1321,15 @@ async def llm_call_async(
             duration = time.time() - start
             if not r.is_success:
                 friendly = _format_upstream_error(r.status_code, r.text, target_url)
+                can_retry = _is_retryable_upstream_status(r.status_code) and attempt < attempt_limit
                 logger.warning(
                     f"LLM async call to {target_url} failed in {duration:.2f}s "
-                    f"(attempt {attempt}): HTTP {r.status_code} {friendly}"
+                    f"(attempt {attempt}/{attempt_limit}): HTTP {r.status_code} {friendly}"
+                    f"{' — retrying' if can_retry else ''}"
                 )
+                if can_retry:
+                    await asyncio.sleep(LLMConfig.RETRY_DELAY)
+                    continue
                 raise HTTPException(r.status_code, friendly)
             logger.info(f"LLM async call to {target_url} succeeded in {duration:.2f}s (attempt {attempt})")
             _clear_host_dead(target_url)
@@ -1349,8 +1362,8 @@ async def llm_call_async(
         except (httpx.RequestError, httpx.HTTPStatusError) as e:
             duration = time.time() - start
             logger.warning(f"LLM async call attempt {attempt} failed after {duration:.2f}s: {e}")
-            if attempt >= max_retries:
-                raise HTTPException(502, f"POST {target_url} failed after {max_retries} attempts: {e}")
+            if attempt >= attempt_limit:
+                raise HTTPException(502, f"POST {target_url} failed after {attempt_limit} attempts: {e}")
             await asyncio.sleep(LLMConfig.RETRY_DELAY)
 
 async def stream_llm(url: str, model: str, messages: List[Dict], temperature: float = LLMConfig.DEFAULT_TEMPERATURE,

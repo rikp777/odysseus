@@ -588,7 +588,7 @@ async def run_ai_assist(owner: str, payload: LogbookAIAssist) -> JSONResponse | 
             max_tokens=1600,
             headers=headers,
             timeout=25,
-            max_retries=1,
+            max_retries=2,
             owner=owner,
         )
     except HTTPException as exc:

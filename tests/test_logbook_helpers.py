@@ -202,7 +202,7 @@ async def test_logbook_ai_assist_returns_local_fallback_on_provider_error(monkey
     assert result["fallback"] is True
     assert str(status_code) in result["warning"]
     assert call_kwargs["timeout"] == 25
-    assert call_kwargs["max_retries"] == 1
+    assert call_kwargs["max_retries"] == 2
     assert result["people_suggestions"][0]["display_name"] == "Milan de Vries"
     assert result["location_suggestions"][0]["display_name"] == "Meerstad"
     assert "[Milan de Vries](person:milan_de_vries)" in result["preview_content"]
