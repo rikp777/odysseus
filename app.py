@@ -695,6 +695,10 @@ logger.info("Webhook & API token routes initialized")
 from routes.note_routes import setup_note_routes
 app.include_router(setup_note_routes(task_scheduler))
 
+# Daily Logbook
+from routes.logbook_routes import setup_logbook_routes
+app.include_router(setup_logbook_routes())
+
 # Email
 from routes.email_routes import setup_email_routes
 email_router = setup_email_routes()
@@ -746,6 +750,10 @@ async def serve_index(request: Request):
 
 @app.get("/notes")
 async def serve_notes(request: Request):
+    return await serve_index(request)
+
+@app.get("/logbook")
+async def serve_logbook(request: Request):
     return await serve_index(request)
 
 @app.get("/calendar")

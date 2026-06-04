@@ -179,6 +179,11 @@ _TOOL_NAME_MAP = {
     "notes": "manage_notes",
     "todo": "manage_notes",
     "todos": "manage_notes",
+    "manage_logbook": "manage_logbook",
+    "logbook": "manage_logbook",
+    "daily_logbook": "manage_logbook",
+    "journal": "manage_logbook",
+    "diary": "manage_logbook",
 }
 
 

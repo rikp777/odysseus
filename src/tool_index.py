@@ -104,6 +104,7 @@ BUILTIN_TOOL_DESCRIPTIONS: Dict[str, str] = {
     "manage_contact": "Create, update, delete, or list CardDAV contacts. Use to save a new contact, change an existing one's email/phone, or remove one. Action=list returns uids needed for update/delete. Use when the user says 'save this contact', 'add [name] to contacts', 'update [name]'s email', 'delete [name] from contacts'. Do not use for user identity facts like 'my name is <name>'; those are memory.",
     "manage_notes": "Create and manage notes and checklists (Google Keep-style). ALWAYS use this for note/todo/checklist/reminder creation — NEVER hit /api/notes via app_api. Accepts natural-language `due_date` like 'tomorrow at 9am' or '11pm today' (parsed in the USER'S timezone). The due_date IS the reminder — it fires a notification at that time, so do NOT also create a calendar event for the same reminder. Set colors, labels, pin, archive. Do NOT use manage_memory for note content.",
     "manage_calendar": "Calendar event management: list, create, update, delete. Each event can carry a tag/category (event_type — work/personal/health/travel/meal/social/admin/other) and importance (low/normal/high/critical). Use ISO datetimes; supports all-day events. For event reminders/alarms, pass reminder_minutes; this creates the Notes reminder, so do not also call manage_notes for the same reminder.",
+    "manage_logbook": "Read the user's owner-scoped Daily Logbook. Use for diary/journal/logbook recall, what happened on a date or day, timelines, when a person was seen or mentioned, where something happened, places/locations, mood history, and datapoints such as sleep, energy, stress, workout, pain, food, work, medication, and gratitude. Read-only; cite dates; suggested connections are not facts unless accepted.",
     "download_model": "Download a HuggingFace model to a local or remote server. Specify repo_id (e.g. 'Qwen/Qwen3-8B'), optional server host, and optional include filter for specific files.",
     "serve_model": "Start serving a model with vLLM, SGLang, llama.cpp, Ollama, or Diffusers. For image/inpainting/diffusion use python3 scripts/diffusion_server.py --model <repo> --port 8100. After launch, call list_served_models for readiness/errors and retry suggestions.",
     "list_served_models": "List currently running model servers in the Cookbook — shows status (loading, ready, idle, error), model name, port, throughput, and serve failure diagnosis/retry suggestions. Use when the user asks 'what's running', 'show my cookbook', 'which models are up', 'what's serving'.",
@@ -304,6 +305,13 @@ class ToolIndex:
             {"manage_calendar"},
         frozenset({"note", "todo", "reminder", "remind", "checklist", "remember to"}):
             {"manage_notes"},
+        frozenset({"logbook", "daily log", "journal", "diary", "what happened",
+                   "that day", "which day", "when did", "last time",
+                   "timeline", "mood", "energy", "stress", "sleep",
+                   "workout", "gratitude", "datapoint", "mentioned",
+                   "talked to", "met", "saw", "place", "places",
+                   "location", "locations", "where was"}):
+            {"manage_logbook"},
         # Chat/session management. "rename" alone maps to documents below, so a
         # request like "rename the last 12 sessions/chats" needs these session
         # keywords to surface the right tools (NOT app_api — /api/sessions is

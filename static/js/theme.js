@@ -302,6 +302,12 @@ const _ROUTE_FAVICON_SHAPES = {
     "<line x1='10' y1='10' x2='22' y2='10' stroke='__C__' stroke-width='2'/>" +
     "<line x1='10' y1='15' x2='22' y2='15' stroke='__C__' stroke-width='2'/>" +
     "<line x1='10' y1='20' x2='18' y2='20' stroke='__C__' stroke-width='2'/>",
+  '/logbook':
+    "<path d='M6 4 H22 V28 H6 A2 2 0 0 1 4 26 V6 A2 2 0 0 1 6 4 Z' fill='none' stroke='__C__' stroke-width='2.5'/>" +
+    "<path d='M8 4 V28' fill='none' stroke='__C__' stroke-width='2'/>" +
+    "<line x1='12' y1='10' x2='19' y2='10' stroke='__C__' stroke-width='2'/>" +
+    "<line x1='12' y1='15' x2='19' y2='15' stroke='__C__' stroke-width='2'/>" +
+    "<line x1='12' y1='20' x2='17' y2='20' stroke='__C__' stroke-width='2'/>",
   '/cookbook':
     "<path d='M5 8 L5 26 A2 2 0 0 0 7 28 L25 28 A2 2 0 0 0 27 26 L27 8' fill='none' stroke='__C__' stroke-width='2.5' stroke-linejoin='round'/>" +
     "<path d='M9 4 L23 4 L23 8 L9 8 Z' fill='none' stroke='__C__' stroke-width='2.5' stroke-linejoin='round'/>" +

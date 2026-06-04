@@ -99,5 +99,6 @@ from src.tool_implementations import (  # noqa: E402, F401
     do_manage_documents,
     do_manage_settings,
     do_manage_billing,
+    do_manage_logbook,
     do_api_call,
 )

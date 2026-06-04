@@ -236,6 +236,20 @@ class ChatProcessor:
             # (skills index injection moved out — see below; only fires in
             # agent mode so chat mode and incognito stay clean.)
 
+        # Daily Logbook: inject a small read-only diary context when the user
+        # asks about dates, days, people, places, mood, or logbook history.
+        if owner and not incognito:
+            try:
+                from src.logbook_context import auto_context
+                logbook_text = auto_context(owner, message, limit=4)
+                if logbook_text:
+                    preface.append(untrusted_context_message(
+                        "daily logbook context",
+                        logbook_text,
+                    ))
+            except Exception as e:
+                logger.warning("Daily Logbook context retrieval failed: %s", e)
+
         # RAG: search if enabled and rag_manager available, inject only above threshold
         if use_rag:
             try:

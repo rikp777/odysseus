@@ -2,7 +2,7 @@ import os
 import logging
 import sqlite3
 from datetime import datetime, timezone
-from sqlalchemy import event, create_engine, Column, String, Text, Boolean, DateTime, Integer, ForeignKey, JSON, Index, func, text
+from sqlalchemy import event, create_engine, Column, String, Text, Boolean, DateTime, Integer, Float, ForeignKey, JSON, Index, UniqueConstraint, func, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.types import TypeDecorator
 from sqlalchemy.ext.declarative import declarative_base, declared_attr
@@ -972,6 +972,141 @@ def _migrate_add_notes_sort_order():
     except Exception as e:
         logging.getLogger(__name__).warning(f"notes migration failed: {e}")
 
+
+def _migrate_logbook_schema():
+    """Ensure Daily Logbook tables have expected columns and indexes."""
+    import sqlite3
+    db_path = DATABASE_URL.replace("sqlite:///", "")
+    if not os.path.exists(db_path):
+        return
+    table_columns = {
+        "logbook_entries": {
+            "owner": "TEXT",
+            "entry_date": "TEXT",
+            "title": "TEXT DEFAULT 'Daily log'",
+            "content": "TEXT DEFAULT ''",
+            "summary": "TEXT",
+            "mood_label": "TEXT",
+            "mood_score": "INTEGER",
+            "energy_score": "INTEGER",
+            "stress_score": "INTEGER",
+            "ai_reflection": "TEXT",
+            "created_at": "DATETIME",
+            "updated_at": "DATETIME",
+        },
+        "logbook_data_points": {
+            "entry_id": "TEXT",
+            "key": "TEXT",
+            "label": "TEXT",
+            "value_text": "TEXT",
+            "value_number": "REAL",
+            "unit": "TEXT",
+            "value_json": "TEXT",
+            "sort_order": "INTEGER DEFAULT 0",
+            "created_at": "DATETIME",
+            "updated_at": "DATETIME",
+        },
+        "logbook_people": {
+            "owner": "TEXT",
+            "display_name": "TEXT",
+            "canonical_name": "TEXT",
+            "aliases": "TEXT",
+            "notes": "TEXT",
+            "created_at": "DATETIME",
+            "updated_at": "DATETIME",
+        },
+        "logbook_mentions": {
+            "entry_id": "TEXT",
+            "person_id": "TEXT",
+            "surface_text": "TEXT",
+            "start_offset": "INTEGER",
+            "end_offset": "INTEGER",
+            "source": "TEXT DEFAULT 'mention'",
+            "confidence": "INTEGER",
+            "created_at": "DATETIME",
+        },
+        "logbook_locations": {
+            "owner": "TEXT",
+            "display_name": "TEXT",
+            "canonical_name": "TEXT",
+            "aliases": "TEXT",
+            "notes": "TEXT",
+            "created_at": "DATETIME",
+            "updated_at": "DATETIME",
+        },
+        "logbook_location_mentions": {
+            "entry_id": "TEXT",
+            "location_id": "TEXT",
+            "surface_text": "TEXT",
+            "start_offset": "INTEGER",
+            "end_offset": "INTEGER",
+            "source": "TEXT DEFAULT 'location'",
+            "confidence": "INTEGER",
+            "created_at": "DATETIME",
+        },
+        "logbook_person_connections": {
+            "owner": "TEXT",
+            "person_a_id": "TEXT",
+            "person_b_id": "TEXT",
+            "connection_type": "TEXT DEFAULT 'unknown'",
+            "description": "TEXT",
+            "strength": "INTEGER DEFAULT 1",
+            "confidence": "INTEGER DEFAULT 0",
+            "evidence_json": "TEXT",
+            "status": "TEXT DEFAULT 'suggested'",
+            "created_at": "DATETIME",
+            "updated_at": "DATETIME",
+        },
+    }
+    indexes = [
+        "CREATE INDEX IF NOT EXISTS ix_logbook_entries_owner ON logbook_entries(owner)",
+        "CREATE INDEX IF NOT EXISTS ix_logbook_entries_entry_date ON logbook_entries(entry_date)",
+        "CREATE INDEX IF NOT EXISTS ix_logbook_entries_owner_date ON logbook_entries(owner, entry_date)",
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_logbook_entries_owner_date ON logbook_entries(owner, entry_date)",
+        "CREATE INDEX IF NOT EXISTS ix_logbook_data_points_entry_id ON logbook_data_points(entry_id)",
+        "CREATE INDEX IF NOT EXISTS ix_logbook_data_points_key ON logbook_data_points(key)",
+        "CREATE INDEX IF NOT EXISTS ix_logbook_people_owner ON logbook_people(owner)",
+        "CREATE INDEX IF NOT EXISTS ix_logbook_people_canonical_name ON logbook_people(canonical_name)",
+        "CREATE INDEX IF NOT EXISTS ix_logbook_people_owner_canonical ON logbook_people(owner, canonical_name)",
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_logbook_people_owner_canonical ON logbook_people(owner, canonical_name)",
+        "CREATE INDEX IF NOT EXISTS ix_logbook_mentions_entry_id ON logbook_mentions(entry_id)",
+        "CREATE INDEX IF NOT EXISTS ix_logbook_mentions_person_id ON logbook_mentions(person_id)",
+        "CREATE INDEX IF NOT EXISTS ix_logbook_mentions_entry_person ON logbook_mentions(entry_id, person_id)",
+        "CREATE INDEX IF NOT EXISTS ix_logbook_locations_owner ON logbook_locations(owner)",
+        "CREATE INDEX IF NOT EXISTS ix_logbook_locations_canonical_name ON logbook_locations(canonical_name)",
+        "CREATE INDEX IF NOT EXISTS ix_logbook_locations_owner_canonical ON logbook_locations(owner, canonical_name)",
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_logbook_locations_owner_canonical ON logbook_locations(owner, canonical_name)",
+        "CREATE INDEX IF NOT EXISTS ix_logbook_location_mentions_entry_id ON logbook_location_mentions(entry_id)",
+        "CREATE INDEX IF NOT EXISTS ix_logbook_location_mentions_location_id ON logbook_location_mentions(location_id)",
+        "CREATE INDEX IF NOT EXISTS ix_logbook_location_mentions_entry_location ON logbook_location_mentions(entry_id, location_id)",
+        "CREATE INDEX IF NOT EXISTS ix_logbook_person_connections_owner ON logbook_person_connections(owner)",
+        "CREATE INDEX IF NOT EXISTS ix_logbook_connections_owner_status ON logbook_person_connections(owner, status)",
+        "CREATE INDEX IF NOT EXISTS ix_logbook_connections_pair ON logbook_person_connections(person_a_id, person_b_id)",
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_logbook_connections_owner_pair_type ON logbook_person_connections(owner, person_a_id, person_b_id, connection_type)",
+    ]
+    try:
+        conn = sqlite3.connect(db_path)
+        try:
+            for table, expected in table_columns.items():
+                cursor = conn.execute(f"PRAGMA table_info({table})")
+                columns = [row[1] for row in cursor.fetchall()]
+                if not columns:
+                    continue
+                for col, ddl in expected.items():
+                    if col not in columns:
+                        conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {ddl}")
+            for stmt in indexes:
+                try:
+                    conn.execute(stmt)
+                except sqlite3.IntegrityError as e:
+                    logging.getLogger(__name__).warning(f"logbook index skipped: {e}")
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"logbook migration failed: {e}")
+
+
 def _migrate_add_mode_column():
     """Add mode column to sessions table if it doesn't exist."""
     import sqlite3
@@ -1132,7 +1267,9 @@ def _migrate_assign_legacy_owner():
             "calendars", "calendar_events", "integrations",
             "scheduled_tasks", "task_runs", "crew_members",
             "gallery_albums", "gallery_people", "user_tool_data",
-            "api_tokens", "webhooks",
+            "api_tokens", "webhooks", "logbook_entries",
+            "logbook_people", "logbook_person_connections",
+            "logbook_locations",
         ]
         for table in tables:
             try:
@@ -1465,6 +1602,156 @@ class Note(TimestampMixin, Base):
     agent_session_id  = Column(String, nullable=True)
 
 
+class LogbookEntry(TimestampMixin, Base):
+    """One Markdown daily logbook entry per owner/date."""
+    __tablename__ = "logbook_entries"
+
+    id            = Column(String, primary_key=True, index=True)
+    owner         = Column(String, nullable=True, index=True)
+    entry_date    = Column(String, nullable=False, index=True)
+    title         = Column(String, nullable=False, default="Daily log")
+    content       = Column(Text, nullable=False, default="")
+    summary       = Column(Text, nullable=True)
+    mood_label    = Column(String, nullable=True)
+    mood_score    = Column(Integer, nullable=True)
+    energy_score  = Column(Integer, nullable=True)
+    stress_score  = Column(Integer, nullable=True)
+    ai_reflection = Column(Text, nullable=True)
+
+    datapoints = relationship("LogbookDataPoint", back_populates="entry", cascade="all, delete-orphan", order_by="LogbookDataPoint.sort_order")
+    mentions = relationship("LogbookMention", back_populates="entry", cascade="all, delete-orphan")
+    location_mentions = relationship("LogbookLocationMention", back_populates="entry", cascade="all, delete-orphan")
+
+    __table_args__ = (
+        UniqueConstraint("owner", "entry_date", name="uq_logbook_entries_owner_date"),
+        Index("ix_logbook_entries_owner_date", "owner", "entry_date"),
+    )
+
+
+class LogbookDataPoint(TimestampMixin, Base):
+    """Structured flexible datapoint attached to a daily entry."""
+    __tablename__ = "logbook_data_points"
+
+    id           = Column(String, primary_key=True, index=True)
+    entry_id     = Column(String, ForeignKey("logbook_entries.id", ondelete="CASCADE"), nullable=False, index=True)
+    key          = Column(String, nullable=False, index=True)
+    label        = Column(String, nullable=True)
+    value_text   = Column(Text, nullable=True)
+    value_number = Column(Float, nullable=True)
+    unit         = Column(String, nullable=True)
+    value_json   = Column(Text, nullable=True)
+    sort_order   = Column(Integer, nullable=False, default=0)
+
+    entry = relationship("LogbookEntry", back_populates="datapoints")
+
+
+class LogbookPerson(TimestampMixin, Base):
+    """A person mentioned in daily logbook entries."""
+    __tablename__ = "logbook_people"
+
+    id             = Column(String, primary_key=True, index=True)
+    owner          = Column(String, nullable=True, index=True)
+    display_name   = Column(String, nullable=False)
+    canonical_name = Column(String, nullable=False, index=True)
+    aliases        = Column(Text, nullable=True)
+    notes          = Column(Text, nullable=True)
+
+    mentions = relationship("LogbookMention", back_populates="person", cascade="all, delete-orphan")
+
+    __table_args__ = (
+        UniqueConstraint("owner", "canonical_name", name="uq_logbook_people_owner_canonical"),
+        Index("ix_logbook_people_owner_canonical", "owner", "canonical_name"),
+    )
+
+
+class LogbookMention(Base):
+    """A linked person mention in one logbook entry."""
+    __tablename__ = "logbook_mentions"
+
+    id           = Column(String, primary_key=True, index=True)
+    entry_id     = Column(String, ForeignKey("logbook_entries.id", ondelete="CASCADE"), nullable=False, index=True)
+    person_id    = Column(String, ForeignKey("logbook_people.id", ondelete="CASCADE"), nullable=False, index=True)
+    surface_text = Column(String, nullable=False)
+    start_offset = Column(Integer, nullable=True)
+    end_offset   = Column(Integer, nullable=True)
+    source       = Column(String, nullable=False, default="mention")
+    confidence   = Column(Integer, nullable=True)
+    created_at   = Column(DateTime, default=utcnow_naive, nullable=False)
+
+    entry = relationship("LogbookEntry", back_populates="mentions")
+    person = relationship("LogbookPerson", back_populates="mentions")
+
+    __table_args__ = (
+        Index("ix_logbook_mentions_entry_person", "entry_id", "person_id"),
+    )
+
+
+class LogbookLocation(TimestampMixin, Base):
+    """A place/location mentioned in daily logbook entries."""
+    __tablename__ = "logbook_locations"
+
+    id             = Column(String, primary_key=True, index=True)
+    owner          = Column(String, nullable=True, index=True)
+    display_name   = Column(String, nullable=False)
+    canonical_name = Column(String, nullable=False, index=True)
+    aliases        = Column(Text, nullable=True)
+    notes          = Column(Text, nullable=True)
+
+    mentions = relationship("LogbookLocationMention", back_populates="location", cascade="all, delete-orphan")
+
+    __table_args__ = (
+        UniqueConstraint("owner", "canonical_name", name="uq_logbook_locations_owner_canonical"),
+        Index("ix_logbook_locations_owner_canonical", "owner", "canonical_name"),
+    )
+
+
+class LogbookLocationMention(Base):
+    """A linked location mention in one logbook entry."""
+    __tablename__ = "logbook_location_mentions"
+
+    id           = Column(String, primary_key=True, index=True)
+    entry_id     = Column(String, ForeignKey("logbook_entries.id", ondelete="CASCADE"), nullable=False, index=True)
+    location_id  = Column(String, ForeignKey("logbook_locations.id", ondelete="CASCADE"), nullable=False, index=True)
+    surface_text = Column(String, nullable=False)
+    start_offset = Column(Integer, nullable=True)
+    end_offset   = Column(Integer, nullable=True)
+    source       = Column(String, nullable=False, default="location")
+    confidence   = Column(Integer, nullable=True)
+    created_at   = Column(DateTime, default=utcnow_naive, nullable=False)
+
+    entry = relationship("LogbookEntry", back_populates="location_mentions")
+    location = relationship("LogbookLocation", back_populates="mentions")
+
+    __table_args__ = (
+        Index("ix_logbook_location_mentions_entry_location", "entry_id", "location_id"),
+    )
+
+
+class LogbookPersonConnection(TimestampMixin, Base):
+    """A cautious suggested or accepted connection between two people."""
+    __tablename__ = "logbook_person_connections"
+
+    id              = Column(String, primary_key=True, index=True)
+    owner           = Column(String, nullable=True, index=True)
+    person_a_id     = Column(String, ForeignKey("logbook_people.id", ondelete="CASCADE"), nullable=False, index=True)
+    person_b_id     = Column(String, ForeignKey("logbook_people.id", ondelete="CASCADE"), nullable=False, index=True)
+    connection_type = Column(String, nullable=False, default="unknown")
+    description     = Column(Text, nullable=True)
+    strength        = Column(Integer, nullable=False, default=1)
+    confidence      = Column(Integer, nullable=False, default=0)
+    evidence_json   = Column(Text, nullable=True)
+    status          = Column(String, nullable=False, default="suggested")
+
+    person_a = relationship("LogbookPerson", foreign_keys=[person_a_id])
+    person_b = relationship("LogbookPerson", foreign_keys=[person_b_id])
+
+    __table_args__ = (
+        UniqueConstraint("owner", "person_a_id", "person_b_id", "connection_type", name="uq_logbook_connections_owner_pair_type"),
+        Index("ix_logbook_connections_owner_status", "owner", "status"),
+        Index("ix_logbook_connections_pair", "person_a_id", "person_b_id"),
+    )
+
+
 class CalendarCal(TimestampMixin, Base):
     """A calendar (e.g. 'Personal', 'TimeTree')."""
     __tablename__ = "calendars"
@@ -1602,6 +1889,7 @@ def init_db():
     _migrate_add_cached_models_column()
     _migrate_add_pinned_models_column()
     _migrate_add_notes_sort_order()
+    _migrate_logbook_schema()
     _migrate_add_model_type_column()
     _migrate_add_model_endpoint_refresh_columns()
     _migrate_add_model_endpoint_owner_column()
