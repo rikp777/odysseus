@@ -6,6 +6,7 @@ import uiModule from './ui.js';
 import * as Modals from './modalManager.js';
 import { makeWindowDraggable } from './windowDrag.js';
 import { applyEdgeDock } from './modalSnap.js';
+import { pointsWithCoordinates, pointsWithoutCoordinates, renderCoordinateMap } from './maps.js';
 import {
   createLocation,
   createPerson,
@@ -90,10 +91,6 @@ function _locationTypes() {
     if (type && !out.includes(type)) out.push(type);
   }
   return out.sort((a, b) => a.localeCompare(b));
-}
-
-function _hasCoordinate(value) {
-  return value !== null && value !== undefined && value !== '' && Number.isFinite(Number(value));
 }
 
 async function _loadAtlas() {
@@ -386,25 +383,18 @@ function _locationDetailHtml() {
 }
 
 function _mapTabHtml() {
-  const points = (_atlas.locations || []).filter(location => _hasCoordinate(location.latitude) && _hasCoordinate(location.longitude));
-  const lats = points.map(p => Number(p.latitude));
-  const lons = points.map(p => Number(p.longitude));
-  const minLat = Math.min(...lats, 0);
-  const maxLat = Math.max(...lats, 1);
-  const minLon = Math.min(...lons, 0);
-  const maxLon = Math.max(...lons, 1);
-  const latRange = maxLat - minLat || 1;
-  const lonRange = maxLon - minLon || 1;
-  const pins = points.map(location => {
-    const left = 6 + ((Number(location.longitude) - minLon) / lonRange) * 88;
-    const top = 94 - ((Number(location.latitude) - minLat) / latRange) * 88;
-    return `<button type="button" class="logbook-map-pin" style="left:${left.toFixed(2)}%;top:${top.toFixed(2)}%;" data-map-location="${_e(location.id)}" title="${_e(location.display_name)}"><span>${_e(location.display_name)}</span></button>`;
-  }).join('');
-  const noCoords = (_atlas.locations || []).filter(location => !_hasCoordinate(location.latitude) || !_hasCoordinate(location.longitude));
+  const locations = _atlas.locations || [];
+  const points = pointsWithCoordinates(locations);
+  const noCoords = pointsWithoutCoordinates(locations);
+  const map = renderCoordinateMap(locations, {
+    labelKey: 'display_name',
+    pinDataAttribute: 'data-map-location',
+    emptyText: 'Add latitude and longitude to places to pin them here.',
+  });
   return `
-    <section class="logbook-atlas-map-panel">
+    <section class="map-panel">
       <div class="logbook-section-head"><h5>Map</h5><span>${points.length} pinned</span></div>
-      <div class="logbook-atlas-map">${pins || '<div class="logbook-map-empty">Add latitude and longitude to places to pin them here.</div>'}</div>
+      ${map}
       <div class="logbook-subtitle">Needs coordinates</div>
       <div class="logbook-atlas-missing">${noCoords.map(location => `<button type="button" class="cal-btn" data-map-location="${_e(location.id)}">#${_e(location.display_name)}</button>`).join('') || '<div class="logbook-empty">All places with coordinates are pinned.</div>'}</div>
     </section>

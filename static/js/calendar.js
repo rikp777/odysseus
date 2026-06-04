@@ -8,6 +8,7 @@ import * as Modals from './modalManager.js';
 import { makeWindowDraggable } from './windowDrag.js';
 import { attachColorPicker } from './colorPicker.js';
 import { bindMenuDismiss } from './escMenuStack.js';
+import { mapSearchUrl } from './maps.js';
 import {
   WEEKDAYS, MONTHS, MON_SHORT,
   CAL_PALETTE, CAL_COLORS, _CAL_CUSTOM_GRADIENT, _TYPE_PALETTE,
@@ -2978,7 +2979,7 @@ function _showEventForm(existing, defaultDate, defaultEndDate) {
       locMap.setAttribute('aria-disabled', 'true');
     } else {
       locMap.classList.remove('is-disabled');
-      locMap.setAttribute('href', 'https://maps.apple.com/?q=' + encodeURIComponent(v));
+      locMap.setAttribute('href', mapSearchUrl(v, { provider: 'apple' }));
       locMap.setAttribute('tabindex', '0');
       locMap.removeAttribute('aria-disabled');
     }
@@ -3129,7 +3130,7 @@ function _locHTML(loc) {
     }).replace(/\n/g, '<br>');
   }
   // No URL — link the whole thing to OpenStreetMap.
-  const mapUrl = 'https://www.openstreetmap.org/search?query=' + encodeURIComponent(loc);
+  const mapUrl = mapSearchUrl(loc);
   return `<a href="${mapUrl}" target="_blank" rel="noopener" onclick="event.stopPropagation();" title="Open in OpenStreetMap">${_e(loc)}</a>`;
 }
 

@@ -37888,7 +37888,7 @@ body.theme-frosted .modal {
 
 .logbook-atlas-list,
 .logbook-atlas-detail,
-.logbook-atlas-map-panel,
+.map-panel,
 .logbook-atlas-connections {
   min-height: 0;
   overflow: auto;
@@ -38107,12 +38107,12 @@ body.theme-frosted .modal {
   grid-template-columns: 1fr;
 }
 
-.logbook-atlas-map-panel {
+.map-panel {
   display: grid;
   gap: 10px;
 }
 
-.logbook-atlas-map {
+.geo-map {
   position: relative;
   min-height: 430px;
   border: 1px solid var(--border);
@@ -38125,7 +38125,7 @@ body.theme-frosted .modal {
   background-size: 36px 36px;
 }
 
-.logbook-map-pin {
+.geo-map-pin {
   position: absolute;
   transform: translate(-50%, -50%);
   min-width: 14px;
@@ -38137,7 +38137,7 @@ body.theme-frosted .modal {
   cursor: pointer;
 }
 
-.logbook-map-pin span {
+.geo-map-pin span {
   position: absolute;
   left: 12px;
   top: -8px;
@@ -38152,7 +38152,7 @@ body.theme-frosted .modal {
   font-size: 11px;
 }
 
-.logbook-map-empty {
+.geo-map-empty {
   position: absolute;
   inset: 0;
   display: grid;
@@ -38213,7 +38213,7 @@ body.theme-frosted .modal {
     grid-template-columns: 1fr;
   }
 
-  .logbook-atlas-map {
+  .geo-map {
     min-height: 340px;
   }
 }
