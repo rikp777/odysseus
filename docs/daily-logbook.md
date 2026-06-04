@@ -10,6 +10,7 @@ Open it from the app navigation or go directly to `/logbook`.
 - You can move to yesterday, tomorrow, today, or pick a date.
 - Each owner can have one primary entry per date.
 - Entries support Markdown content, an optional title, autosave, and a manual save button.
+- Meaningful edits keep saved-version history. Use History in the entry editor to preview previous saved versions before restoring one; restore first saves the current entry as another revision.
 - AI suggestions are preview-first. They do not overwrite the entry until you apply them.
 
 ## Mood And Datapoints

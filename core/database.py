@@ -1068,6 +1068,23 @@ def _migrate_logbook_schema():
             "created_at": "DATETIME",
             "updated_at": "DATETIME",
         },
+        "logbook_entry_revisions": {
+            "entry_id": "TEXT",
+            "owner": "TEXT",
+            "entry_date": "TEXT",
+            "source": "TEXT DEFAULT 'manual_save'",
+            "reason": "TEXT",
+            "title": "TEXT DEFAULT 'Daily log'",
+            "content": "TEXT DEFAULT ''",
+            "summary": "TEXT",
+            "mood_label": "TEXT",
+            "mood_score": "INTEGER",
+            "energy_score": "INTEGER",
+            "stress_score": "INTEGER",
+            "ai_reflection": "TEXT",
+            "datapoints_json": "TEXT",
+            "created_at": "DATETIME",
+        },
     }
     indexes = [
         "CREATE INDEX IF NOT EXISTS ix_logbook_entries_owner ON logbook_entries(owner)",
@@ -1097,10 +1114,34 @@ def _migrate_logbook_schema():
         "CREATE INDEX IF NOT EXISTS ix_logbook_connections_owner_status ON logbook_person_connections(owner, status)",
         "CREATE INDEX IF NOT EXISTS ix_logbook_connections_pair ON logbook_person_connections(person_a_id, person_b_id)",
         "CREATE UNIQUE INDEX IF NOT EXISTS uq_logbook_connections_owner_pair_type ON logbook_person_connections(owner, person_a_id, person_b_id, connection_type)",
+        "CREATE INDEX IF NOT EXISTS ix_logbook_entry_revisions_entry_id ON logbook_entry_revisions(entry_id)",
+        "CREATE INDEX IF NOT EXISTS ix_logbook_entry_revisions_owner ON logbook_entry_revisions(owner)",
+        "CREATE INDEX IF NOT EXISTS ix_logbook_entry_revisions_entry_created ON logbook_entry_revisions(entry_id, created_at)",
     ]
     try:
         conn = sqlite3.connect(db_path)
         try:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS logbook_entry_revisions (
+                    id TEXT PRIMARY KEY,
+                    entry_id TEXT NOT NULL,
+                    owner TEXT,
+                    entry_date TEXT NOT NULL,
+                    source TEXT DEFAULT 'manual_save',
+                    reason TEXT,
+                    title TEXT DEFAULT 'Daily log',
+                    content TEXT DEFAULT '',
+                    summary TEXT,
+                    mood_label TEXT,
+                    mood_score INTEGER,
+                    energy_score INTEGER,
+                    stress_score INTEGER,
+                    ai_reflection TEXT,
+                    datapoints_json TEXT,
+                    created_at DATETIME,
+                    FOREIGN KEY(entry_id) REFERENCES logbook_entries(id) ON DELETE CASCADE
+                )
+            """)
             for table, expected in table_columns.items():
                 cursor = conn.execute(f"PRAGMA table_info({table})")
                 columns = [row[1] for row in cursor.fetchall()]
@@ -1635,10 +1676,39 @@ class LogbookEntry(TimestampMixin, Base):
     datapoints = relationship("LogbookDataPoint", back_populates="entry", cascade="all, delete-orphan", order_by="LogbookDataPoint.sort_order")
     mentions = relationship("LogbookMention", back_populates="entry", cascade="all, delete-orphan")
     location_mentions = relationship("LogbookLocationMention", back_populates="entry", cascade="all, delete-orphan")
+    revisions = relationship("LogbookEntryRevision", back_populates="entry", cascade="all, delete-orphan")
 
     __table_args__ = (
         UniqueConstraint("owner", "entry_date", name="uq_logbook_entries_owner_date"),
         Index("ix_logbook_entries_owner_date", "owner", "entry_date"),
+    )
+
+
+class LogbookEntryRevision(Base):
+    """A restorable snapshot of a logbook entry before it changed."""
+    __tablename__ = "logbook_entry_revisions"
+
+    id              = Column(String, primary_key=True, index=True)
+    entry_id        = Column(String, ForeignKey("logbook_entries.id", ondelete="CASCADE"), nullable=False, index=True)
+    owner           = Column(String, nullable=True, index=True)
+    entry_date      = Column(String, nullable=False, index=True)
+    source          = Column(String, nullable=False, default="manual_save")
+    reason          = Column(Text, nullable=True)
+    title           = Column(String, nullable=False, default="Daily log")
+    content         = Column(Text, nullable=False, default="")
+    summary         = Column(Text, nullable=True)
+    mood_label      = Column(String, nullable=True)
+    mood_score      = Column(Integer, nullable=True)
+    energy_score    = Column(Integer, nullable=True)
+    stress_score    = Column(Integer, nullable=True)
+    ai_reflection   = Column(Text, nullable=True)
+    datapoints_json = Column(Text, nullable=True)
+    created_at      = Column(DateTime, default=utcnow_naive, nullable=False)
+
+    entry = relationship("LogbookEntry", back_populates="revisions")
+
+    __table_args__ = (
+        Index("ix_logbook_entry_revisions_entry_created", "entry_id", "created_at"),
     )
 
 

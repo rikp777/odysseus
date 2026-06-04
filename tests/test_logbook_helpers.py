@@ -1,8 +1,13 @@
 from types import SimpleNamespace
 from datetime import datetime
 
+import pytest
+
 import src.logbook.utils as logbook_utils
-from src.logbook.ai import normalize_ai_payload
+from fastapi import HTTPException
+
+from src.logbook.ai import local_ai_fallback_payload, normalize_ai_payload, run_ai_assist
+from src.logbook.schemas import LogbookAIAssist
 from src.logbook.serializers import entry_to_dict
 from src.logbook.utils import (
     canonical_name,
@@ -35,20 +40,20 @@ def test_logbook_canonical_name_normalizes_aliases():
 
 
 def test_logbook_person_link_parser_supports_custom_markdown():
-    links = parse_person_links("Thee met [Jeanine](person:jeanine_peeters) en [Fien](fien_peeters).")
+    links = parse_person_links("Thee met [Nora](person:nora_smit) en [Mila](mila_jansen).")
 
     assert [(link["name"], link["target_name"], link["target_slug"]) for link in links] == [
-        ("Jeanine", "jeanine peeters", "jeanine_peeters"),
-        ("Fien", "fien peeters", "fien_peeters"),
+        ("Nora", "nora smit", "nora_smit"),
+        ("Mila", "mila jansen", "mila_jansen"),
     ]
 
 
 def test_logbook_location_link_parser_supports_custom_markdown():
-    links = parse_location_links("Thuis in [Panningen](place:panningen), later bij [oma](location:fien_huis).")
+    links = parse_location_links("Thuis in [Meerstad](place:meerstad), later bij [studio](location:studio_noord).")
 
     assert [(link["name"], link["target_name"], link["target_slug"]) for link in links] == [
-        ("Panningen", "panningen", "panningen"),
-        ("oma", "fien huis", "fien_huis"),
+        ("Meerstad", "meerstad", "meerstad"),
+        ("studio", "studio noord", "studio_noord"),
     ]
 
 
@@ -62,22 +67,22 @@ def test_logbook_data_link_parser_supports_food_datapoints():
 
 
 def test_logbook_known_entity_matches_normal_text_without_marker():
-    thijmen = SimpleNamespace(id="p1", display_name="Thijmen van der Kop", aliases='["Thijmen"]')
-    ge = SimpleNamespace(id="p2", display_name="Ge", aliases=None)
+    milan = SimpleNamespace(id="p1", display_name="Milan de Vries", aliases='["Milan"]')
+    noor = SimpleNamespace(id="p2", display_name="Noor", aliases=None)
 
     matches = known_entity_matches(
-        "Rik zag Thijmen van der Kop en Ge in Panningen. @Thijmen telt niet dubbel.",
-        [thijmen, ge],
+        "Alex zag Milan de Vries en Noor in Meerstad. @Milan telt niet dubbel.",
+        [milan, noor],
     )
 
     assert [(m["row"].id, m["surface_text"]) for m in matches] == [
-        ("p1", "Thijmen van der Kop"),
-        ("p2", "Ge"),
+        ("p1", "Milan de Vries"),
+        ("p2", "Noor"),
     ]
 
     blocked = known_entity_matches(
-        "Rik zag [Thijmen van der Kop](person:thijmen_van_der_kop).",
-        [thijmen],
+        "Alex zag [Milan de Vries](person:milan_de_vries).",
+        [milan],
         blocked_ranges=[(8, 55)],
     )
     assert blocked == []
@@ -122,14 +127,85 @@ def test_logbook_ai_normalization_keeps_questions_short_and_adds_deterministic_s
     result = normalize_ai_payload(
         "extract_all",
         {"questions": ["One?", "Two?", "Three?", "Four?"]},
-        "Training with @Jan at #Gym. Ontbijt: [eiwitrijk ontbijt](data:food). Later in [Panningen](place:panningen).",
+        "Training with @Jan at #Gym. Ontbijt: [eiwitrijk ontbijt](data:food). Later in [Meerstad](place:meerstad).",
     )
 
     assert result["questions"] == ["One?", "Two?", "Three?"]
     assert result["people_suggestions"][0]["display_name"] == "Jan"
-    assert [item["display_name"] for item in result["location_suggestions"]] == ["Panningen", "Gym"]
+    assert [item["display_name"] for item in result["location_suggestions"]] == ["Meerstad", "Gym"]
     assert result["datapoint_suggestions"][0]["key"] == "food"
     assert result["connection_suggestions"] == []
+
+
+def test_logbook_local_ai_fallback_extracts_obvious_dutch_prose_hints():
+    content = (
+        "Alex stond vroeg op in zijn ouderlijk huis in Meerstad. Na een eiwitrijk ontbijt - uiteraard zonder suiker - "
+        "stapte hij op de fiets. In de keuken trof hij zijn ouders, Nora en Sam, die al bezig waren met de dagelijkse routine.\n\n"
+        "Daar kwam hij onverwacht Milan de Vries tegen.\n\n"
+        "Tegen de middag fietste hij door naar zijn oma, Lena Jansen. Ze dronken samen een kop thee.\n\n"
+        "Bij terugkomst thuis trof hij zijn zus, Tess Bakker, in de tuin. Hij sloot de dag af met een voldaan gevoel."
+    )
+
+    result = local_ai_fallback_payload(
+        "extract_all",
+        content,
+        owner="alex",
+        warning="AI provider timed out; showing local suggestions only.",
+    )
+
+    people = {item["display_name"] for item in result["people_suggestions"]}
+    locations = {item["display_name"] for item in result["location_suggestions"]}
+    datapoints = {(item["key"], item["value_text"]) for item in result["datapoint_suggestions"]}
+
+    assert result["fallback"] is True
+    assert "timed out" in result["warning"]
+    assert "Alex" not in people
+    assert "In de" not in people
+    assert "Tegen de" not in people
+    assert {"Nora", "Sam", "Milan de Vries", "Lena Jansen", "Tess Bakker"} <= people
+    assert {"Meerstad", "Ouderlijk huis", "Centrum", "Thuis", "Tuin"} & locations
+    assert ("food", "eiwitrijk ontbijt") in datapoints
+    assert ("nutrition", "zonder suiker") in datapoints
+    assert ("drink", "thee") in datapoints
+    assert result["mood_suggestion"]["label"] == "voldaan"
+    assert "[Milan de Vries](person:milan_de_vries)" in result["preview_content"]
+    assert "[Meerstad](place:meerstad)" in result["preview_content"]
+    assert "[eiwitrijk ontbijt](data:food)" in result["preview_content"]
+
+
+@pytest.mark.parametrize("status_code", [404, 504])
+@pytest.mark.asyncio
+async def test_logbook_ai_assist_returns_local_fallback_on_provider_error(monkeypatch, status_code):
+    import src.endpoint_resolver as endpoint_resolver
+    import src.llm_core as llm_core
+
+    call_kwargs = {}
+
+    async def timeout_call(**kwargs):
+        call_kwargs.update(kwargs)
+        raise HTTPException(status_code, "Provider failure")
+
+    monkeypatch.setattr(endpoint_resolver, "resolve_endpoint", lambda *_args, **_kwargs: ("https://llm.example", "model", {}))
+    monkeypatch.setattr(llm_core, "llm_call_async", timeout_call)
+
+    result = await run_ai_assist(
+        "alex",
+        LogbookAIAssist(
+            entry_date="2099-01-02",
+            mode="extract_all",
+            locale="nl",
+            content="Alex zag Milan de Vries in Meerstad na een eiwitrijk ontbijt.",
+        ),
+    )
+
+    assert result["ok"] is True
+    assert result["fallback"] is True
+    assert str(status_code) in result["warning"]
+    assert call_kwargs["timeout"] == 25
+    assert call_kwargs["max_retries"] == 1
+    assert result["people_suggestions"][0]["display_name"] == "Milan de Vries"
+    assert result["location_suggestions"][0]["display_name"] == "Meerstad"
+    assert "[Milan de Vries](person:milan_de_vries)" in result["preview_content"]
 
 
 def test_logbook_entry_serializer_counts_unique_people_and_locations():

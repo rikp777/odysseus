@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import itertools
 import json
+import re
 import uuid
 from typing import Any, Dict, List
 
@@ -26,8 +27,347 @@ from src.logbook.utils import (
     parse_locations,
     parse_mentions,
     parse_person_links,
+    slug_name,
     validate_date,
 )
+
+
+FALLBACK_AI_MODES = {"structure_day", "extract_people", "extract_locations", "extract_all"}
+NAME_WORD = r"[A-Z][A-Za-z'_-]{1,40}"
+NAME_PARTICLE = r"(?:van|de|der|den|ten|ter|von|da|del|di|la|le|du)"
+FULL_NAME_RE = re.compile(rf"(?<![\w@#])(?P<name>{NAME_WORD}(?:\s+(?:{NAME_PARTICLE}|{NAME_WORD})){{1,4}})(?![\w-])")
+CONTEXT_NAME_RE = re.compile(
+    r"\b(?:ouders|moeder|vader|zus|broer|oma|opa|vriend|vriendin|collega|collega's|partner|"
+    r"buurman|buurvrouw|neef|nicht)\s*,\s*(?P<names>[^.;\n]{1,140})",
+    re.IGNORECASE,
+)
+CONTEXT_STOP_RE = re.compile(r"\b(?:die|dat|waar|in|op|bij|tegen|voordat|nadat|omdat|toen)\b", re.IGNORECASE)
+SINGLE_NAME_RE = re.compile(rf"(?<![\w@#])(?P<name>{NAME_WORD})(?![\w-])")
+CAPITAL_LOCATION_RE = re.compile(
+    rf"\b(?:in|naar|door|langs|vanuit|rond|bij)\s+(?:het|de|den|een)?\s*"
+    rf"(?P<name>{NAME_WORD}(?:\s+(?:{NAME_PARTICLE}|{NAME_WORD})){{0,3}})(?![\w-])"
+)
+PERSON_STOPWORDS = {
+    "bij",
+    "de",
+    "een",
+    "en",
+    "het",
+    "hij",
+    "in",
+    "na",
+    "op",
+    "tegen",
+    "ze",
+    "zij",
+    "zijn",
+}
+COMMON_PLACE_HINTS = (
+    ("ouderlijk huis", "Ouderlijk huis", 68),
+    ("centrum", "Centrum", 64),
+    ("thuis", "Thuis", 62),
+    ("tuin", "Tuin", 58),
+)
+
+
+def _overlaps(start: int, end: int, ranges: List[tuple[int, int]]) -> bool:
+    return any(start < blocked_end and end > blocked_start for blocked_start, blocked_end in ranges)
+
+
+def _self_name(name: str, owner: str) -> bool:
+    canonical = canonical_name(name)
+    owner_name = canonical_name(owner)
+    compact = canonical.replace(" ", "")
+    return bool(owner_name and compact and (canonical == owner_name or (len(compact) >= 3 and owner_name.startswith(compact))))
+
+
+def _add_person_hint(
+    people: List[Dict[str, Any]],
+    seen: set[str],
+    owner: str,
+    name: str,
+    surface_text: str,
+    start: int,
+    end: int,
+    *,
+    confidence: int,
+    reason: str,
+    allow_single: bool = False,
+) -> None:
+    display_name = re.sub(r"\s+", " ", (name or "").strip(" ,"))
+    surface = re.sub(r"\s+", " ", (surface_text or display_name).strip(" ,"))
+    canonical = canonical_name(display_name)
+    compact = canonical.replace(" ", "")
+    if not canonical or len(compact) < 2 or canonical in seen:
+        return
+    if not allow_single and " " not in canonical:
+        return
+    parts = canonical.split()
+    if canonical in PERSON_STOPWORDS or (parts and parts[0] in PERSON_STOPWORDS) or _self_name(display_name, owner):
+        return
+    seen.add(canonical)
+    people.append({
+        "display_name": display_name,
+        "surface_text": surface,
+        "confidence": confidence,
+        "reason": reason,
+        "start_offset": start,
+        "end_offset": end,
+    })
+
+
+def _add_location_hint(
+    locations: List[Dict[str, Any]],
+    seen: set[str],
+    people_seen: set[str],
+    name: str,
+    surface_text: str,
+    start: int,
+    end: int,
+    *,
+    confidence: int,
+    reason: str,
+) -> None:
+    display_name = re.sub(r"\s+", " ", (name or "").strip(" ,"))
+    surface = re.sub(r"\s+", " ", (surface_text or display_name).strip(" ,"))
+    canonical = canonical_name(display_name)
+    if not canonical or canonical in seen or canonical in people_seen:
+        return
+    seen.add(canonical)
+    locations.append({
+        "display_name": display_name,
+        "surface_text": surface,
+        "confidence": confidence,
+        "reason": reason,
+        "start_offset": start,
+        "end_offset": end,
+    })
+
+
+def _add_datapoint_hint(
+    datapoints: List[Dict[str, Any]],
+    seen: set[tuple[str, str]],
+    key: str,
+    label: str,
+    value_text: str,
+    surface_text: str,
+    start: int,
+    end: int,
+    *,
+    confidence: int,
+    reason: str,
+) -> None:
+    value = re.sub(r"\s+", " ", (value_text or "").strip(" ,"))
+    clean = canonical_name(key).replace(" ", "_")
+    dedupe = (clean, value.lower())
+    if not clean or not value or dedupe in seen:
+        return
+    seen.add(dedupe)
+    datapoints.append({
+        "key": clean,
+        "label": label,
+        "value_text": value,
+        "value_number": None,
+        "unit": None,
+        "confidence": confidence,
+        "reason": reason,
+        "surface_text": surface_text,
+        "start_offset": start,
+        "end_offset": end,
+    })
+
+
+def prose_fallback_suggestions(content: str, owner: str = "") -> Dict[str, Any]:
+    text = content or ""
+    people: List[Dict[str, Any]] = []
+    people_seen: set[str] = set()
+    for match in FULL_NAME_RE.finditer(text):
+        _add_person_hint(
+            people,
+            people_seen,
+            owner,
+            match.group("name"),
+            match.group("name"),
+            match.start("name"),
+            match.end("name"),
+            confidence=72,
+            reason="Fallback prose name hint",
+        )
+
+    for context in CONTEXT_NAME_RE.finditer(text):
+        segment_start = context.start("names")
+        segment = CONTEXT_STOP_RE.split(context.group("names"), maxsplit=1)[0]
+        occupied: List[tuple[int, int]] = []
+        for match in FULL_NAME_RE.finditer(segment):
+            start = segment_start + match.start("name")
+            end = segment_start + match.end("name")
+            occupied.append((start, end))
+            _add_person_hint(
+                people,
+                people_seen,
+                owner,
+                match.group("name"),
+                text[start:end],
+                start,
+                end,
+                confidence=76,
+                reason="Fallback relation name hint",
+            )
+        for match in SINGLE_NAME_RE.finditer(segment):
+            start = segment_start + match.start("name")
+            end = segment_start + match.end("name")
+            if _overlaps(start, end, occupied):
+                continue
+            _add_person_hint(
+                people,
+                people_seen,
+                owner,
+                match.group("name"),
+                text[start:end],
+                start,
+                end,
+                confidence=66,
+                reason="Fallback relation name hint",
+                allow_single=True,
+            )
+
+    locations: List[Dict[str, Any]] = []
+    locations_seen: set[str] = set()
+    for match in CAPITAL_LOCATION_RE.finditer(text):
+        _add_location_hint(
+            locations,
+            locations_seen,
+            people_seen,
+            match.group("name"),
+            match.group("name"),
+            match.start("name"),
+            match.end("name"),
+            confidence=70,
+            reason="Fallback place hint",
+        )
+    lower_text = text.lower()
+    for phrase, display_name, confidence in COMMON_PLACE_HINTS:
+        match = re.search(rf"(?<!\w){re.escape(phrase)}(?!\w)", lower_text)
+        if not match:
+            continue
+        _add_location_hint(
+            locations,
+            locations_seen,
+            people_seen,
+            display_name,
+            text[match.start():match.end()],
+            match.start(),
+            match.end(),
+            confidence=confidence,
+            reason="Fallback place hint",
+        )
+
+    datapoints: List[Dict[str, Any]] = []
+    datapoints_seen: set[tuple[str, str]] = set()
+    data_patterns = (
+        ("food", "Food", r"\beiwitrijk ontbijt\b", "eiwitrijk ontbijt", 74),
+        ("nutrition", "Nutrition", r"\bzonder suiker\b", "zonder suiker", 68),
+        ("drink", "Drink", r"\b(?:kop\s+)?thee\b", "thee", 70),
+    )
+    for key, label, pattern, value, confidence in data_patterns:
+        match = re.search(pattern, text, re.IGNORECASE)
+        if not match:
+            continue
+        _add_datapoint_hint(
+            datapoints,
+            datapoints_seen,
+            key,
+            label,
+            value,
+            text[match.start():match.end()],
+            match.start(),
+            match.end(),
+            confidence=confidence,
+            reason="Fallback daily data hint",
+        )
+
+    mood = None
+    if re.search(r"\bvoldaan(?:\s+gevoel)?\b", text, re.IGNORECASE):
+        mood = {
+            "label": "voldaan",
+            "score": 4,
+            "confidence": 70,
+            "reason": "Fallback mood hint",
+        }
+
+    return {
+        "people_suggestions": people,
+        "datapoint_suggestions": datapoints,
+        "location_suggestions": locations,
+        "connection_suggestions": [],
+        "mood_suggestion": mood,
+    }
+
+
+def _linked_ranges(content: str) -> List[tuple[int, int]]:
+    ranges: List[tuple[int, int]] = []
+    for parser in (parse_person_links, parse_location_links, parse_data_links):
+        for item in parser(content or ""):
+            start = item.get("start_offset")
+            end = item.get("end_offset")
+            if isinstance(start, int) and isinstance(end, int):
+                ranges.append((start, end))
+    return ranges
+
+
+def _fallback_preview_content(content: str, suggestions: Dict[str, Any]) -> str | None:
+    text = content or ""
+    replacements: List[tuple[int, int, str]] = []
+    for person in suggestions.get("people_suggestions") or []:
+        start = person.get("start_offset")
+        end = person.get("end_offset")
+        display = str(person.get("display_name") or "").strip()
+        if not isinstance(start, int) or not isinstance(end, int) or not display:
+            continue
+        replacements.append((start, end, f"[{text[start:end]}](person:{slug_name(display)})"))
+    for location in suggestions.get("location_suggestions") or []:
+        start = location.get("start_offset")
+        end = location.get("end_offset")
+        display = str(location.get("display_name") or "").strip()
+        if not isinstance(start, int) or not isinstance(end, int) or not display:
+            continue
+        replacements.append((start, end, f"[{text[start:end]}](place:{slug_name(display)})"))
+    for datapoint in suggestions.get("datapoint_suggestions") or []:
+        start = datapoint.get("start_offset")
+        end = datapoint.get("end_offset")
+        key = canonical_name(str(datapoint.get("key") or "")).replace(" ", "_")
+        if not isinstance(start, int) or not isinstance(end, int) or not key:
+            continue
+        replacements.append((start, end, f"[{text[start:end]}](data:{key})"))
+
+    blocked = _linked_ranges(text)
+    used: List[tuple[int, int]] = []
+    selected: List[tuple[int, int, str]] = []
+    for start, end, replacement in sorted(replacements, key=lambda item: (item[0], -(item[1] - item[0]))):
+        if start < 0 or end <= start or end > len(text):
+            continue
+        if _overlaps(start, end, blocked) or _overlaps(start, end, used):
+            continue
+        used.append((start, end))
+        selected.append((start, end, replacement))
+    if not selected:
+        return None
+    preview = text
+    for start, end, replacement in sorted(selected, key=lambda item: item[0], reverse=True):
+        preview = preview[:start] + replacement + preview[end:]
+    return preview
+
+
+def local_ai_fallback_payload(mode: str, content: str, *, owner: str = "", warning: str | None = None) -> Dict[str, Any]:
+    suggestions = prose_fallback_suggestions(content, owner=owner)
+    raw: Dict[str, Any] = {
+        **suggestions,
+        "fallback": True,
+        "warning": warning or "AI provider failed; showing local suggestions only.",
+    }
+    if mode in {"structure_day", "extract_all"}:
+        raw["preview_content"] = _fallback_preview_content(content or "", suggestions)
+    return normalize_ai_payload(mode, raw, content or "")
 
 
 def deterministic_ai_suggestions(content: str) -> Dict[str, Any]:
@@ -128,6 +468,8 @@ def normalize_ai_payload(mode: str, raw: Dict[str, Any], content: str) -> Dict[s
         "location_suggestions": raw.get("location_suggestions") if isinstance(raw.get("location_suggestions"), list) else [],
         "connection_suggestions": raw.get("connection_suggestions") if isinstance(raw.get("connection_suggestions"), list) else [],
         "reflection": raw.get("reflection"),
+        "fallback": bool(raw.get("fallback")),
+        "warning": raw.get("warning") if isinstance(raw.get("warning"), str) else None,
     }
     if mode in {"clean_spelling", "structure_day"} and not out["preview_content"]:
         out["preview_content"] = raw.get("content") or content
@@ -169,8 +511,8 @@ def ai_system_prompt(mode: str, locale: str) -> str:
         "For reflect, give a gentle reflection, not therapy or medical advice. "
         "For people, locations, and connections, use only evidence from the supplied logbook text. "
         "When mode is structure_day or extract_all, return preview_content that preserves the user's text but marks "
-        "confident person mentions as Markdown links like [Jeanine](person:jeanine_peeters). "
-        "Mark confident locations as Markdown links like [Panningen](place:panningen). "
+        "confident person mentions as Markdown links like [Nora](person:nora_smit). "
+        "Mark confident locations as Markdown links like [Meerstad](place:meerstad). "
         "Mark food or other trackable daily data as data links like [eiwitrijk ontbijt](data:food). "
         "Use lower_snake_case slugs. Do not link uncertain names or vague places. "
         "Locations are places such as home, gym, office, city, route, venue, or clinic. "
@@ -245,12 +587,28 @@ async def run_ai_assist(owner: str, payload: LogbookAIAssist) -> JSONResponse | 
             temperature=0.2 if mode in {"extract_people", "extract_all", "summarize"} else 0.4,
             max_tokens=1600,
             headers=headers,
-            timeout=45,
+            timeout=25,
+            max_retries=1,
             owner=owner,
         )
     except HTTPException as exc:
+        if mode in FALLBACK_AI_MODES:
+            status_code = int(getattr(exc, "status_code", 500) or 500)
+            return local_ai_fallback_payload(
+                mode,
+                payload.content or "",
+                owner=owner,
+                warning=f"AI provider returned {status_code}; showing local suggestions only.",
+            )
         return JSONResponse(status_code=exc.status_code, content={"ok": False, "error": str(exc.detail)})
     except Exception:
+        if mode in FALLBACK_AI_MODES:
+            return local_ai_fallback_payload(
+                mode,
+                payload.content or "",
+                owner=owner,
+                warning="AI provider failed; showing local suggestions only.",
+            )
         return JSONResponse(status_code=503, content={"ok": False, "error": "AI assist failed. Your entry was not changed."})
     cleaned = strip_think(raw or "", prose=True, prompt_echo=True)
     return normalize_ai_payload(mode, extract_json_object(cleaned), payload.content or "")

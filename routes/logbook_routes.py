@@ -216,6 +216,7 @@ def setup_logbook_routes() -> APIRouter:
                 LogbookEntry.owner == owner,
                 LogbookEntry.entry_date == entry_date,
             ).first()
+            revision_needed = entry is not None and logbook_repo.entry_will_change(entry, body)
             if not entry:
                 entry = LogbookEntry(
                     id=str(uuid.uuid4()),
@@ -226,6 +227,8 @@ def setup_logbook_routes() -> APIRouter:
                 )
                 db.add(entry)
                 db.flush()
+            elif revision_needed:
+                logbook_repo.create_entry_revision(db, entry, source="manual_save")
             content_changed = logbook_repo.apply_entry_fields(entry, body)
             if body.datapoints is not None:
                 logbook_repo.replace_datapoints(db, entry, body.datapoints)
@@ -248,6 +251,8 @@ def setup_logbook_routes() -> APIRouter:
         db = SessionLocal()
         try:
             entry = logbook_repo.load_entry_or_404(db, owner, entry_id)
+            if logbook_repo.entry_will_change(entry, body):
+                logbook_repo.create_entry_revision(db, entry, source="manual_save")
             content_changed = logbook_repo.apply_entry_fields(entry, body)
             if body.datapoints is not None:
                 logbook_repo.replace_datapoints(db, entry, body.datapoints)
@@ -258,6 +263,52 @@ def setup_logbook_routes() -> APIRouter:
             db.commit()
             entry = logbook_repo.entry_query(db, owner).filter(LogbookEntry.id == entry_id).first()
             return logbook_serializers.entry_to_dict(entry)
+        finally:
+            db.close()
+
+    @router.get("/entry/{entry_id}/revisions")
+    def list_entry_revisions(request: Request, entry_id: str, limit: int = 20):
+        owner = _owner(request)
+        db = SessionLocal()
+        try:
+            entry = logbook_repo.load_entry_or_404(db, owner, entry_id)
+            revisions = logbook_repo.entry_revisions(db, owner, entry.id, limit=limit)
+            return {"revisions": [logbook_serializers.revision_to_dict(revision) for revision in revisions]}
+        finally:
+            db.close()
+
+    @router.get("/entry/{entry_id}/revisions/{revision_id}")
+    def get_entry_revision(request: Request, entry_id: str, revision_id: str):
+        owner = _owner(request)
+        db = SessionLocal()
+        try:
+            logbook_repo.load_entry_or_404(db, owner, entry_id)
+            revision = logbook_repo.load_entry_revision_or_404(db, owner, entry_id, revision_id)
+            return logbook_serializers.revision_to_dict(revision, full=True)
+        finally:
+            db.close()
+
+    @router.post("/entry/{entry_id}/revisions/{revision_id}/restore")
+    def restore_entry_revision(request: Request, entry_id: str, revision_id: str):
+        owner = _owner(request)
+        db = SessionLocal()
+        try:
+            entry = logbook_repo.load_entry_or_404(db, owner, entry_id)
+            revision = logbook_repo.load_entry_revision_or_404(db, owner, entry_id, revision_id)
+            logbook_repo.create_entry_revision(
+                db,
+                entry,
+                source="restore",
+                reason=f"Before restoring revision {revision_id}",
+            )
+            logbook_repo.restore_entry_revision(db, owner, entry, revision)
+            db.commit()
+            entry = logbook_repo.entry_query(db, owner).filter(LogbookEntry.id == entry_id).first()
+            return {
+                "ok": True,
+                "entry": logbook_serializers.entry_to_dict(entry),
+                "revision": logbook_serializers.revision_to_dict(revision),
+            }
         finally:
             db.close()
 

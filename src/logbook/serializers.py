@@ -7,13 +7,14 @@ from typing import Any, Dict
 from core.database import (
     LogbookDataPoint,
     LogbookEntry,
+    LogbookEntryRevision,
     LogbookLocation,
     LogbookLocationMention,
     LogbookMention,
     LogbookPerson,
     LogbookPersonConnection,
 )
-from src.logbook.utils import aliases, json_load
+from src.logbook.utils import aliases, entry_snippet, json_load
 
 
 def person_to_dict(person: LogbookPerson) -> Dict[str, Any]:
@@ -120,6 +121,33 @@ def connection_to_dict(conn: LogbookPersonConnection) -> Dict[str, Any]:
     }
 
 
+def revision_to_dict(revision: LogbookEntryRevision, *, full: bool = False) -> Dict[str, Any]:
+    datapoints = json_load(getattr(revision, "datapoints_json", None), [])
+    datapoints = datapoints if isinstance(datapoints, list) else []
+    data = {
+        "id": revision.id,
+        "entry_id": revision.entry_id,
+        "owner": revision.owner,
+        "entry_date": revision.entry_date,
+        "source": revision.source,
+        "reason": revision.reason,
+        "title": revision.title,
+        "summary": revision.summary,
+        "mood_label": revision.mood_label,
+        "mood_score": revision.mood_score,
+        "energy_score": revision.energy_score,
+        "stress_score": revision.stress_score,
+        "datapoint_count": len(datapoints),
+        "snippet": entry_snippet(revision.content or revision.summary or "", 140),
+        "created_at": revision.created_at.isoformat() if revision.created_at else None,
+    }
+    if full:
+        data["content"] = revision.content or ""
+        data["ai_reflection"] = revision.ai_reflection
+        data["datapoints"] = datapoints
+    return data
+
+
 def entry_to_dict(entry: LogbookEntry, *, full: bool = True) -> Dict[str, Any]:
     mentions = list(entry.mentions or [])
     location_mentions = list(entry.location_mentions or [])
@@ -149,6 +177,7 @@ def entry_to_dict(entry: LogbookEntry, *, full: bool = True) -> Dict[str, Any]:
         "people_count": len(people_by_id),
         "location_mention_count": len(location_mentions),
         "location_count": len(locations_by_id),
+        "snippet": entry_snippet(entry.summary or entry.content or "", 140),
         "created_at": entry.created_at.isoformat() if entry.created_at else None,
         "updated_at": entry.updated_at.isoformat() if entry.updated_at else None,
     }

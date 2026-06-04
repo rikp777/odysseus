@@ -160,3 +160,18 @@ export function updateConnection(connectionId, action) {
     method: 'POST',
   });
 }
+
+export function listEntryRevisions(entryId, limit = 20) {
+  const params = new URLSearchParams({ limit: String(limit) });
+  return jsonFetch(`${API_BASE}/api/logbook/entry/${encodeURIComponent(entryId)}/revisions?${params.toString()}`);
+}
+
+export function getEntryRevision(entryId, revisionId) {
+  return jsonFetch(`${API_BASE}/api/logbook/entry/${encodeURIComponent(entryId)}/revisions/${encodeURIComponent(revisionId)}`);
+}
+
+export function restoreEntryRevision(entryId, revisionId) {
+  return jsonFetch(`${API_BASE}/api/logbook/entry/${encodeURIComponent(entryId)}/revisions/${encodeURIComponent(revisionId)}/restore`, {
+    method: 'POST',
+  });
+}

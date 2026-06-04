@@ -20,6 +20,7 @@ from sqlalchemy.orm import selectinload
 from core.database import (
     LogbookDataPoint,
     LogbookEntry,
+    LogbookEntryRevision,
     LogbookLocation,
     LogbookLocationMention,
     LogbookMention,
@@ -207,6 +208,166 @@ def replace_datapoints(db, entry: LogbookEntry, datapoints: List[LogbookDataPoin
             value_json=json_dump(item.value_json),
             sort_order=item.sort_order if item.sort_order is not None else index,
         ))
+
+
+def _datapoint_snapshot(dp: Any, index: int = 0) -> Dict[str, Any]:
+    value_json = getattr(dp, "value_json", None)
+    return {
+        "key": clean_key(getattr(dp, "key", "") or getattr(dp, "label", "") or "datapoint"),
+        "label": (getattr(dp, "label", None) or "").strip() or None,
+        "value_text": getattr(dp, "value_text", None),
+        "value_number": getattr(dp, "value_number", None),
+        "unit": (getattr(dp, "unit", None) or "").strip() or None,
+        "value_json": json_load(value_json, None) if isinstance(value_json, str) else value_json,
+        "sort_order": getattr(dp, "sort_order", None) if getattr(dp, "sort_order", None) is not None else index,
+    }
+
+
+def _datapoint_input_snapshot(item: LogbookDataPointIn, index: int = 0) -> Dict[str, Any]:
+    label = (item.label or "").strip() or None
+    return {
+        "key": clean_key(item.key or label or "datapoint"),
+        "label": label,
+        "value_text": item.value_text,
+        "value_number": item.value_number,
+        "unit": (item.unit or "").strip() or None,
+        "value_json": item.value_json,
+        "sort_order": item.sort_order if item.sort_order is not None else index,
+    }
+
+
+def datapoint_snapshots(entry: LogbookEntry) -> List[Dict[str, Any]]:
+    points = sorted(list(entry.datapoints or []), key=lambda dp: int(dp.sort_order or 0))
+    return [_datapoint_snapshot(dp, index) for index, dp in enumerate(points)]
+
+
+def entry_snapshot(entry: LogbookEntry) -> Dict[str, Any]:
+    return {
+        "title": normalized_title(entry.title),
+        "content": entry.content or "",
+        "summary": entry.summary,
+        "mood_label": entry.mood_label,
+        "mood_score": entry.mood_score,
+        "energy_score": entry.energy_score,
+        "stress_score": entry.stress_score,
+        "ai_reflection": entry.ai_reflection,
+        "datapoints": datapoint_snapshots(entry),
+    }
+
+
+def _snapshot_has_content(snapshot: Dict[str, Any]) -> bool:
+    return any([
+        snapshot.get("title") and snapshot.get("title") != "Daily log",
+        str(snapshot.get("content") or "").strip(),
+        snapshot.get("summary"),
+        snapshot.get("mood_label"),
+        snapshot.get("mood_score") is not None,
+        snapshot.get("energy_score") is not None,
+        snapshot.get("stress_score") is not None,
+        snapshot.get("ai_reflection"),
+        bool(snapshot.get("datapoints")),
+    ])
+
+
+def _model_data(body: BaseModel) -> Dict[str, Any]:
+    if hasattr(body, "model_dump"):
+        return body.model_dump(exclude_unset=True)
+    return body.dict(exclude_unset=True)
+
+
+def entry_will_change(entry: LogbookEntry, body: BaseModel) -> bool:
+    data = _model_data(body)
+    if "title" in data and normalized_title(data.get("title")) != normalized_title(entry.title):
+        return True
+    for field in ("content", "summary", "ai_reflection"):
+        if field in data and (data.get(field) or "") != (getattr(entry, field, None) or ""):
+            return True
+    if "mood_label" in data and ((data.get("mood_label") or "").strip() or None) != entry.mood_label:
+        return True
+    for field in ("mood_score", "energy_score", "stress_score"):
+        if field in data and clamp_score(data.get(field)) != getattr(entry, field, None):
+            return True
+    if body.datapoints is not None:
+        incoming = [_datapoint_input_snapshot(item, index) for index, item in enumerate(body.datapoints or [])]
+        if incoming != datapoint_snapshots(entry):
+            return True
+    return False
+
+
+def create_entry_revision(
+    db,
+    entry: LogbookEntry,
+    *,
+    source: str = "manual_save",
+    reason: Optional[str] = None,
+) -> Optional[LogbookEntryRevision]:
+    snapshot = entry_snapshot(entry)
+    if not _snapshot_has_content(snapshot):
+        return None
+    revision = LogbookEntryRevision(
+        id=str(uuid.uuid4()),
+        entry_id=entry.id,
+        owner=entry.owner,
+        entry_date=entry.entry_date,
+        source=(source or "manual_save")[:80],
+        reason=reason,
+        title=snapshot["title"],
+        content=snapshot["content"],
+        summary=snapshot["summary"],
+        mood_label=snapshot["mood_label"],
+        mood_score=snapshot["mood_score"],
+        energy_score=snapshot["energy_score"],
+        stress_score=snapshot["stress_score"],
+        ai_reflection=snapshot["ai_reflection"],
+        datapoints_json=json.dumps(snapshot["datapoints"], ensure_ascii=False),
+    )
+    db.add(revision)
+    db.flush()
+    return revision
+
+
+def revision_query(db, owner: str, entry_id: str):
+    return db.query(LogbookEntryRevision).filter(
+        LogbookEntryRevision.owner == owner,
+        LogbookEntryRevision.entry_id == entry_id,
+    )
+
+
+def entry_revisions(db, owner: str, entry_id: str, *, limit: int = 20) -> List[LogbookEntryRevision]:
+    limit = max(1, min(int(limit or 20), 100))
+    return (
+        revision_query(db, owner, entry_id)
+        .order_by(LogbookEntryRevision.created_at.desc())
+        .limit(limit)
+        .all()
+    )
+
+
+def load_entry_revision_or_404(db, owner: str, entry_id: str, revision_id: str) -> LogbookEntryRevision:
+    revision = revision_query(db, owner, entry_id).filter(LogbookEntryRevision.id == revision_id).first()
+    if not revision:
+        raise HTTPException(404, "Logbook revision not found")
+    return revision
+
+
+def restore_entry_revision(db, owner: str, entry: LogbookEntry, revision: LogbookEntryRevision) -> None:
+    entry.title = normalized_title(revision.title)
+    entry.content = revision.content or ""
+    entry.summary = revision.summary
+    entry.mood_label = revision.mood_label
+    entry.mood_score = clamp_score(revision.mood_score)
+    entry.energy_score = clamp_score(revision.energy_score)
+    entry.stress_score = clamp_score(revision.stress_score)
+    entry.ai_reflection = revision.ai_reflection
+    raw_datapoints = json_load(revision.datapoints_json, [])
+    datapoints = [
+        LogbookDataPointIn(**item)
+        for item in raw_datapoints
+        if isinstance(item, dict)
+    ]
+    replace_datapoints(db, entry, datapoints)
+    rebuild_entry_links(db, owner, entry)
+    sync_linked_datapoints(db, entry)
 
 
 def sync_linked_datapoints(db, entry: LogbookEntry) -> None:
@@ -525,7 +686,7 @@ def rebuild_entry_links(db, owner: str, entry: LogbookEntry) -> None:
 
 def apply_entry_fields(entry: LogbookEntry, body: BaseModel) -> bool:
     content_changed = False
-    data = body.dict(exclude_unset=True)
+    data = _model_data(body)
     if "title" in data:
         entry.title = normalized_title(data.get("title"))
     if "content" in data:

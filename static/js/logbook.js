@@ -13,10 +13,13 @@ import {
   createLocation,
   getAIStatus,
   getEntry,
+  getEntryRevision,
   listConnections,
+  listEntryRevisions,
   listEntries,
   listLocations,
   listPeople,
+  restoreEntryRevision,
   saveEntry,
   updateConnection,
 } from './logbook/api.js';
@@ -62,6 +65,12 @@ let _peopleSort = 'recent';
 let _locationSort = 'recent';
 let _editorMode = 'rich';
 let _entitySignature = '';
+let _historyOpen = false;
+let _historyBusy = false;
+let _historyError = '';
+let _revisions = [];
+let _revisionPreview = null;
+let _revisionPreviewBusy = false;
 
 function _setStatus(text) {
   _saveStatus = text;
@@ -115,9 +124,12 @@ async function _saveNow({ silent = false } = {}) {
     _dirty = false;
     _setStatus('Saved');
     await Promise.all([_loadPeople(), _loadLocations(), _loadConnections(), _loadEntries()]);
+    if (_historyOpen && _entry?.id) await _loadRevisions();
+    _syncHistoryButtonState();
     _renderPeoplePanel();
     _renderLocationsPanel();
     _renderNavigator();
+    _renderHistoryPanel();
     _refreshEditorContent({ preserveFocus: true });
     if (!silent) uiModule?.showToast?.('Saved');
   } catch (err) {
@@ -129,16 +141,55 @@ async function _saveNow({ silent = false } = {}) {
   }
 }
 
+function _normalizeEntryShape(entry) {
+  const next = entry || {};
+  if (!next.datapoints) next.datapoints = [];
+  if (!next.people) next.people = [];
+  if (!next.mentions) next.mentions = [];
+  if (!next.locations) next.locations = [];
+  if (!next.location_mentions) next.location_mentions = [];
+  return next;
+}
+
 async function _loadEntry(date) {
-  _entry = await getEntry(date);
-  if (!_entry.datapoints) _entry.datapoints = [];
-  if (!_entry.people) _entry.people = [];
-  if (!_entry.mentions) _entry.mentions = [];
-  if (!_entry.locations) _entry.locations = [];
-  if (!_entry.location_mentions) _entry.location_mentions = [];
+  _entry = _normalizeEntryShape(await getEntry(date));
+  _revisions = [];
+  _revisionPreview = null;
+  _historyError = '';
+  if (_historyOpen && _entry?.id) await _loadRevisions();
   _entitySignature = _entityListSignature(_entry.people || [], _entry.locations || []);
   _dirty = false;
   _setStatus('Saved');
+}
+
+async function _loadRevisions() {
+  if (!_entry?.id) {
+    _revisions = [];
+    return;
+  }
+  _historyBusy = true;
+  _historyError = '';
+  try {
+    const data = await listEntryRevisions(_entry.id, 30);
+    _revisions = data.revisions || [];
+    if (_revisionPreview && !_revisions.some(revision => revision.id === _revisionPreview.id)) {
+      _revisionPreview = null;
+    }
+  } catch (err) {
+    _historyError = err?.message || 'History could not be loaded';
+    _revisions = [];
+  } finally {
+    _historyBusy = false;
+  }
+}
+
+function _syncHistoryButtonState() {
+  const btn = document.getElementById('logbook-history-toggle');
+  if (!btn) return;
+  const disabled = !_entry?.id;
+  btn.disabled = disabled;
+  if (disabled) btn.setAttribute('title', 'Save this entry before history is available');
+  else btn.removeAttribute('title');
 }
 
 async function _loadEntries() {
@@ -648,12 +699,24 @@ function _render() {
 }
 
 function _navigatorHtml() {
-  const rows = _entries.map(entry => `
-    <button type="button" class="logbook-day-row ${entry.entry_date === _date ? 'active' : ''}" data-date="${_e(entry.entry_date)}">
-      <span>${_e(_dateLabel(entry.entry_date))}</span>
-      <span class="logbook-day-state" data-state="${_e(_entryStatus(entry))}">${_e(_entryStatus(entry))}</span>
-    </button>
-  `).join('') || '<div class="logbook-empty">No entries in this range.</div>';
+  const rows = _entries.map(entry => {
+    const meta = [
+      entry.mood_label || '',
+      entry.people_count ? `${entry.people_count} people` : '',
+      entry.location_count ? `${entry.location_count} places` : '',
+      entry.datapoint_count ? `${entry.datapoint_count} data` : '',
+    ].filter(Boolean).join(' | ');
+    return `
+      <button type="button" class="logbook-day-row ${entry.entry_date === _date ? 'active' : ''}" data-date="${_e(entry.entry_date)}">
+        <span class="logbook-day-main">
+          <span class="logbook-day-date">${_e(_dateLabel(entry.entry_date))}</span>
+          ${entry.snippet ? `<span class="logbook-day-snippet">${_e(entry.snippet)}</span>` : ''}
+          ${meta ? `<span class="logbook-day-meta">${_e(meta)}</span>` : ''}
+        </span>
+        <span class="logbook-day-state" data-state="${_e(_entryStatus(entry))}">${_e(_entryStatus(entry))}</span>
+      </button>
+    `;
+  }).join('') || '<div class="logbook-empty">No entries in this range.</div>';
   const personOptions = _people.map(p => `<option value="${_e(p.id)}" ${_filterPerson === p.id ? 'selected' : ''}>${_e(p.display_name)}</option>`).join('');
   const locationOptions = _locations.map(l => `<option value="${_e(l.id)}" ${_filterLocation === l.id ? 'selected' : ''}>${_e(l.display_name)}</option>`).join('');
   const moodOptions = MOODS.map(m => `<option value="${_e(m.value)}" ${_filterMood === m.value ? 'selected' : ''}>${_e(m.label)}</option>`).join('');
@@ -694,17 +757,22 @@ function _editorHtml() {
     <button type="button" class="logbook-chip ${mood === item.value ? 'active' : ''}" data-mood="${_e(item.value)}" data-mood-score="${item.score}">${_e(item.label)}</button>
   `).join('');
   const richActive = _editorMode !== 'raw';
+  const historyDisabled = !_entry?.id ? ' disabled title="Save this entry before history is available"' : '';
   return `
     <div class="logbook-editor-head">
       <div>
         <div class="logbook-date-title">${_e(_dateLabel(_date))}</div>
         <div class="logbook-date-sub">${_e(_date)}</div>
       </div>
-      <div class="logbook-editor-toggle" role="group" aria-label="Editor mode">
-        <button type="button" class="${richActive ? 'active' : ''}" aria-pressed="${richActive ? 'true' : 'false'}" data-logbook-editor-mode="rich">Editor</button>
-        <button type="button" class="${!richActive ? 'active' : ''}" aria-pressed="${!richActive ? 'true' : 'false'}" data-logbook-editor-mode="raw">Raw</button>
+      <div class="logbook-editor-actions">
+        <button type="button" class="cal-btn ${_historyOpen ? 'active' : ''}" id="logbook-history-toggle"${historyDisabled}>History</button>
+        <div class="logbook-editor-toggle" role="group" aria-label="Editor mode">
+          <button type="button" class="${richActive ? 'active' : ''}" aria-pressed="${richActive ? 'true' : 'false'}" data-logbook-editor-mode="rich">Editor</button>
+          <button type="button" class="${!richActive ? 'active' : ''}" aria-pressed="${!richActive ? 'true' : 'false'}" data-logbook-editor-mode="raw">Raw</button>
+        </div>
       </div>
     </div>
+    ${_historyOpen ? _historyHtml() : ''}
     <div class="logbook-link-toolbar" role="toolbar" aria-label="Link selected text">
       <button type="button" data-logbook-link-selection="person" title="Link selected text as person">${_logbookIcon('person', 13)}<span>Person</span></button>
       <button type="button" data-logbook-link-selection="location" title="Link selected text as place">${_logbookIcon('location', 13)}<span>Place</span></button>
@@ -713,7 +781,7 @@ function _editorHtml() {
     </div>
     <section class="logbook-write-section" data-mobile-section="write">
       <div id="logbook-rich-content" class="logbook-rich-content ${richActive ? '' : 'hidden'}" contenteditable="true" role="textbox" aria-multiline="true" aria-label="Logbook editor" data-placeholder="Write messy notes. Add people and places from the panels, or switch to Raw for markdown.">${_renderLogbookEditorText(_entry?.content || '')}</div>
-      <textarea id="logbook-content" class="logbook-content ${richActive ? 'hidden' : ''}" placeholder="Write messy notes. Example: tired, talked with [Jan](person:jan), rode through [Panningen](place:panningen), ate [breakfast](data:food).">${_e(_entry?.content || '')}</textarea>
+      <textarea id="logbook-content" class="logbook-content ${richActive ? 'hidden' : ''}" placeholder="Write messy notes. Example: tired, talked with [Jan](person:jan), rode through [Meerstad](place:meerstad), ate [breakfast](data:food).">${_e(_entry?.content || '')}</textarea>
       <div id="logbook-mention-menu" class="logbook-mention-menu hidden"></div>
     </section>
     <section class="logbook-mood-section" data-mobile-section="mood">
@@ -731,6 +799,74 @@ function _editorHtml() {
         ${QUICK_DATA.map(([key, label]) => `<button type="button" class="logbook-chip" data-quick-data="${_e(key)}" data-quick-label="${_e(label)}">${_e(label)}</button>`).join('')}
       </div>
       <div id="logbook-datapoints" class="logbook-datapoints">${_datapointsHtml()}</div>
+    </section>
+  `;
+}
+
+function _formatRevisionTime(value) {
+  if (!value) return '';
+  try {
+    return new Date(value).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
+  } catch (_) {
+    return value;
+  }
+}
+
+function _revisionSourceLabel(source) {
+  if (source === 'restore') return 'Before restore';
+  if (source === 'ai_apply') return 'Before AI apply';
+  return 'Saved version';
+}
+
+function _historyHtml() {
+  if (!_entry?.id) {
+    return '<section id="logbook-history-panel" class="logbook-history-panel"><div class="logbook-empty">Save this day before history is available.</div></section>';
+  }
+  const rows = _revisions.map(revision => `
+    <div class="logbook-history-row ${_revisionPreview?.id === revision.id ? 'active' : ''}">
+      <div class="logbook-history-main">
+        <div class="logbook-history-title">
+          <strong>${_e(_formatRevisionTime(revision.created_at))}</strong>
+          <span>${_e(_revisionSourceLabel(revision.source))}</span>
+        </div>
+        ${revision.snippet ? `<div class="logbook-history-snippet">${_e(revision.snippet)}</div>` : ''}
+        <div class="logbook-history-meta">
+          ${revision.mood_label ? `<span>${_e(revision.mood_label)}</span>` : ''}
+          ${revision.datapoint_count ? `<span>${revision.datapoint_count} data</span>` : ''}
+        </div>
+      </div>
+      <button type="button" class="cal-btn" data-preview-revision="${_e(revision.id)}">${_revisionPreview?.id === revision.id ? 'Selected' : 'Preview'}</button>
+    </div>
+  `).join('');
+  const preview = _revisionPreview ? `
+    <div class="logbook-history-preview">
+      <div class="logbook-section-head">
+        <h5>Preview</h5>
+        <button type="button" class="cal-btn" id="logbook-close-history-preview">Close</button>
+      </div>
+      <div class="logbook-history-preview-meta">
+        <span>${_e(_formatRevisionTime(_revisionPreview.created_at))}</span>
+        <span>${_e(_revisionSourceLabel(_revisionPreview.source))}</span>
+        ${_revisionPreview.mood_label ? `<span>${_e(_revisionPreview.mood_label)}</span>` : ''}
+        ${_revisionPreview.datapoint_count ? `<span>${_revisionPreview.datapoint_count} data</span>` : ''}
+      </div>
+      <div class="logbook-rendered-text logbook-history-preview-content">${_renderLogbookText(_revisionPreview.content || '')}</div>
+      <div class="logbook-preview-actions">
+        <button type="button" class="cal-btn cal-btn-primary" data-restore-revision="${_e(_revisionPreview.id)}">Restore this version</button>
+      </div>
+    </div>
+  ` : '';
+  return `
+    <section id="logbook-history-panel" class="logbook-history-panel">
+      <div class="logbook-section-head">
+        <h5>History</h5>
+        <button type="button" class="cal-btn" id="logbook-refresh-history"${_historyBusy ? ' disabled' : ''}>Refresh</button>
+      </div>
+      ${_historyBusy ? '<div class="logbook-empty">Loading history...</div>' : ''}
+      ${_revisionPreviewBusy ? '<div class="logbook-empty">Loading preview...</div>' : ''}
+      ${_historyError ? `<div class="logbook-ai-error">${_e(_historyError)}</div>` : ''}
+      ${preview}
+      ${rows || (!_historyBusy ? '<div class="logbook-empty">No saved versions yet.</div>' : '')}
     </section>
   `;
 }
@@ -888,24 +1024,65 @@ function _directorySort(a, b, sort) {
     || String(a.display_name || '').localeCompare(String(b.display_name || ''));
 }
 
+function _connectionTypeLabel(type) {
+  const value = String(type || 'connection').trim().toLowerCase();
+  const labels = {
+    co_mentioned: 'Co-mentioned',
+    family: 'Family',
+    friend: 'Friend',
+    work: 'Work',
+    training: 'Training',
+    conflict: 'Conflict',
+    unknown: 'Connection',
+  };
+  return labels[value] || value.replace(/_/g, ' ').replace(/\b\w/g, ch => ch.toUpperCase());
+}
+
+function _connectionPersonChip(person, fallback) {
+  const name = person?.display_name || fallback || 'Person';
+  const attrs = person?.id ? ` data-open-person="${_e(person.id)}" type="button"` : '';
+  const tag = person?.id ? 'button' : 'span';
+  return `<${tag} class="logbook-connection-person"${attrs}>${_logbookIcon('person', 12)}<span>${_e(name)}</span></${tag}>`;
+}
+
+function _connectionEvidenceHtml(ev) {
+  if (!ev?.snippet) return '';
+  const date = ev.entry_date ? `<span class="logbook-evidence-date">${_e(ev.entry_date)}</span>` : '';
+  return `<div class="logbook-evidence">${date}<span>${_e(ev.snippet)}</span></div>`;
+}
+
+function _connectionCardHtml(conn) {
+  const status = conn.status === 'accepted' ? 'accepted' : 'suggested';
+  const confidence = Math.max(0, Math.min(100, Number(conn.confidence || 0)));
+  const ev = Array.isArray(conn.evidence) && conn.evidence.length ? conn.evidence[conn.evidence.length - 1] : null;
+  const actions = status === 'suggested'
+    ? `<div class="logbook-connection-actions"><button type="button" class="cal-btn cal-btn-primary" data-accept-connection="${_e(conn.id)}">Accept</button><button type="button" class="cal-btn" data-hide-connection="${_e(conn.id)}">Hide</button></div>`
+    : `<span class="logbook-accepted">Accepted</span>`;
+  return `
+    <div class="logbook-connection ${status}">
+      <div class="logbook-connection-head">
+        <div class="logbook-connection-people">
+          ${_connectionPersonChip(conn.person_a, 'Person A')}
+          <span class="logbook-connection-plus">+</span>
+          ${_connectionPersonChip(conn.person_b, 'Person B')}
+        </div>
+        <span class="logbook-connection-status ${status}">${status === 'accepted' ? 'Accepted' : 'Review'}</span>
+      </div>
+      <div class="logbook-connection-badges">
+        <span class="logbook-connection-badge">${_e(_connectionTypeLabel(conn.connection_type))}</span>
+        <span class="logbook-connection-badge">${confidence}% confidence</span>
+        ${conn.strength ? `<span class="logbook-connection-badge">strength ${_e(conn.strength)}</span>` : ''}
+      </div>
+      ${conn.description ? `<div class="logbook-connection-reason">${_e(conn.description)}</div>` : ''}
+      ${_connectionEvidenceHtml(ev)}
+      ${actions}
+    </div>
+  `;
+}
+
 function _connectionsHtml() {
   const visible = _connections.filter(c => c.status !== 'hidden');
-  const rows = visible.map(conn => {
-    const a = conn.person_a?.display_name || 'Person A';
-    const b = conn.person_b?.display_name || 'Person B';
-    const ev = Array.isArray(conn.evidence) && conn.evidence.length ? conn.evidence[conn.evidence.length - 1] : null;
-    const actions = conn.status === 'suggested'
-      ? `<div class="logbook-connection-actions"><button type="button" class="cal-btn cal-btn-primary" data-accept-connection="${_e(conn.id)}">Accept</button><button type="button" class="cal-btn" data-hide-connection="${_e(conn.id)}">Hide</button></div>`
-      : `<span class="logbook-accepted">Accepted</span>`;
-    return `
-      <div class="logbook-connection">
-        <div class="logbook-connection-title">${_e(a)} + ${_e(b)}</div>
-        <div class="logbook-connection-meta">AI noticed a possible ${_e(conn.connection_type || 'connection')} (${_e(conn.confidence || 0)}%)</div>
-        ${ev?.snippet ? `<div class="logbook-evidence">${_e(ev.snippet)}</div>` : ''}
-        ${actions}
-      </div>
-    `;
-  }).join('');
+  const rows = visible.map(_connectionCardHtml).join('');
   return `
     <div class="logbook-section-head"><h5>Connections</h5></div>
     <div id="logbook-connections">${rows || '<div class="logbook-empty">No connection suggestions yet.</div>'}</div>
@@ -943,6 +1120,7 @@ function _aiHtml() {
 
 function _aiPreviewHtml() {
   const p = _aiPreview || {};
+  const warning = p.warning ? `<div class="logbook-ai-warning">${_e(p.warning)}</div>` : '';
   const questions = (p.questions || []).map(q => `<li>${_e(q)}</li>`).join('');
   const data = (p.datapoint_suggestions || []).map(d => `
     <div class="logbook-suggestion-row">
@@ -971,6 +1149,7 @@ function _aiPreviewHtml() {
     </div>
   `).join('');
   return `
+    ${warning}
     ${p.preview_content ? `<div class="logbook-preview-block"><div class="logbook-subtitle">Preview</div><div class="logbook-rendered-text">${_renderLogbookText(p.preview_content)}</div></div>` : ''}
     ${p.summary ? `<div class="logbook-preview-block"><div class="logbook-subtitle">Summary</div><p>${_e(p.summary)}</p></div>` : ''}
     ${p.reflection ? `<div class="logbook-preview-block"><div class="logbook-subtitle">Reflection</div><p>${_e(p.reflection)}</p></div>` : ''}
@@ -988,6 +1167,80 @@ function _aiPreviewHtml() {
   `;
 }
 
+async function _toggleHistory() {
+  _syncEntryFromEditor();
+  _historyOpen = !_historyOpen;
+  if (_historyOpen) await _loadRevisions();
+  _render();
+}
+
+async function _refreshHistory() {
+  await _loadRevisions();
+  _renderHistoryPanel();
+}
+
+async function _previewRevision(revisionId) {
+  if (!_entry?.id || !revisionId) return;
+  _revisionPreviewBusy = true;
+  _historyError = '';
+  _renderHistoryPanel();
+  try {
+    _revisionPreview = await getEntryRevision(_entry.id, revisionId);
+  } catch (err) {
+    _historyError = err?.message || 'Revision preview could not be loaded';
+    _revisionPreview = null;
+    throw err;
+  } finally {
+    _revisionPreviewBusy = false;
+    _renderHistoryPanel();
+  }
+}
+
+function _clearRevisionPreview() {
+  _revisionPreview = null;
+  _renderHistoryPanel();
+}
+
+async function _restoreRevision(revisionId) {
+  if (!_entry?.id || !revisionId) return;
+  if (!window.confirm('Restore this saved version? Current entry will be saved to history first.')) return;
+  if (_dirty) await _saveNow({ silent: true });
+  _historyBusy = true;
+  _historyError = '';
+  _renderHistoryPanel();
+  try {
+    const data = await restoreEntryRevision(_entry.id, revisionId);
+    _entry = _normalizeEntryShape(data.entry);
+    _date = _entry.entry_date || _date;
+    _entitySignature = _entityListSignature(_entry.people || [], _entry.locations || []);
+    _dirty = false;
+    _setStatus('Saved');
+    await Promise.all([_loadPeople(), _loadLocations(), _loadConnections(), _loadEntries()]);
+    if (_historyOpen && _entry?.id) await _loadRevisions();
+    _historyBusy = false;
+    _revisionPreview = null;
+    _render();
+    uiModule?.showToast?.('Restored version');
+  } catch (err) {
+    _historyBusy = false;
+    _historyError = err?.message || 'Restore failed';
+    _renderHistoryPanel();
+    throw err;
+  }
+}
+
+function _bindHistoryEvents() {
+  document.getElementById('logbook-history-toggle')?.addEventListener('click', () => _toggleHistory().catch(_showError));
+  document.getElementById('logbook-refresh-history')?.addEventListener('click', () => _refreshHistory().catch(_showError));
+  document.getElementById('logbook-close-history-preview')?.addEventListener('click', _clearRevisionPreview);
+  document.querySelectorAll('[data-preview-revision]').forEach(btn => {
+    btn.addEventListener('click', () => _previewRevision(btn.dataset.previewRevision).catch(_showError));
+  });
+  document.querySelectorAll('[data-restore-revision]').forEach(btn => {
+    btn.addEventListener('click', () => _restoreRevision(btn.dataset.restoreRevision).catch(_showError));
+  });
+}
+
 function _bindEvents() {
   document.getElementById('logbook-close')?.addEventListener('click', closeLogbook);
   document.getElementById('logbook-prev-day')?.addEventListener('click', () => _loadDate(_dateAdd(_date, -1)).catch(_showError));
@@ -995,6 +1248,7 @@ function _bindEvents() {
   document.getElementById('logbook-today-btn')?.addEventListener('click', () => _loadDate(_today()).catch(_showError));
   document.getElementById('logbook-date-input')?.addEventListener('change', e => _loadDate(e.target.value).catch(_showError));
   document.getElementById('logbook-manual-save')?.addEventListener('click', () => _saveNow().catch(_showError));
+  _bindHistoryEvents();
 
   document.querySelectorAll('[data-logbook-editor-mode]').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -1257,6 +1511,7 @@ function _bindDataEvents() {
 function _bindPeoplePanelEvents() {
   _bindPeopleRowEvents();
   _bindAISuggestionEvents();
+  _bindEntityLinkEvents();
   document.querySelectorAll('[data-accept-connection]').forEach(btn => {
     btn.addEventListener('click', () => _connectionAction(btn.dataset.acceptConnection, 'accept').catch(_showError));
   });
@@ -1424,6 +1679,13 @@ function _renderNavigator() {
   if (!nav) return;
   nav.innerHTML = _navigatorHtml();
   _bindNavigatorEvents();
+}
+
+function _renderHistoryPanel() {
+  const panel = document.getElementById('logbook-history-panel');
+  if (!panel) return;
+  panel.outerHTML = _historyHtml();
+  _bindHistoryEvents();
 }
 
 function _renderDatapoints() {

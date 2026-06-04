@@ -97,6 +97,62 @@ function _locationTypes() {
   return out.sort((a, b) => a.localeCompare(b));
 }
 
+function _connectionTypeLabel(type) {
+  const value = String(type || 'connection').trim().toLowerCase();
+  const labels = {
+    co_mentioned: 'Co-mentioned',
+    family: 'Family',
+    friend: 'Friend',
+    work: 'Work',
+    training: 'Training',
+    conflict: 'Conflict',
+    unknown: 'Connection',
+  };
+  return labels[value] || value.replace(/_/g, ' ').replace(/\b\w/g, ch => ch.toUpperCase());
+}
+
+function _connectionPersonChip(person, fallback) {
+  const name = person?.display_name || fallback || 'Person';
+  const attrs = person?.id ? ` type="button" data-connection-person="${_e(person.id)}"` : '';
+  const tag = person?.id ? 'button' : 'span';
+  return `<${tag} class="logbook-connection-person"${attrs}>${_logbookIcon('person', 12)}<span>${_e(name)}</span></${tag}>`;
+}
+
+function _connectionEvidenceHtml(ev) {
+  if (!ev?.snippet) return '';
+  const date = ev.entry_date ? `<span class="logbook-evidence-date">${_e(ev.entry_date)}</span>` : '';
+  return `<div class="logbook-evidence">${date}<span>${_e(ev.snippet)}</span></div>`;
+}
+
+function _connectionCardHtml(conn) {
+  const status = conn.status === 'accepted' ? 'accepted' : 'suggested';
+  const confidence = Math.max(0, Math.min(100, Number(conn.confidence || 0)));
+  const ev = Array.isArray(conn.evidence) && conn.evidence.length ? conn.evidence[conn.evidence.length - 1] : null;
+  const actions = status === 'suggested'
+    ? `<button type="button" class="cal-btn cal-btn-primary" data-accept-connection="${_e(conn.id)}">Accept</button><button type="button" class="cal-btn" data-hide-connection="${_e(conn.id)}">Hide</button>`
+    : '<span class="logbook-accepted">Accepted</span>';
+  return `
+    <div class="logbook-connection ${status}">
+      <div class="logbook-connection-head">
+        <div class="logbook-connection-people">
+          ${_connectionPersonChip(conn.person_a, 'Person A')}
+          <span class="logbook-connection-plus">+</span>
+          ${_connectionPersonChip(conn.person_b, 'Person B')}
+        </div>
+        <span class="logbook-connection-status ${status}">${status === 'accepted' ? 'Accepted' : 'Review'}</span>
+      </div>
+      <div class="logbook-connection-badges">
+        <span class="logbook-connection-badge">${_e(_connectionTypeLabel(conn.connection_type))}</span>
+        <span class="logbook-connection-badge">${confidence}% confidence</span>
+        ${conn.strength ? `<span class="logbook-connection-badge">strength ${_e(conn.strength)}</span>` : ''}
+      </div>
+      ${conn.description ? `<div class="logbook-connection-reason">${_e(conn.description)}</div>` : ''}
+      ${_connectionEvidenceHtml(ev)}
+      <div class="logbook-connection-actions">${actions}</div>
+    </div>
+  `;
+}
+
 async function _loadAtlas() {
   _atlas = await getAtlas();
   if (!_selectedPersonId && _atlas.people?.length) _selectedPersonId = _atlas.people[0].id;
@@ -417,21 +473,10 @@ function _mapTabHtml() {
 }
 
 function _connectionsTabHtml() {
-  const rows = (_atlas.connections || []).filter(conn => conn.status !== 'hidden').map(conn => {
-    const ev = Array.isArray(conn.evidence) && conn.evidence.length ? conn.evidence[conn.evidence.length - 1] : null;
-    const actions = conn.status === 'suggested'
-      ? `<button type="button" class="cal-btn cal-btn-primary" data-accept-connection="${_e(conn.id)}">Accept</button><button type="button" class="cal-btn" data-hide-connection="${_e(conn.id)}">Hide</button>`
-      : '<span class="logbook-accepted">Accepted</span>';
-    return `
-      <div class="logbook-connection">
-        <div class="logbook-connection-title">${_e(conn.person_a?.display_name || 'Person')} + ${_e(conn.person_b?.display_name || 'Person')}</div>
-        <div class="logbook-connection-meta">Possible ${_e(conn.connection_type || 'connection')} (${_e(conn.confidence || 0)}%)</div>
-        ${conn.description ? `<div class="logbook-evidence">${_e(conn.description)}</div>` : ''}
-        ${ev?.snippet ? `<div class="logbook-evidence">${_e(ev.entry_date || '')}: ${_e(ev.snippet)}</div>` : ''}
-        <div class="logbook-connection-actions">${actions}</div>
-      </div>
-    `;
-  }).join('');
+  const rows = (_atlas.connections || [])
+    .filter(conn => conn.status !== 'hidden')
+    .map(_connectionCardHtml)
+    .join('');
   return `<section class="logbook-atlas-connections">${rows || '<div class="logbook-empty">No connection suggestions.</div>'}</section>`;
 }
 
@@ -516,6 +561,12 @@ function _bindMap() {
 }
 
 function _bindConnections() {
+  document.querySelectorAll('[data-connection-person]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      _tab = 'people';
+      _selectPerson(btn.dataset.connectionPerson).catch(_setError);
+    });
+  });
   document.querySelectorAll('[data-accept-connection]').forEach(btn => {
     btn.addEventListener('click', () => _connectionAction(btn.dataset.acceptConnection, 'accept').catch(_setError));
   });
