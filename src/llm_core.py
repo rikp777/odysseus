@@ -439,18 +439,48 @@ def _is_remote_billable_url(url: str) -> bool:
     return is_remote_billable_endpoint(url)
 
 
-def _cloud_spend_limit_error(url: str, model: str = "", owner: Optional[str] = None) -> Optional[str]:
-    """Return a user-facing block reason when the monthly cloud spend limit trips."""
+def _record_cloud_spend_block_event(block: Dict[str, Any]) -> None:
+    try:
+        from src.billing.events import record_billing_event
+        from routes import billing_routes
+
+        record_billing_event(
+            kind="remote_model_blocked",
+            severity="danger",
+            title="Remote model blocked",
+            message=str(block.get("message") or "Remote model call blocked by billing budget."),
+            source=str(block.get("source") or ""),
+            details={
+                "provider": block.get("provider") or "",
+                "model": block.get("model") or "",
+                "period": block.get("period") or "",
+                "source": block.get("source") or "",
+                "spend_scope": block.get("spend_scope") or "",
+                "amount": block.get("amount") or "",
+                "display": block.get("display") or "",
+                "limit": block.get("limit") or "",
+                "limit_display": block.get("limit_display") or "",
+                "block_code": block.get("code") or "",
+            },
+            event_file=billing_routes.BILLING_EVENTS_FILE,
+        )
+    except Exception as exc:
+        logger.warning("Could not record billing block event: %s", exc)
+
+
+def _cloud_spend_limit_block(url: str, model: str = "", owner: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    """Return structured block state when a remote model call is over budget."""
     if not _is_remote_billable_url(url):
         return None
     try:
-        from src.billing_usage import local_budget_block_reason
-        reason = local_budget_block_reason(url, model=model, owner=owner)
-        if reason:
-            return reason
+        from src.billing_usage import local_budget_block
+        block = local_budget_block(url, model=model, owner=owner)
+        if block:
+            return block
     except Exception as exc:
         logger.warning("Local usage budget check failed before model call: %s", exc)
     try:
+        from src.billing.events import budget_state_from_status
         from routes.billing_routes import get_monthly_spend_status
         status = get_monthly_spend_status(refresh=False)
     except Exception as exc:
@@ -460,25 +490,85 @@ def _cloud_spend_limit_error(url: str, model: str = "", owner: Optional[str] = N
     limit = status.get("limit_usd")
     if not limit:
         return None
+    state = status.get("budget_state") if isinstance(status.get("budget_state"), dict) else None
+    if state is None:
+        state = budget_state_from_status(status, enforcement_enabled=True)
+    if state.get("enforcement_enabled") is False:
+        return None
+    has_explicit_scope = bool(status.get("spend_scope") or status.get("amount_scope"))
+    if state.get("block_remote_models"):
+        return {
+            "blocked": True,
+            "code": state.get("block_code") or "limit_reached",
+            "period": state.get("period") or "month",
+            "source": state.get("source") or status.get("spend_source") or "",
+            "spend_scope": state.get("spend_scope") or status.get("spend_scope") or "",
+            "provider": status.get("provider") or "",
+            "model": model or "",
+            "amount": state.get("amount") or "",
+            "display": state.get("display") or status.get("display") or "",
+            "limit": state.get("limit") or str(limit),
+            "limit_display": state.get("limit_display") or f"${limit}",
+            "message": state.get("block_reason") or "",
+        }
     if status.get("over_limit"):
+        if has_explicit_scope and state.get("spend_scope") != "model_usage":
+            return None
         display = status.get("display") or "unknown spend"
-        return (
+        message = (
             f"Cloud spend limit reached: current month-to-date spend is {display}, "
             f"limit is ${limit}. Cloud model calls are blocked until the limit is raised "
             "or the billing period resets."
         )
+        return {
+            "blocked": True,
+            "code": "month_limit_reached",
+            "period": "month",
+            "source": status.get("spend_source") or "provider_billing",
+            "spend_scope": status.get("spend_scope") or "model_usage",
+            "provider": status.get("provider") or "",
+            "model": model or "",
+            "amount": status.get("amount") or "",
+            "display": display,
+            "limit": str(limit),
+            "limit_display": f"${limit}",
+            "message": message,
+        }
     if status.get("limit_check_blocked"):
-        return (
+        message = (
             f"Cloud spend limit is set to ${limit}, but Odysseus could not verify current "
             "provider spend. Cloud model calls are blocked to avoid accidental overspend."
         )
+        return {
+            "blocked": True,
+            "code": "billing_unverified",
+            "period": "month",
+            "source": status.get("spend_source") or "provider_billing",
+            "spend_scope": status.get("spend_scope") or status.get("amount_scope") or "",
+            "provider": status.get("provider") or "",
+            "model": model or "",
+            "amount": status.get("amount") or "",
+            "display": status.get("display") or "",
+            "limit": str(limit),
+            "limit_display": f"${limit}",
+            "message": message,
+        }
     return None
 
 
+def _cloud_spend_limit_error(url: str, model: str = "", owner: Optional[str] = None) -> Optional[str]:
+    """Return a user-facing block reason when the monthly cloud spend limit trips."""
+    block = _cloud_spend_limit_block(url, model=model, owner=owner)
+    if not block:
+        return None
+    return str(block.get("message") or "")
+
+
 def _raise_if_cloud_spend_limited(url: str, model: str = "", owner: Optional[str] = None) -> None:
-    reason = _cloud_spend_limit_error(url, model=model, owner=owner)
-    if reason:
-        raise HTTPException(402, reason)
+    block = _cloud_spend_limit_block(url, model=model, owner=owner)
+    if block:
+        _record_cloud_spend_block_event(block)
+        raise HTTPException(402, str(block.get("message") or "Remote model call blocked by billing budget."))
 
 
 def _format_upstream_error(status: int, body: bytes | str, url: str) -> str:

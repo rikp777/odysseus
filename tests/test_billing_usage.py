@@ -152,9 +152,21 @@ def test_local_budget_blocks_remote_when_daily_limit_is_reached(monkeypatch):
         "https://api.example.test/v1/chat/completions",
         model="remote-model",
     )
+    block = billing_usage.local_budget_block(
+        "https://api.example.test/v1/chat/completions",
+        model="remote-model",
+    )
 
     assert "Cloud model budget reached" in reason
     assert "$1.25" in reason
+    assert block["blocked"] is True
+    assert block["code"] == "day_limit_reached"
+    assert block["period"] == "day"
+    assert block["source"] == "usage_ledger"
+    assert block["spend_scope"] == "model_usage"
+    assert block["model"] == "remote-model"
+    assert block["display"] == "$1.25"
+    assert block["limit_display"] == "$1.00"
     assert billing_usage.local_budget_block_reason("http://127.0.0.1:11434/v1/chat/completions") is None
 
 

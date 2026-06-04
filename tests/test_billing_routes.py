@@ -49,6 +49,14 @@ def _providers_endpoint():
     raise AssertionError("Cloud billing providers route not found")
 
 
+def _events_endpoint():
+    router = billing_routes.setup_billing_routes()
+    for route in router.routes:
+        if getattr(route, "path", "") == "/api/billing/events":
+            return route.endpoint
+    raise AssertionError("Cloud billing events route not found")
+
+
 def _session_usage_endpoint():
     router = billing_routes.setup_billing_routes()
     for route in router.routes:
@@ -120,6 +128,12 @@ def test_billing_providers_requires_admin():
     assert exc.value.status_code == 403
 
 
+def test_billing_events_requires_admin():
+    with pytest.raises(HTTPException) as exc:
+        _events_endpoint()(_request(user="regular"))
+    assert exc.value.status_code == 403
+
+
 def test_billing_providers_returns_safe_registry_metadata(monkeypatch):
     provider = _example_provider(lambda token: {}, lambda payload: {})
     monkeypatch.setitem(billing_routes._PROVIDERS, provider.id, provider)
@@ -134,6 +148,27 @@ def test_billing_providers_returns_safe_registry_metadata(monkeypatch):
     }
     assert "fetch" not in result["providers"][-1]
     assert "normalize" not in result["providers"][-1]
+
+
+def test_billing_events_returns_recent_public_events():
+    from src.billing import events as billing_events
+
+    billing_events.record_billing_event(
+        kind="remote_model_blocked",
+        severity="danger",
+        title="Remote model blocked",
+        message="Budget reached",
+        source="usage_ledger",
+        details={"model": "remote-model", "api_token": "secret"},
+        event_file=billing_routes.BILLING_EVENTS_FILE,
+    )
+
+    result = _events_endpoint()(_request())
+
+    assert result["events"][0]["kind"] == "remote_model_blocked"
+    assert result["events"][0]["severity"] == "danger"
+    assert result["events"][0]["details"]["model"] == "remote-model"
+    assert "api_token" not in result["events"][0]["details"]
 
 
 def test_billing_session_usage_requires_admin():
@@ -171,10 +206,12 @@ def test_billing_session_usage_returns_public_summary(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
-def clear_billing_cache(monkeypatch):
+def clear_billing_cache(monkeypatch, tmp_path):
     _reset_cache()
+    monkeypatch.setattr(billing_routes, "BILLING_EVENTS_FILE", tmp_path / "billing_events.json")
     monkeypatch.setattr(billing_routes, "_local_usage_payload", _empty_local_usage)
     from src import billing_usage
+    monkeypatch.setattr(billing_usage, "local_budget_block", lambda *args, **kwargs: None)
     monkeypatch.setattr(billing_usage, "local_budget_block_reason", lambda *args, **kwargs: None)
     yield
     _reset_cache()
@@ -243,6 +280,8 @@ def test_cloud_monthly_spend_reports_unsupported_provider(monkeypatch):
     assert result["status"] == "provider_error"
     assert result["accounts"][0]["provider"] == "examplecloud"
     assert result["accounts"][0]["status"] == "unsupported_provider"
+    assert result["budget_events"][0]["kind"] == "provider_billing_check_failed"
+    assert result["budget_events"][0]["severity"] == "warning"
 
 
 def test_cloud_monthly_spend_success(monkeypatch):
@@ -279,6 +318,8 @@ def test_cloud_monthly_spend_success(monkeypatch):
     assert result["over_warning"] is True
     assert result["over_limit"] is True
     assert result["limit_usd"] == "10.00"
+    assert result["budget_state"]["spend_scope"] == "provider_account"
+    assert result["budget_state"]["block_remote_models"] is False
     assert result["refresh_seconds"] == 300
 
 
@@ -1206,6 +1247,76 @@ def test_cloud_spend_limit_blocks_remote_model_urls(monkeypatch):
 
     assert "Cloud spend limit reached" in reason
     assert llm_core._cloud_spend_limit_error("http://127.0.0.1:11434/v1/chat/completions") is None
+
+
+def test_cloud_spend_limit_does_not_block_provider_account_totals(monkeypatch):
+    from src import llm_core
+
+    monkeypatch.setattr(
+        billing_routes,
+        "get_monthly_spend_status",
+        lambda refresh=False, forced_provider=None: {
+            "limit_usd": "1.00",
+            "over_limit": True,
+            "display": "$6.44",
+            "spend_source": "provider_billing",
+            "spend_scope": "provider_account",
+        },
+    )
+
+    assert llm_core._cloud_spend_limit_error("https://inference.do-ai.run/v1/chat/completions") is None
+
+
+def test_cloud_spend_limit_respects_disabled_budget_enforcement(monkeypatch):
+    from src import llm_core
+
+    monkeypatch.setattr(
+        billing_routes,
+        "get_monthly_spend_status",
+        lambda refresh=False, forced_provider=None: {
+            "limit_usd": "1.00",
+            "over_limit": True,
+            "display": "$1.25",
+            "spend_source": "usage_ledger",
+            "spend_scope": "model_usage",
+            "budget_state": {
+                "enforcement_enabled": False,
+                "block_remote_models": False,
+            },
+        },
+    )
+
+    assert llm_core._cloud_spend_limit_error("https://inference.do-ai.run/v1/chat/completions") is None
+
+
+def test_cloud_spend_limit_records_remote_block_event(monkeypatch):
+    from src import llm_core
+
+    monkeypatch.setattr(
+        billing_routes,
+        "get_monthly_spend_status",
+        lambda refresh=False, forced_provider=None: {
+            "enabled": True,
+            "configured": True,
+            "limit_usd": "1.00",
+            "amount": "1.25",
+            "over_limit": True,
+            "display": "$1.25",
+            "spend_source": "usage_ledger",
+            "spend_scope": "model_usage",
+            "source_label": "Usage ledger",
+        },
+    )
+
+    with pytest.raises(HTTPException):
+        llm_core._raise_if_cloud_spend_limited(
+            "https://inference.do-ai.run/v1/chat/completions",
+            model="remote-model",
+        )
+
+    result = _events_endpoint()(_request())
+    assert result["events"][0]["kind"] == "remote_model_blocked"
+    assert result["events"][0]["details"]["model"] == "remote-model"
 
 
 def test_cloud_spend_limit_blocks_sync_model_call_before_network(monkeypatch):

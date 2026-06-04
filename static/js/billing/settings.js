@@ -25,6 +25,8 @@ export async function initCloudBillingSettings() {
   var currentSpendEl = el('set-cloudBillingCurrentSpend');
   var auditEl = el('set-cloudBillingAudit');
   var auditSummaryEl = el('set-cloudBillingAuditSummary');
+  var eventsEl = el('set-cloudBillingEvents');
+  var eventsSummaryEl = el('set-cloudBillingEventsSummary');
   var refreshSelect = el('set-cloudBillingRefresh');
   var dailyWarningToggle = el('set-cloudBillingDailyWarningToggle');
   var dailyWarningInput = el('set-cloudBillingDailyWarning');
@@ -198,10 +200,70 @@ export async function initCloudBillingSettings() {
       '<div class="cloud-billing-health-list">' + healthHtml + '</div>';
   }
 
+  function eventSeverity(row) {
+    var severity = row && row.severity ? String(row.severity).toLowerCase() : 'info';
+    return ['info', 'warning', 'danger'].indexOf(severity) >= 0 ? severity : 'info';
+  }
+
+  function budgetStateMeta(state) {
+    if (!state) return '';
+    var parts = [];
+    if (state.source_label) parts.push(state.source_label);
+    if (state.limit_display) parts.push('max ' + state.limit_display);
+    if (state.warning_display) parts.push('warning ' + state.warning_display);
+    if (state.enforcement_enabled === false) parts.push('enforcement off');
+    return parts.join(' · ');
+  }
+
+  function renderBudgetActivity(statusData) {
+    if (!eventsEl) return;
+    var state = statusData && statusData.budget_state ? statusData.budget_state : null;
+    var events = statusData && Array.isArray(statusData.budget_events) ? statusData.budget_events : [];
+    var summary = 'No events';
+    if (state && state.block_remote_models) summary = 'Remote models blocked';
+    else if (state && state.over_warning) summary = 'Warning reached';
+    else if (events.length) summary = events.length + ' recent event' + (events.length === 1 ? '' : 's');
+    if (eventsSummaryEl) eventsSummaryEl.textContent = summary;
+
+    var stateClass = state && state.block_remote_models
+      ? 'danger'
+      : (state && state.over_warning ? 'warning' : 'info');
+    var stateTitle = state && state.block_remote_models
+      ? 'Remote model calls are blocked'
+      : (state && state.over_warning ? 'Budget warning reached' : 'Budgets are active');
+    var stateMessage = state && state.block_reason
+      ? state.block_reason
+      : (state && state.configured ? 'Remote model calls are allowed under the current budget settings.' : 'Configure billing to track budget activity.');
+    var stateHtml = '<div class="cloud-billing-budget-state billing-event-' + stateClass + '">' +
+      '<strong>' + esc(stateTitle) + '</strong>' +
+      '<span>' + esc(stateMessage) + '</span>' +
+      '<small>' + esc(budgetStateMeta(state)) + '</small>' +
+    '</div>';
+
+    var rowsHtml = events.length ? events.map(function(row) {
+      var severity = eventSeverity(row);
+      var repeated = row.count && row.count > 1 ? ' · x' + row.count : '';
+      var timestamp = row.last_seen_at || row.created_at || '';
+      return '<div class="cloud-billing-event-row billing-event-' + severity + '">' +
+        '<span class="cloud-billing-event-dot"></span>' +
+        '<div class="cloud-billing-event-copy">' +
+          '<strong>' + esc(row.title || row.kind || 'Billing event') + '</strong>' +
+          '<span>' + esc(row.message || '') + '</span>' +
+          '<small>' + esc([timestamp, row.source || '', repeated.replace(/^ · /, '')].filter(Boolean).join(' · ')) + '</small>' +
+        '</div>' +
+      '</div>';
+    }).join('') : '<div class="admin-empty">No budget activity yet.</div>';
+
+    eventsEl.innerHTML = stateHtml + '<div class="cloud-billing-event-list">' + rowsHtml + '</div>';
+  }
+
   function currentSpendChips(statusData, fallbackSource) {
     var chips = [];
     var source = statusData && statusData.source_label ? statusData.source_label : fallbackSource;
     if (source) chips.push(source);
+    if (statusData && statusData.budget_state && statusData.budget_state.block_remote_models) {
+      chips.push('Remote models blocked');
+    }
     if (statusData && statusData.limit_usd) chips.push('Monthly max $' + statusData.limit_usd);
     else if (statusData && statusData.warning_usd) chips.push('Monthly warning $' + statusData.warning_usd);
     if (statusData && statusData.provider_display) {
@@ -295,6 +357,7 @@ export async function initCloudBillingSettings() {
     }
     renderCurrentSpend(statusData || (configured ? null : { enabled: false, configured: false }));
     renderDiagnostics(statusData || (configured ? null : { enabled: false, configured: false }));
+    renderBudgetActivity(statusData || (configured ? null : { enabled: false, configured: false }));
   }
 
   function setMsg(text, isError) {
@@ -510,6 +573,7 @@ export async function initCloudBillingSettings() {
         var basis = data.spend_scope === 'model_usage' ? 'Model usage' : 'Account spend';
         var parts = [basis + ': ' + (data.display || '--') + ' this month'];
         if (data.provider_label) parts.unshift(data.provider_label);
+        if (data.budget_state && data.budget_state.block_remote_models) parts.push('remote models blocked');
         if (data.provider_display && data.spend_scope === 'model_usage') {
           parts.push('provider account total ' + data.provider_display + ' all services, not AI-only');
         }

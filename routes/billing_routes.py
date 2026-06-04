@@ -11,6 +11,7 @@ from fastapi import APIRouter, Request
 
 from core.middleware import require_admin
 from src.billing import charts as _billing_charts
+from src.billing import events as _billing_events
 from src.billing import history as _billing_history
 from src.billing import service as _billing_service
 from src.billing.accounts import billing_accounts as _billing_accounts
@@ -39,6 +40,7 @@ _CACHE: Dict[str, Any] = {
     "payload": None,
 }
 BILLING_HISTORY_FILE = _billing_history.DEFAULT_BILLING_HISTORY_FILE
+BILLING_EVENTS_FILE = _billing_events.DEFAULT_BILLING_EVENTS_FILE
 MAX_BILLING_HISTORY_SAMPLES = _billing_history.MAX_BILLING_HISTORY_SAMPLES
 _BILLING_MONTH_RE = _billing_history.BILLING_MONTH_RE
 
@@ -75,6 +77,24 @@ def _public_usage_summary(summary: Dict[str, Any]) -> Dict[str, Any]:
 def _attach_local_usage(payload: Dict[str, Any], *, period: str = "month") -> Dict[str, Any]:
     payload["local_usage"] = _local_usage_payload(period)
     return payload
+
+
+def _attach_budget_safety(status: Dict[str, Any], *, sync_events: bool = True) -> Dict[str, Any]:
+    settings = _load_settings()
+    enforcement_enabled = settings.get("cloud_billing_budget_enforcement_enabled") is not False
+    status["budget_state"] = _billing_events.budget_state_from_status(
+        status,
+        enforcement_enabled=enforcement_enabled,
+    )
+    if sync_events:
+        status["budget_events"] = _billing_events.sync_billing_events_from_status(
+            status,
+            enforcement_enabled=enforcement_enabled,
+            event_file=BILLING_EVENTS_FILE,
+        )
+    else:
+        status["budget_events"] = _billing_events.recent_billing_events(event_file=BILLING_EVENTS_FILE)
+    return status
 
 
 def _clamp_refresh_seconds(value: Any) -> int:
@@ -371,10 +391,11 @@ def _monthly_spend(request: Request, *, refresh: bool, forced_provider: Optional
 
 
 def get_monthly_spend_status(*, refresh: bool = False, forced_provider: Optional[str] = None) -> Dict[str, Any]:
-    return _billing_status_service().monthly_spend_status(
+    status = _billing_status_service().monthly_spend_status(
         refresh=refresh,
         forced_provider=forced_provider,
     )
+    return _attach_budget_safety(status)
 
 
 def get_spending_graph_status(
@@ -403,6 +424,7 @@ def get_spending_graph_status(
             limit_usd=str(settings.get("cloud_billing_daily_limit_usd") or "").strip() or None,
             refresh_seconds=_clamp_refresh_seconds(settings.get("cloud_billing_refresh_seconds")),
         )
+        _attach_budget_safety(status)
     elif not is_current_month:
         status = _history_month_status(
             month=selected_month,
@@ -410,6 +432,7 @@ def get_spending_graph_status(
             spend_source=_normalized_history_spend_source(spend_source),
             spend_scope=_normalized_history_spend_scope(spend_scope),
         )
+        _attach_budget_safety(status, sync_events=False)
     else:
         status = get_monthly_spend_status(refresh=refresh, forced_provider=forced_provider)
     status["period"] = normalized_period
@@ -478,6 +501,11 @@ def setup_billing_routes() -> APIRouter:
     def billing_providers(request: Request) -> Dict[str, Any]:
         require_admin(request)
         return {"providers": _provider_catalog(_PROVIDERS)}
+
+    @router.get("/events")
+    def billing_events(request: Request, limit: int = 12) -> Dict[str, Any]:
+        require_admin(request)
+        return {"events": _billing_events.recent_billing_events(limit=limit, event_file=BILLING_EVENTS_FILE)}
 
     @router.get("/{provider}/monthly-spend")
     def provider_monthly_spend(provider: str, request: Request, refresh: bool = False) -> Dict[str, Any]:
