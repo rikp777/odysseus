@@ -1680,6 +1680,7 @@ async def stream_agent_loop(
             tools=all_tool_schemas if all_tool_schemas else None,
             timeout=agent_stream_timeout,
             owner=owner,
+            billing_context={"record": False},
         ):
             if time.time() > _round_deadline:
                 logger.warning(f"[agent] round {round_num} stream exceeded wall-clock deadline; cutting off")

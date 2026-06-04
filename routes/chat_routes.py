@@ -13,7 +13,7 @@ from pydantic import ValidationError
 
 from core.models import ChatMessage
 from src.request_models import ChatRequest
-from src.llm_core import llm_call_async, stream_llm, stream_llm_with_fallback
+from src.llm_core import llm_call_async, record_llm_usage_safely, stream_llm, stream_llm_with_fallback
 from src.agent_loop import stream_agent_loop
 from src import agent_runs
 from src.model_context import estimate_tokens
@@ -41,7 +41,6 @@ from src.action_intents import (
     classify_tool_intent as _classify_tool_intent,
     ToolIntent,
 )
-from src.billing.usage_recorder import record_model_usage_safely
 
 logger = logging.getLogger(__name__)
 
@@ -343,7 +342,6 @@ def setup_chat_routes(
         )
 
         tool_intent = _classify_tool_intent(message or "")
-        usage_metrics = None
 
         if tool_intent and tool_intent.kind == "direct_tool" and not use_research:
             reply = await _direct_tool_response(tool_intent, request, owner=ctx.user)
@@ -371,25 +369,10 @@ def setup_chat_routes(
                 max_tokens=ctx.preset.max_tokens,
                 prompt_type=preset_id,
                 owner=ctx.user,
+                billing_context={"session_id": session},
             )
-            usage_metrics = {
-                "input_tokens": estimate_tokens(ctx.messages),
-                "output_tokens": len(reply or "") // 4,
-                "model": sess.model,
-                "usage_source": "estimated",
-            }
         _clean_reply, _clean_md = clean_thinking_for_save(reply, {"model": sess.model})
         sess.add_message(ChatMessage("assistant", _clean_reply, metadata=_clean_md))
-        if not (tool_intent and tool_intent.kind == "direct_tool" and not use_research):
-            record_model_usage_safely(
-                owner=ctx.user,
-                session_id=session,
-                message_id=None,
-                endpoint_url=sess.endpoint_url,
-                model=sess.model,
-                metrics=usage_metrics,
-                logger=logger,
-            )
 
         from core.database import update_session_last_accessed
         update_session_last_accessed(session)
@@ -939,6 +922,7 @@ def setup_chat_routes(
             elif chat_mode == "chat":
                 _chat_start = time.time()
                 _answered_by = None  # set if the selected model failed and a fallback answered
+                _answered_endpoint = sess.endpoint_url
                 # ── Chat mode: call stream_llm directly, NO tools, NO document access ──
                 try:
                     _chat_candidates = [(sess.endpoint_url, sess.model, sess.headers)] + _fallback_candidates
@@ -955,6 +939,7 @@ def setup_chat_routes(
                         prompt_type=preset_id,
                         tools=None,
                         owner=_user,
+                        billing_context={"record": False},
                     ):
                         if chunk.startswith("data: ") and not chunk.startswith("data: [DONE]"):
                             try:
@@ -972,6 +957,7 @@ def setup_chat_routes(
                                     # Selected model failed; a fallback answered.
                                     # Forward the notice and remember the real model.
                                     _answered_by = data.get("answered_by") or _answered_by
+                                    _answered_endpoint = data.get("answered_endpoint") or _answered_endpoint
                                     yield chunk
                                 elif data.get("type") == "usage":
                                     last_metrics = data.get("data", {})
@@ -1012,7 +998,7 @@ def setup_chat_routes(
                                     "tokens_per_second": _tps,
                                     "context_percent": _ctx_pct,
                                     "context_length": ctx.context_length,
-                                    "model": sess.model,
+                                    "model": _answered_by or sess.model,
                                     "usage_source": "estimated",
                                 }
                                 yield f'data: {json.dumps({"type": "metrics", "data": last_metrics})}\n\n'
@@ -1029,14 +1015,13 @@ def setup_chat_routes(
                                 )
                                 if _saved_id:
                                     yield f'data: {json.dumps({"type": "message_saved", "id": _saved_id})}\n\n'
-                                record_model_usage_safely(
+                                record_llm_usage_safely(
                                     owner=_user,
                                     session_id=session,
                                     message_id=_saved_id,
-                                    endpoint_url=sess.endpoint_url,
-                                    model=sess.model,
+                                    endpoint_url=_answered_endpoint,
+                                    model=_answered_by or sess.model,
                                     metrics=last_metrics,
-                                    logger=logger,
                                 )
                                 run_post_response_tasks(
                                     sess, session_manager, session, message, full_response,
@@ -1062,6 +1047,7 @@ def setup_chat_routes(
                 _agent_rounds = 0
                 _agent_tool_calls = 0
                 _answered_by = None  # set if the selected model failed and a fallback answered
+                _answered_endpoint = sess.endpoint_url
                 try:
                     from src.settings import get_setting
                     _tool_budget = int(get_setting("agent_max_tool_calls", 0))
@@ -1112,6 +1098,7 @@ def setup_chat_routes(
                                     # model so metrics reflect it, not the masked
                                     # selected model.
                                     _answered_by = data.get("answered_by") or _answered_by
+                                    _answered_endpoint = data.get("answered_endpoint") or _answered_endpoint
                                     yield chunk
                                 elif data.get("type") == "metrics":
                                     last_metrics = data.get("data", {})
@@ -1133,14 +1120,13 @@ def setup_chat_routes(
                                 )
                                 if _saved_id:
                                     yield f'data: {json.dumps({"type": "message_saved", "id": _saved_id})}\n\n'
-                                record_model_usage_safely(
+                                record_llm_usage_safely(
                                     owner=_user,
                                     session_id=session,
                                     message_id=_saved_id,
-                                    endpoint_url=sess.endpoint_url,
-                                    model=sess.model,
+                                    endpoint_url=_answered_endpoint,
+                                    model=_answered_by or sess.model,
                                     metrics=last_metrics,
-                                    logger=logger,
                                 )
                                 run_post_response_tasks(
                                     sess, session_manager, session, message, full_response,
@@ -1355,6 +1341,8 @@ def setup_chat_routes(
                     # on "Rewriting...". Same fix as the chat max_tokens cap.
                     max_tokens=0,
                     tools=None,
+                    owner=get_current_user(request),
+                    billing_context={"session_id": session_id},
                 ):
                     if chunk.startswith("data: ") and not chunk.startswith("data: [DONE]"):
                         try:

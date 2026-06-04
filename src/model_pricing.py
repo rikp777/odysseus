@@ -8,7 +8,8 @@ local usage ledger can share one source of truth.
 from __future__ import annotations
 
 from typing import Any, Dict, Optional
-from urllib.parse import urlparse
+
+from src.provider_identity import pricing_provider_from_endpoint
 
 
 _DIGITALOCEAN_PRICING_URL = "https://docs.digitalocean.com/products/inference/details/pricing/"
@@ -218,20 +219,8 @@ _MODEL_PRICING_BY_PROVIDER: Dict[str, Dict[str, Dict[str, Any]]] = {
 }
 
 
-_URL_TO_PRICING_PROVIDER = {
-    "inference.do-ai.run": "digitalocean",
-    "api.openai.com": "openai",
-    "api.anthropic.com": "anthropic",
-}
-
-
 def _match_pricing_provider(base_url: str) -> Optional[str]:
-    base = (base_url or "").lower()
-    host = (urlparse(base).hostname or "").lower()
-    for substring, provider in _URL_TO_PRICING_PROVIDER.items():
-        if substring in base or substring in host:
-            return provider
-    return None
+    return pricing_provider_from_endpoint(base_url)
 
 
 def _model_pricing_for_provider(provider: str, model_id: str) -> Optional[Dict[str, Any]]:

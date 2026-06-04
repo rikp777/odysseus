@@ -19,6 +19,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import NullPool
 
 import core.database as cdb
+from core.database import ChatMessage as DbChatMessage
 from core.database import Session as DbSession
 from core.models import ChatMessage
 
@@ -29,6 +30,8 @@ _ENGINE = create_engine(
     poolclass=NullPool,
 )
 cdb.Base.metadata.create_all(_ENGINE)
+DbSession.__table__.create(bind=_ENGINE, checkfirst=True)
+DbChatMessage.__table__.create(bind=_ENGINE, checkfirst=True)
 _TS = sessionmaker(bind=_ENGINE, autoflush=False, autocommit=False)
 
 

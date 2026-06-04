@@ -18,6 +18,15 @@ if _endpoint_resolver is not None and not getattr(_endpoint_resolver, "__file__"
     sys.modules.pop("src.endpoint_resolver", None)
     sys.modules.pop("routes.model_routes", None)
 
+_CORE_DB_ABSENT = object()
+_core_db_original = sys.modules.get("core.database", _CORE_DB_ABSENT)
+_core_pkg = sys.modules.get("core")
+_core_db_attr_original = (
+    getattr(_core_pkg, "database", _CORE_DB_ABSENT)
+    if _core_pkg is not None
+    else _CORE_DB_ABSENT
+)
+_core_database_stubbed = False
 if "core.database" not in sys.modules:
     _core_db = types.ModuleType("core.database")
     for _name in [
@@ -28,6 +37,7 @@ if "core.database" not in sys.modules:
     ]:
         setattr(_core_db, _name, MagicMock())
     sys.modules["core.database"] = _core_db
+    _core_database_stubbed = True
 
 import routes.model_routes as model_routes
 import src.database as src_database
@@ -54,6 +64,21 @@ from routes.model_routes import (
     _PROVIDER_CURATED,
 )
 from src.llm_core import ANTHROPIC_MODELS
+
+if _core_database_stubbed:
+    if _core_db_original is _CORE_DB_ABSENT:
+        sys.modules.pop("core.database", None)
+    else:
+        sys.modules["core.database"] = _core_db_original
+    _core_pkg = sys.modules.get("core")
+    if _core_pkg is not None:
+        if _core_db_attr_original is _CORE_DB_ABSENT:
+            try:
+                delattr(_core_pkg, "database")
+            except AttributeError:
+                pass
+        else:
+            setattr(_core_pkg, "database", _core_db_attr_original)
 
 
 # ── speech endpoint settings ──
@@ -1061,6 +1086,11 @@ async def test_probe_local_skips_tailscale_proxy_endpoint(monkeypatch):
     monkeypatch.setattr(model_routes, "require_admin", lambda request: None)
     monkeypatch.setattr(model_routes, "_probe_endpoint", lambda *a, **k: (_ for _ in ()).throw(AssertionError("full probe should not run")))
 
+    async def immediate_to_thread(fn, *args, **kwargs):
+        return fn(*args, **kwargs)
+
+    monkeypatch.setattr(asyncio, "to_thread", immediate_to_thread)
+
     pinged = []
 
     def fake_ping(base_url, api_key=None, timeout=1.5):
@@ -1147,6 +1177,7 @@ def test_llm_core_list_model_ids_uses_cached_configured_proxy(monkeypatch):
 
     monkeypatch.setattr(src_database, "ModelEndpoint", _RouteModelEndpoint)
     monkeypatch.setattr(src_database, "SessionLocal", lambda: db)
+    monkeypatch.setitem(sys.modules, "src.database", src_database)
     monkeypatch.setattr(llm_core.httpx, "get", lambda *a, **k: (_ for _ in ()).throw(AssertionError("/models should not be fetched")))
 
     assert llm_core.list_model_ids("http://100.117.136.97:34521/v1/chat/completions", timeout=1) == ["cached-model"]

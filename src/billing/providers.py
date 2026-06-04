@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from src.billing.adapters.anthropic import _anthropic_payload, _fetch_anthropic_billing
 from src.billing.adapters.digitalocean import _digitalocean_payload, _fetch_digitalocean_balance
 from src.billing.adapters.openai import _fetch_openai_billing, _openai_payload
 from src.billing.provider_types import BillingProvider
+from src.provider_identity import normalize_provider_id
 
 
 def _digitalocean_provider() -> BillingProvider:
@@ -55,8 +56,8 @@ def create_provider_registry() -> Dict[str, BillingProvider]:
 _PROVIDERS = create_provider_registry()
 
 
-def _provider_meta(provider: str) -> Dict[str, str]:
-    definition = _PROVIDERS.get(provider)
+def provider_meta(provider: str, definition: Optional[BillingProvider] = None) -> Dict[str, str]:
+    definition = definition or _PROVIDERS.get(provider)
     label = definition.label if definition else provider or "Cloud provider"
     return {
         "provider": provider,
@@ -66,6 +67,13 @@ def _provider_meta(provider: str) -> Dict[str, str]:
     }
 
 
+def normalized_provider(value: Any) -> str:
+    return normalize_provider_id(value, default="digitalocean")
+
+
+def _provider_meta(provider: str, definition: Optional[BillingProvider] = None) -> Dict[str, str]:
+    return provider_meta(provider, definition)
+
+
 def _normalized_provider(value: Any) -> str:
-    provider = str(value or "digitalocean").strip().lower()
-    return provider or "digitalocean"
+    return normalized_provider(value)

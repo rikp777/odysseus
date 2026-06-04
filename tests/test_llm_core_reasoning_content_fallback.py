@@ -97,18 +97,32 @@ def test_llm_call_content_wins_over_reasoning_content(monkeypatch):
 import sys
 from unittest.mock import MagicMock
 
-# Mock heavy DB/tool deps before importing agent_loop
-for _mod in [
+_MISSING_MODULE = object()
+_mocked_modules = [
     "sqlalchemy", "sqlalchemy.orm", "sqlalchemy.ext",
     "sqlalchemy.ext.declarative", "sqlalchemy.ext.hybrid",
     "sqlalchemy.sql", "sqlalchemy.sql.expression",
     "src.database", "src.agent_tools",
     "core.models", "core.database",
-]:
-    if _mod not in sys.modules:
-        sys.modules[_mod] = MagicMock()
+]
+_original_modules = {
+    name: sys.modules.get(name, _MISSING_MODULE)
+    for name in _mocked_modules
+}
 
-from src.agent_loop import _empty_response_fallback  # noqa: E402
+# Mock heavy DB/tool deps only long enough for the lightweight helper import.
+try:
+    for _mod in _mocked_modules:
+        if _mod not in sys.modules:
+            sys.modules[_mod] = MagicMock()
+
+    from src.agent_loop import _empty_response_fallback  # noqa: E402
+finally:
+    for _mod, _original in _original_modules.items():
+        if _original is _MISSING_MODULE:
+            sys.modules.pop(_mod, None)
+        else:
+            sys.modules[_mod] = _original
 
 
 # ---------------------------------------------------------------------------

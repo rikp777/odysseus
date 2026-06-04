@@ -56,6 +56,8 @@ def test_topic_analyzer_hydrates_sessions(monkeypatch):
     # 1. Create clean in-memory database
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(bind=engine)
+    DbSession.__table__.create(bind=engine, checkfirst=True)
+    DbChatMessage.__table__.create(bind=engine, checkfirst=True)
     
     # 2. Create test session factory
     TestSessionLocal = sessionmaker(bind=engine)

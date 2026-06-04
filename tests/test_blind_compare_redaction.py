@@ -34,6 +34,7 @@ _ABSENT = object()
 _TEMP_STUBS = ("core.database", "core.models", "src.request_models")
 _saved = {name: sys.modules.get(name, _ABSENT) for name in _TEMP_STUBS}
 _saved["core.session_manager"] = sys.modules.get("core.session_manager", _ABSENT)
+_saved["routes.session_routes"] = sys.modules.get("routes.session_routes", _ABSENT)
 try:
     for _name in _TEMP_STUBS:
         sys.modules[_name] = MagicMock(name=_name)

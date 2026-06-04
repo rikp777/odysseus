@@ -7,11 +7,93 @@ import logging
 import hashlib
 import threading
 from fastapi import HTTPException
-from typing import Optional, Dict, List
-from src.model_context import get_context_length, DEFAULT_CONTEXT
+from typing import Any, Optional, Dict, List
+from src.model_context import get_context_length, DEFAULT_CONTEXT, estimate_tokens
+from src.provider_identity import is_remote_billable_endpoint
 from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
+
+
+def _usage_int(value: Any) -> int:
+    try:
+        return max(int(value or 0), 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _usage_recording_context(
+    owner: Optional[str] = None,
+    billing_context: Optional[Dict[str, Any]] = None,
+) -> Optional[Dict[str, Any]]:
+    if billing_context is not None and billing_context.get("record") is False:
+        return None
+    if billing_context is None and not owner:
+        return None
+    ctx = dict(billing_context or {})
+    ctx.setdefault("owner", owner)
+    return ctx
+
+
+def _estimated_usage_metrics(messages: List[Dict], response: str, model: str) -> Dict[str, Any]:
+    return {
+        "input_tokens": estimate_tokens(messages),
+        "output_tokens": len(response or "") // 4,
+        "model": model,
+        "usage_source": "estimated",
+    }
+
+
+def _response_usage_metrics(provider: str, data: Dict[str, Any], messages: List[Dict], response: str, model: str) -> Dict[str, Any]:
+    usage: Dict[str, Any] = {}
+    if provider == "anthropic":
+        usage = data.get("usage") or data.get("message", {}).get("usage", {}) or {}
+        input_tokens = usage.get("input_tokens", 0)
+        output_tokens = usage.get("output_tokens", 0)
+    elif provider == "ollama":
+        input_tokens = data.get("prompt_eval_count", 0)
+        output_tokens = data.get("eval_count", 0)
+    else:
+        usage = data.get("usage") or {}
+        input_tokens = usage.get("prompt_tokens", 0)
+        output_tokens = usage.get("completion_tokens", 0)
+
+    if _usage_int(input_tokens) or _usage_int(output_tokens):
+        return {
+            "input_tokens": _usage_int(input_tokens),
+            "output_tokens": _usage_int(output_tokens),
+            "model": data.get("model") or model,
+            "usage_source": "real",
+        }
+    return _estimated_usage_metrics(messages, response, model)
+
+
+def record_llm_usage_safely(
+    *,
+    endpoint_url: str,
+    model: str,
+    metrics: Optional[Dict[str, Any]],
+    owner: Optional[str] = None,
+    session_id: Optional[str] = None,
+    message_id: Optional[str] = None,
+    billing_context: Optional[Dict[str, Any]] = None,
+) -> None:
+    """Record model usage without letting billing failures affect model calls."""
+    ctx = _usage_recording_context(owner, billing_context)
+    if not ctx or not metrics:
+        return
+    try:
+        from src.billing_usage import record_model_usage_from_metrics
+        record_model_usage_from_metrics(
+            owner=ctx.get("owner"),
+            session_id=ctx.get("session_id", session_id),
+            message_id=ctx.get("message_id", message_id),
+            endpoint_url=endpoint_url,
+            model=str(metrics.get("model") or model or ""),
+            metrics=metrics,
+        )
+    except Exception as exc:
+        logger.warning("Failed to record model usage for billing ledger: %s", exc)
 
 class LLMConfig:
     """Configuration constants for LLM operations."""
@@ -354,24 +436,7 @@ def _provider_label(url: str) -> str:
 
 def _is_remote_billable_url(url: str) -> bool:
     """Return True for remote model APIs that should obey cloud spend limits."""
-    try:
-        parsed = urlparse(url or "")
-        host = (parsed.hostname or "").lower()
-    except Exception:
-        return False
-    if not host:
-        return False
-    if host in {"localhost", "127.0.0.1", "0.0.0.0", "::1"} or host.endswith(".local"):
-        return False
-    try:
-        import ipaddress
-        ip = ipaddress.ip_address(host)
-        tailscale = ipaddress.ip_network("100.64.0.0/10")
-        if ip.is_loopback or ip.is_private or ip.is_link_local or ip in tailscale:
-            return False
-    except ValueError:
-        pass
-    return True
+    return is_remote_billable_endpoint(url)
 
 
 def _cloud_spend_limit_error(url: str, model: str = "", owner: Optional[str] = None) -> Optional[str]:
@@ -925,7 +990,7 @@ def normalize_model_id(endpoint_url: str, requested: str, timeout: int = LLMConf
 def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LLMConfig.DEFAULT_TEMPERATURE,
              max_tokens: int = LLMConfig.DEFAULT_MAX_TOKENS, headers: Optional[Dict] = None, 
              timeout: int = LLMConfig.DEFAULT_TIMEOUT, prompt_type: Optional[str] = None,
-             owner: Optional[str] = None) -> str:
+             owner: Optional[str] = None, billing_context: Optional[Dict[str, Any]] = None) -> str:
     """Synchronous LLM call with optional prompt type enhancement."""
     h = _provider_headers(_detect_provider(url))
     # Tolerate headers that arrive as a JSON string (some sessions stored them
@@ -1001,6 +1066,13 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
             msg = data["choices"][0]["message"]
             response = msg.get("content") or msg.get("reasoning_content") or ""
         _set_cached_response(cache_key, response)
+        record_llm_usage_safely(
+            endpoint_url=target_url,
+            model=model,
+            metrics=_response_usage_metrics(provider, data, messages_copy, response, model),
+            owner=owner,
+            billing_context=billing_context,
+        )
         return response
     except Exception:
         raise HTTPException(502, f"Unexpected schema from {target_url}: {str(data)[:400]}")
@@ -1082,6 +1154,7 @@ async def llm_call_async(
     max_retries: int = LLMConfig.MAX_RETRIES,
     prompt_type: Optional[str] = None,
     owner: Optional[str] = None,
+    billing_context: Optional[Dict[str, Any]] = None,
 ) -> str:
     """Asynchronous LLM call using httpx with connection pooling, timeout, retry logic, and performance logging."""
     provider = _detect_provider(url)
@@ -1167,6 +1240,13 @@ async def llm_call_async(
                     msg = data["choices"][0]["message"]
                     response = msg.get("content") or msg.get("reasoning_content") or ""
                 _set_cached_response(cache_key, response)
+                record_llm_usage_safely(
+                    endpoint_url=target_url,
+                    model=model,
+                    metrics=_response_usage_metrics(provider, data, messages_copy, response, model),
+                    owner=owner,
+                    billing_context=billing_context,
+                )
                 return response
             except Exception:
                 raise HTTPException(502, f"Unexpected schema from {target_url}: {str(data)[:400]}")
@@ -1186,7 +1266,8 @@ async def llm_call_async(
 async def stream_llm(url: str, model: str, messages: List[Dict], temperature: float = LLMConfig.DEFAULT_TEMPERATURE,
                      max_tokens: int = LLMConfig.DEFAULT_MAX_TOKENS, headers: Optional[Dict] = None,
                      timeout: int = LLMConfig.STREAM_TIMEOUT, prompt_type: Optional[str] = None,
-                     tools: Optional[List[Dict]] = None, owner: Optional[str] = None):
+                     tools: Optional[List[Dict]] = None, owner: Optional[str] = None,
+                     billing_context: Optional[Dict[str, Any]] = None):
     """Stream LLM responses with improved error handling.
 
     Yields SSE chunks:
@@ -1257,6 +1338,28 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
         yield f'event: error\ndata: {json.dumps({"error": f"Upstream {_host_key(target_url)} unreachable (cooldown active)", "status": 503})}\n\n'
         return
     note_model_activity(target_url, model)
+    _stream_usage_metrics: Optional[Dict[str, Any]] = None
+
+    def _remember_stream_usage(metrics: Dict[str, Any]) -> Dict[str, Any]:
+        nonlocal _stream_usage_metrics
+        event_metrics = dict(metrics or {})
+        _stream_usage_metrics = dict(event_metrics)
+        _stream_usage_metrics.setdefault("model", model)
+        _stream_usage_metrics.setdefault("usage_source", "real")
+        return event_metrics
+
+    def _record_stream_usage_once() -> None:
+        nonlocal _stream_usage_metrics
+        if not _stream_usage_metrics:
+            return
+        record_llm_usage_safely(
+            endpoint_url=target_url,
+            model=model,
+            metrics=_stream_usage_metrics,
+            owner=owner,
+            billing_context=billing_context,
+        )
+        _stream_usage_metrics = None
 
     # ── Native Ollama streaming ──
     if provider == "ollama":
@@ -1296,7 +1399,9 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
                         if _ollama_tool_calls:
                             yield f'data: {json.dumps({"type": "tool_calls", "calls": _ollama_tool_calls})}\n\n'
                         if j.get("prompt_eval_count") is not None or j.get("eval_count") is not None:
-                            yield f'data: {json.dumps({"type": "usage", "data": {"input_tokens": j.get("prompt_eval_count", 0), "output_tokens": j.get("eval_count", 0)}})}\n\n'
+                            usage = _remember_stream_usage({"input_tokens": j.get("prompt_eval_count", 0), "output_tokens": j.get("eval_count", 0)})
+                            yield f'data: {json.dumps({"type": "usage", "data": usage})}\n\n'
+                        _record_stream_usage_once()
                         yield "data: [DONE]\n\n"
                         return
                 yield "data: [DONE]\n\n"
@@ -1397,7 +1502,9 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
                                     })
                                 yield f'data: {json.dumps({"type": "tool_calls", "calls": calls})}\n\n'
                             if _anth_input_tokens or _anth_output_tokens:
-                                yield f'data: {json.dumps({"type": "usage", "data": {"input_tokens": _anth_input_tokens, "output_tokens": _anth_output_tokens}})}\n\n'
+                                usage = _remember_stream_usage({"input_tokens": _anth_input_tokens, "output_tokens": _anth_output_tokens})
+                                yield f'data: {json.dumps({"type": "usage", "data": usage})}\n\n'
+                            _record_stream_usage_once()
                             yield "data: [DONE]\n\n"
                             return
                         elif evt == "error":
@@ -1460,6 +1567,7 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
                         tc_event = _emit_tool_calls()
                         if tc_event:
                             yield tc_event
+                        _record_stream_usage_once()
                         yield "data: [DONE]\n\n"
                         return
 
@@ -1496,7 +1604,7 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
                                             _usage_data["gen_tps"] = round(_tm["predicted_per_second"], 2)
                                         if _tm.get("prompt_per_second"):
                                             _usage_data["prefill_tps"] = round(_tm["prompt_per_second"], 2)
-                                    yield f'data: {json.dumps({"type": "usage", "data": _usage_data})}\n\n'
+                                    yield f'data: {json.dumps({"type": "usage", "data": _remember_stream_usage(_usage_data)})}\n\n'
                                 elif "choices" in j:
                                     delta = j["choices"][0].get("delta") or {}
                                     if isinstance(delta, dict):
@@ -1573,6 +1681,7 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
             tc_event = _emit_tool_calls()
             if tc_event:
                 yield tc_event
+            _record_stream_usage_once()
             yield "data: [DONE]\n\n"
 
     except (httpx.ConnectError, httpx.ConnectTimeout) as e:
@@ -1658,6 +1767,7 @@ async def stream_llm_with_fallback(candidates, messages, **kwargs):
                         "type": "fallback",
                         "selected_model": primary_model,
                         "answered_by": model,
+                        "answered_endpoint": url,
                         "reason": _summarize_stream_error(last_error),
                     }) + '\n\n')
                 emitted = True
