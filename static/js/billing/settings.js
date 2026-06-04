@@ -2,11 +2,12 @@
 
 import uiModule from '../ui.js';
 import {
-  CLOUD_BILLING_PROVIDER_LABELS,
+  normalizeProviderCatalog,
   providerHint,
+  providerLabel,
   providerOptions,
 } from './providers.js';
-import { fetchAuthSettings, fetchMonthlySpend, saveAuthSettings } from './api.js';
+import { fetchAuthSettings, fetchBillingProviders, fetchMonthlySpend, saveAuthSettings } from './api.js';
 
 function el(id) { return document.getElementById(id); }
 function esc(s) { return uiModule.esc(s); }
@@ -42,6 +43,7 @@ export async function initCloudBillingSettings() {
   var status = el('set-cloudBillingStatus');
   var currentSettings = {};
   var accounts = [];
+  var providerCatalog = [];
   var thresholdControls = [
     { toggle: dailyWarningToggle, input: dailyWarningInput },
     { toggle: dailyLimitToggle, input: dailyLimitInput },
@@ -231,6 +233,34 @@ export async function initCloudBillingSettings() {
     status.classList.toggle('billing-warning', !!isWarning);
   }
 
+  function populateAddProviderOptions() {
+    if (!addProvider) return;
+    var selected = addProvider.value;
+    addProvider.innerHTML = providerOptions(providerCatalog, selected, esc, []);
+    if (providerCatalog.length) {
+      addProvider.disabled = false;
+      if (selected && Array.from(addProvider.options).some(function(opt) { return opt.value === selected; })) {
+        addProvider.value = selected;
+      }
+      if (!addProvider.value) addProvider.value = providerCatalog[0].id;
+      return;
+    }
+    addProvider.disabled = true;
+    var opt = document.createElement('option');
+    opt.value = '';
+    opt.textContent = 'Providers unavailable';
+    addProvider.appendChild(opt);
+  }
+
+  async function loadProviderCatalog() {
+    try {
+      providerCatalog = normalizeProviderCatalog(await fetchBillingProviders());
+    } catch (e) {
+      providerCatalog = [];
+    }
+    populateAddProviderOptions();
+  }
+
   function normalizeAccounts(raw) {
     if (!Array.isArray(raw)) return [];
     return raw.filter(function(account) { return account && typeof account === 'object'; }).map(function(account, idx) {
@@ -293,14 +323,14 @@ export async function initCloudBillingSettings() {
       var result = results[account.id];
       var state = accountStatusState(account, result);
       var resultWarning = state.tone === 'warning' || state.tone === 'danger';
-      var tokenPlaceholder = account.api_token_set ? 'Key stored; enter new key to replace' : providerHint(account.provider);
-      var providerLabel = CLOUD_BILLING_PROVIDER_LABELS[account.provider] || account.provider || 'Provider';
-      var accountTitle = account.label || providerLabel;
+      var tokenPlaceholder = account.api_token_set ? 'Key stored; enter new key to replace' : providerHint(providerCatalog, account.provider);
+      var label = providerLabel(providerCatalog, account.provider);
+      var accountTitle = account.label || label;
       return '<div class="cloud-billing-account" data-account-id="' + esc(account.id) + '">' +
         '<div class="cloud-billing-account-head">' +
           '<div class="cloud-billing-account-title">' +
             '<strong>' + esc(accountTitle) + '</strong>' +
-            '<span>' + esc(providerLabel) + '</span>' +
+            '<span>' + esc(label) + '</span>' +
           '</div>' +
           '<div class="cloud-billing-account-actions">' +
             '<span class="cloud-billing-include-toggle" title="Include this account in provider billing checks"><span>Include</span><label class="admin-switch"><input type="checkbox" data-field="enabled" ' + (account.enabled ? 'checked' : '') + '><span class="admin-slider"></span></label></span>' +
@@ -313,7 +343,7 @@ export async function initCloudBillingSettings() {
           '<span class="cloud-billing-account-status-text">' + esc(accountStatusText(account, result)) + '</span>' +
         '</div>' +
         '<div class="cloud-billing-account-fields">' +
-          '<label class="cloud-billing-field"><span>Provider</span><select class="settings-select" data-field="provider">' + providerOptions(account.provider, esc) + '</select></label>' +
+          '<label class="cloud-billing-field"><span>Provider</span><select class="settings-select" data-field="provider">' + providerOptions(providerCatalog, account.provider, esc, [account.provider]) + '</select></label>' +
           '<label class="cloud-billing-field"><span>Label</span><input class="settings-input" data-field="label" type="text" placeholder="Label" value="' + esc(account.label || '') + '"></label>' +
           '<label class="cloud-billing-field cloud-billing-token-field"><span>Token</span><input class="settings-input" data-field="api_token" type="password" placeholder="' + esc(tokenPlaceholder) + '"></label>' +
         '</div>' +
@@ -479,7 +509,11 @@ export async function initCloudBillingSettings() {
   });
   if (addBtn) addBtn.addEventListener('click', function() {
     accounts = readAccountsFromDom();
-    var provider = (addProvider && addProvider.value) || 'digitalocean';
+    var provider = (addProvider && addProvider.value) || '';
+    if (!provider) {
+      setMsg('Billing providers are unavailable.', true);
+      return;
+    }
     var tokenValue = (addToken && addToken.value.trim()) || '';
     if (!tokenValue) {
       setMsg('Enter a provider billing token before adding.', true);
@@ -489,7 +523,7 @@ export async function initCloudBillingSettings() {
     accounts.push({
       id: 'acct-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 7),
       provider: provider,
-      label: (addLabel && addLabel.value.trim()) || CLOUD_BILLING_PROVIDER_LABELS[provider] || provider,
+      label: (addLabel && addLabel.value.trim()) || providerLabel(providerCatalog, provider),
       enabled: true,
       api_token: tokenValue,
       api_token_set: false,
@@ -561,6 +595,7 @@ export async function initCloudBillingSettings() {
     });
   }
 
+  await loadProviderCatalog();
   await loadSettings();
   await refreshStatus(false);
 }

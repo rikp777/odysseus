@@ -25,6 +25,7 @@ from src.billing.providers import (
     _PROVIDERS,
     _normalized_provider,
     _provider_meta,
+    provider_catalog as _provider_catalog,
 )
 from src.billing.status import BillingStatusService
 from src.billing_usage import get_usage_summary
@@ -460,6 +461,11 @@ def setup_billing_routes() -> APIRouter:
     def usage_summary(request: Request, period: str = "month") -> Dict[str, Any]:
         require_admin(request)
         return _local_usage_payload(period)
+
+    @router.get("/providers")
+    def billing_providers(request: Request) -> Dict[str, Any]:
+        require_admin(request)
+        return {"providers": _provider_catalog(_PROVIDERS)}
 
     @router.get("/{provider}/monthly-spend")
     def provider_monthly_spend(provider: str, request: Request, refresh: bool = False) -> Dict[str, Any]:
