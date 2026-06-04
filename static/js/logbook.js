@@ -11,6 +11,7 @@ import {
   applyEntrySuggestions,
   assistLogbook,
   createLocation,
+  getAIStatus,
   getEntry,
   listConnections,
   listEntries,
@@ -45,6 +46,7 @@ let _activeTab = 'write';
 let _aiPreview = null;
 let _aiBusy = false;
 let _aiError = '';
+let _aiStatus = { available: false, reason: 'Checking AI provider...' };
 let _search = '';
 let _filterPerson = '';
 let _filterLocation = '';
@@ -158,6 +160,17 @@ async function _loadConnections() {
   _connections = data.connections || [];
 }
 
+async function _loadAIStatus() {
+  try {
+    _aiStatus = await getAIStatus();
+  } catch (err) {
+    _aiStatus = {
+      available: false,
+      reason: err?.message || 'AI status could not be checked',
+    };
+  }
+}
+
 async function _loadDate(date) {
   if (_dirty) {
     try { await _saveNow({ silent: true }); } catch (_) {}
@@ -165,7 +178,7 @@ async function _loadDate(date) {
   _date = date;
   _aiPreview = null;
   _aiError = '';
-  await Promise.all([_loadEntry(_date), _loadPeople(), _loadLocations(), _loadConnections(), _loadEntries()]);
+  await Promise.all([_loadEntry(_date), _loadPeople(), _loadLocations(), _loadConnections(), _loadEntries(), _loadAIStatus()]);
   _render();
 }
 
@@ -650,20 +663,28 @@ function _connectionsHtml() {
 }
 
 function _aiHtml() {
-  const preview = _aiPreview ? _aiPreviewHtml() : '<div class="logbook-empty">AI previews appear here.</div>';
+  const aiAvailable = _aiStatus?.available === true;
+  const disabled = aiAvailable ? '' : ' disabled aria-disabled="true"';
+  const disabledTitle = aiAvailable ? '' : ` title="${_e(_aiStatus?.reason || 'No LLM provider configured')}"`;
+  const preview = _aiPreview
+    ? _aiPreviewHtml()
+    : aiAvailable
+      ? '<div class="logbook-empty">AI previews appear here.</div>'
+      : '<div class="logbook-empty">Manual writing still works. Configure a default or utility LLM provider to enable AI help.</div>';
   return `
     <div class="logbook-section-head"><h5>AI help</h5></div>
-    <textarea id="logbook-ai-draft" class="logbook-ai-draft" placeholder="Rough thoughts"></textarea>
+    ${aiAvailable ? `<div class="logbook-ai-status">Using AI model${_aiStatus.model ? `: ${_e(_aiStatus.model)}` : ''}</div>` : `<div class="logbook-ai-disabled">AI help is off: ${_e(_aiStatus?.reason || 'No LLM provider configured')}.</div>`}
+    <textarea id="logbook-ai-draft" class="logbook-ai-draft" placeholder="Rough thoughts"${aiAvailable ? '' : ' disabled'}></textarea>
     <div class="logbook-ai-buttons">
-      <button type="button" class="cal-btn cal-btn-primary" data-ai-mode="structure_day">Help me write today</button>
-      <button type="button" class="cal-btn" data-ai-mode="clean_spelling">Clean spelling</button>
-      <button type="button" class="cal-btn" data-ai-mode="ask_questions">Ask 3 questions</button>
-      <button type="button" class="cal-btn" data-ai-mode="extract_people">Extract people</button>
-      <button type="button" class="cal-btn" data-ai-mode="extract_locations">Extract places</button>
-      <button type="button" class="cal-btn" data-ai-mode="extract_all">Detect text</button>
-      <button type="button" class="cal-btn" data-ai-mode="summarize">Summarize</button>
-      <button type="button" class="cal-btn" data-ai-mode="reflect">Reflect</button>
-      <button type="button" class="cal-btn" id="logbook-analyze-entry">Analyze saved</button>
+      <button type="button" class="cal-btn cal-btn-primary" data-ai-mode="structure_day"${disabled}${disabledTitle}>Help me write today</button>
+      <button type="button" class="cal-btn" data-ai-mode="clean_spelling"${disabled}${disabledTitle}>Clean spelling</button>
+      <button type="button" class="cal-btn" data-ai-mode="ask_questions"${disabled}${disabledTitle}>Ask 3 questions</button>
+      <button type="button" class="cal-btn" data-ai-mode="extract_people"${disabled}${disabledTitle}>Extract people</button>
+      <button type="button" class="cal-btn" data-ai-mode="extract_locations"${disabled}${disabledTitle}>Extract places</button>
+      <button type="button" class="cal-btn" data-ai-mode="extract_all"${disabled}${disabledTitle}>Detect text</button>
+      <button type="button" class="cal-btn" data-ai-mode="summarize"${disabled}${disabledTitle}>Summarize</button>
+      <button type="button" class="cal-btn" data-ai-mode="reflect"${disabled}${disabledTitle}>Reflect</button>
+      <button type="button" class="cal-btn" id="logbook-analyze-entry"${disabled}${disabledTitle}>Analyze saved</button>
     </div>
     ${_aiBusy ? '<div class="logbook-ai-status">Thinking...</div>' : ''}
     ${_aiError ? `<div class="logbook-ai-error">${_e(_aiError)}</div>` : ''}
@@ -1255,6 +1276,11 @@ async function _createLocation() {
 }
 
 async function _runAI(mode) {
+  if (_aiStatus?.available !== true) {
+    _aiError = _aiStatus?.reason || 'No LLM provider configured.';
+    _render();
+    return;
+  }
   if (_aiBusy) return;
   const draft = document.getElementById('logbook-ai-draft')?.value || '';
   _aiBusy = true;
@@ -1282,6 +1308,11 @@ async function _runAI(mode) {
 }
 
 async function _analyzeEntry() {
+  if (_aiStatus?.available !== true) {
+    _aiError = _aiStatus?.reason || 'No LLM provider configured.';
+    _render();
+    return;
+  }
   if (!_entry?.id || _dirty) {
     await _saveNow({ silent: true });
   }

@@ -37551,12 +37551,27 @@ body.theme-frosted .modal {
   margin: 8px 0;
 }
 
+.logbook-ai-buttons .cal-btn:disabled,
+.logbook-ai-draft:disabled {
+  opacity: 0.48;
+  cursor: not-allowed;
+}
+
 .logbook-ai-status,
+.logbook-ai-disabled,
 .logbook-ai-error,
 .logbook-empty {
   font-size: 12px;
   opacity: 0.7;
   line-height: 1.45;
+}
+
+.logbook-ai-disabled {
+  opacity: 1;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px;
+  background: color-mix(in srgb, var(--fg) 5%, transparent);
 }
 
 .logbook-ai-error {

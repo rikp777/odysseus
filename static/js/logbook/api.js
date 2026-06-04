@@ -110,6 +110,10 @@ export function listConnections() {
   return jsonFetch(`${API_BASE}/api/logbook/connections`);
 }
 
+export function getAIStatus() {
+  return jsonFetch(`${API_BASE}/api/logbook/ai/status`);
+}
+
 export function assistLogbook(payload) {
   return jsonFetch(`${API_BASE}/api/logbook/ai/assist`, {
     method: 'POST',

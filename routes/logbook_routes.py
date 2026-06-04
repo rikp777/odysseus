@@ -731,6 +731,11 @@ def setup_logbook_routes() -> APIRouter:
         finally:
             db.close()
 
+    @router.get("/ai/status")
+    def ai_status(request: Request):
+        owner = _owner(request)
+        return logbook_ai.ai_status(owner)
+
     @router.post("/ai/assist")
     async def ai_assist(request: Request, body: LogbookAIAssist):
         owner = _owner(request)

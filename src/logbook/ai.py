@@ -139,6 +139,30 @@ def ai_system_prompt(mode: str, locale: str) -> str:
     )
 
 
+def ai_status(owner: str) -> Dict[str, Any]:
+    try:
+        from src.endpoint_resolver import resolve_endpoint
+    except Exception:
+        return {
+            "ok": True,
+            "available": False,
+            "reason": "AI helpers are unavailable",
+        }
+
+    url, model, _headers = resolve_endpoint("utility", owner=owner)
+    source = "utility/default"
+    if not url or not model:
+        url, model, _headers = resolve_endpoint("default", owner=owner)
+    available = bool(url and model)
+    return {
+        "ok": True,
+        "available": available,
+        "source": source if available else None,
+        "model": model if available else None,
+        "reason": None if available else "No utility or default LLM provider/model is configured",
+    }
+
+
 async def run_ai_assist(owner: str, payload: LogbookAIAssist) -> JSONResponse | Dict[str, Any]:
     mode = (payload.mode or "").strip()
     if mode not in AI_MODES:
