@@ -37347,10 +37347,8 @@ body.theme-frosted .modal {
 }
 
 .logbook-date-controls input,
-.logbook-title-input,
 .logbook-select,
 .logbook-content,
-.logbook-ai-draft,
 .logbook-datapoint input {
   background: var(--input-bg, var(--panel));
   color: var(--fg);
@@ -37542,14 +37540,6 @@ body.theme-frosted .modal {
   opacity: 0.58;
 }
 
-.logbook-title-input {
-  min-width: 160px;
-  flex: 1 1 220px;
-  min-height: 34px;
-  padding: 0 10px;
-  font-weight: 600;
-}
-
 .logbook-write-section {
   position: relative;
   min-height: 260px;
@@ -37567,8 +37557,6 @@ body.theme-frosted .modal {
 }
 
 .logbook-content:focus,
-.logbook-title-input:focus,
-.logbook-ai-draft:focus,
 .logbook-datapoint input:focus,
 .logbook-select:focus {
   outline: none;
@@ -37710,21 +37698,11 @@ body.theme-frosted .modal {
   border-color: var(--red);
 }
 
-.logbook-ai-draft {
-  width: 100%;
-  min-height: 86px;
-  resize: vertical;
-  padding: 10px;
-  line-height: 1.45;
-  box-sizing: border-box;
-}
-
 .logbook-ai-buttons {
   margin: 8px 0;
 }
 
-.logbook-ai-buttons .cal-btn:disabled,
-.logbook-ai-draft:disabled {
+.logbook-ai-buttons .cal-btn:disabled {
   opacity: 0.48;
   cursor: not-allowed;
 }
@@ -37778,7 +37756,7 @@ body.theme-frosted .modal {
 
 .logbook-rendered-preview {
   display: grid;
-  gap: 6px;
+  gap: 4px;
 }
 
 .logbook-rendered-text {
@@ -37786,10 +37764,7 @@ body.theme-frosted .modal {
   overflow-wrap: anywhere;
   line-height: 1.55;
   font-size: 14px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 10px;
-  background: color-mix(in srgb, var(--fg) 4%, transparent);
+  padding: 2px 0;
 }
 
 .logbook-person-link {
@@ -38091,11 +38066,6 @@ body.theme-frosted .modal {
   .logbook-editor-head {
     align-items: stretch;
     flex-direction: column;
-  }
-
-  .logbook-title-input {
-    flex-basis: auto;
-    width: 100%;
   }
 
   .logbook-datapoint {

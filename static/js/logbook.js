@@ -197,6 +197,11 @@ function _slugName(value) {
     .replace(/^_+|_+$/g, '');
 }
 
+function _hasLogbookLinks(content) {
+  LOGBOOK_LINK_RE.lastIndex = 0;
+  return LOGBOOK_LINK_RE.test(String(content || ''));
+}
+
 function _linkKind(target) {
   const value = String(target || '').toLowerCase();
   if (value.startsWith('place:') || value.startsWith('location:')) return 'location';
@@ -337,9 +342,11 @@ function _renderLogbookText(content) {
 }
 
 function _refreshContentPreview() {
+  const section = document.getElementById('logbook-rendered-preview');
   const preview = document.getElementById('logbook-content-preview');
   if (!preview) return;
   preview.innerHTML = _renderLogbookText(_entry?.content || '');
+  section?.classList.toggle('hidden', !_hasLogbookLinks(_entry?.content || ''));
   _bindEntityLinkEvents(preview);
 }
 
@@ -527,6 +534,7 @@ function _navigatorHtml() {
 
 function _editorHtml() {
   const mood = _entry?.mood_label || '';
+  const showPreview = _hasLogbookLinks(_entry?.content || '');
   const moodChips = MOODS.map(item => `
     <button type="button" class="logbook-chip ${mood === item.value ? 'active' : ''}" data-mood="${_e(item.value)}" data-mood-score="${item.score}">${_e(item.label)}</button>
   `).join('');
@@ -536,14 +544,13 @@ function _editorHtml() {
         <div class="logbook-date-title">${_e(_dateLabel(_date))}</div>
         <div class="logbook-date-sub">${_e(_date)}</div>
       </div>
-      <input id="logbook-title-input" class="logbook-title-input" value="${_e(_entry?.title || 'Daily log')}" placeholder="Title">
     </div>
     <section class="logbook-write-section" data-mobile-section="write">
       <textarea id="logbook-content" class="logbook-content" placeholder="Write messy notes. Example: tired, talked with @Jan, rode through [Panningen](place:panningen), ate [breakfast](data:food).">${_e(_entry?.content || '')}</textarea>
       <div id="logbook-mention-menu" class="logbook-mention-menu hidden"></div>
     </section>
-    <section class="logbook-rendered-preview" data-mobile-section="write">
-      <div class="logbook-subtitle">Preview</div>
+    <section id="logbook-rendered-preview" class="logbook-rendered-preview ${showPreview ? '' : 'hidden'}" data-mobile-section="write">
+      <div class="logbook-subtitle">Links</div>
       <div id="logbook-content-preview" class="logbook-rendered-text">${_renderLogbookText(_entry?.content || '')}</div>
     </section>
     <section class="logbook-mood-section" data-mobile-section="mood">
@@ -753,7 +760,6 @@ function _aiHtml() {
   return `
     <div class="logbook-section-head"><h5>AI help</h5></div>
     ${aiAvailable ? `<div class="logbook-ai-status">Using AI model${_aiStatus.model ? `: ${_e(_aiStatus.model)}` : ''}</div>` : `<div class="logbook-ai-disabled">AI help is off: ${_e(_aiStatus?.reason || 'No LLM provider configured')}.</div>`}
-    <textarea id="logbook-ai-draft" class="logbook-ai-draft" placeholder="Rough thoughts"${aiAvailable ? '' : ' disabled'}></textarea>
     <div class="logbook-ai-buttons">
       <button type="button" class="cal-btn cal-btn-primary" data-ai-mode="structure_day"${disabled}${disabledTitle}>Help me write today</button>
       <button type="button" class="cal-btn" data-ai-mode="clean_spelling"${disabled}${disabledTitle}>Clean spelling</button>
@@ -847,16 +853,11 @@ function _bindEvents() {
     _loadEntries().then(_renderNavigator).catch(_showError);
   });
 
-  const title = document.getElementById('logbook-title-input');
-  title?.addEventListener('input', () => {
-    _entry.title = title.value;
-    _markDirty();
-  });
-
   const content = document.getElementById('logbook-content');
   content?.addEventListener('input', () => {
     _entry.content = content.value;
     _markDirty();
+    document.getElementById('logbook-rendered-preview')?.classList.toggle('hidden', !_hasLogbookLinks(content.value));
     const preview = document.getElementById('logbook-content-preview');
     if (preview) {
       preview.innerHTML = _renderLogbookText(content.value);
@@ -1383,14 +1384,11 @@ async function _runAI(mode) {
     return;
   }
   if (_aiBusy) return;
-  const draft = document.getElementById('logbook-ai-draft')?.value || '';
   _aiBusy = true;
   _aiError = '';
   _aiPreview = null;
   _render();
-  const content = draft.trim()
-    ? `${_entry?.content || ''}\n\nExtra thoughts:\n${draft.trim()}`.trim()
-    : (_entry?.content || '');
+  const content = _entry?.content || '';
   try {
     const result = await assistLogbook({
       entry_date: _date,
