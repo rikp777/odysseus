@@ -488,13 +488,13 @@ FUNCTION_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "manage_logbook",
-            "description": "Read the user's owner-scoped Daily Logbook entries, people, places, mood, datapoints, and accepted/suggested connections. Use for questions about what happened on a date, this/last week or month, timelines, when a person/place was mentioned, moods or datapoints over time, and diary/journal/logbook recall. This tool is read-only; do not create or edit logbook entries from chat.",
+            "description": "Read the user's owner-scoped Daily Logbook entries, people, places, mood, datapoints, person/place details, reconnect hints, and accepted/suggested connections. Use for questions about what happened on a date, this/last week or month, timelines, when a person/place was mentioned, who a logbook person is, who the user has not mentioned lately, who to message/reach out/check in with, what a place is, moods or datapoints over time, and diary/journal/logbook recall. This tool is read-only; do not create or edit logbook entries from chat.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "action": {
                         "type": "string",
-                        "enum": ["get_day", "list_range", "timeline", "search", "people", "places", "locations", "directories", "connections"],
+                        "enum": ["get_day", "list_range", "timeline", "search", "people", "places", "locations", "directories", "person_detail", "place_detail", "location_detail", "connections"],
                         "description": "Read action to perform"
                     },
                     "date": {"type": "string", "description": "Date for get_day. Accepts YYYY-MM-DD, today, yesterday, tomorrow, last monday, etc."},
@@ -503,6 +503,7 @@ FUNCTION_TOOL_SCHEMAS = [
                     "q": {"type": "string", "description": "Text search query for entry title/content/summary."},
                     "query": {"type": "string", "description": "Alias for q."},
                     "person": {"type": "string", "description": "Filter by a person's display name or alias."},
+                    "name": {"type": "string", "description": "Name for person_detail or place_detail."},
                     "person_id": {"type": "string", "description": "Filter by exact logbook person id."},
                     "place": {"type": "string", "description": "Filter by a place/location display name or alias."},
                     "location": {"type": "string", "description": "Alias for place."},

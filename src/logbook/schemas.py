@@ -58,12 +58,24 @@ class LogbookPersonCreate(BaseModel):
     display_name: str
     aliases: Optional[List[str]] = None
     notes: Optional[str] = None
+    relationship_label: Optional[str] = None
+    llm_context: Optional[str] = None
+    contact_uid: Optional[str] = None
 
 
 class LogbookPersonUpdate(BaseModel):
     display_name: Optional[str] = None
     aliases: Optional[List[str]] = None
     notes: Optional[str] = None
+    relationship_label: Optional[str] = None
+    llm_context: Optional[str] = None
+    contact_uid: Optional[str] = None
+    contact_source: Optional[str] = None
+    contact_snapshot_json: Optional[Any] = None
+
+
+class LogbookPersonContactLink(BaseModel):
+    contact_uid: str
 
 
 class LogbookPeopleMerge(BaseModel):
@@ -75,17 +87,40 @@ class LogbookLocationCreate(BaseModel):
     display_name: str
     aliases: Optional[List[str]] = None
     notes: Optional[str] = None
+    address: Optional[str] = None
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+    location_type: Optional[str] = None
+    llm_context: Optional[str] = None
 
 
 class LogbookLocationUpdate(BaseModel):
     display_name: Optional[str] = None
     aliases: Optional[List[str]] = None
     notes: Optional[str] = None
+    address: Optional[str] = None
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+    location_type: Optional[str] = None
+    llm_context: Optional[str] = None
 
 
 class LogbookLocationsMerge(BaseModel):
     source_location_id: str
     target_location_id: str
+
+
+class LogbookEntitySuggestion(BaseModel):
+    display_name: Optional[str] = None
+    surface_text: Optional[str] = None
+    aliases: Optional[List[str]] = None
+    confidence: Optional[int] = None
+    reason: Optional[str] = None
+
+
+class LogbookApplySuggestions(BaseModel):
+    people_suggestions: Optional[List[LogbookEntitySuggestion]] = None
+    location_suggestions: Optional[List[LogbookEntitySuggestion]] = None
 
 
 class LogbookAIAssist(BaseModel):
@@ -94,4 +129,3 @@ class LogbookAIAssist(BaseModel):
     mode: str
     locale: str = "en"
     current_entry: Optional[Dict[str, Any]] = None
-

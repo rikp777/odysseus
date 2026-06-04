@@ -1012,6 +1012,11 @@ def _migrate_logbook_schema():
             "canonical_name": "TEXT",
             "aliases": "TEXT",
             "notes": "TEXT",
+            "relationship_label": "TEXT",
+            "llm_context": "TEXT",
+            "contact_uid": "TEXT",
+            "contact_source": "TEXT",
+            "contact_snapshot_json": "TEXT",
             "created_at": "DATETIME",
             "updated_at": "DATETIME",
         },
@@ -1031,6 +1036,11 @@ def _migrate_logbook_schema():
             "canonical_name": "TEXT",
             "aliases": "TEXT",
             "notes": "TEXT",
+            "address": "TEXT",
+            "latitude": "REAL",
+            "longitude": "REAL",
+            "location_type": "TEXT",
+            "llm_context": "TEXT",
             "created_at": "DATETIME",
             "updated_at": "DATETIME",
         },
@@ -1066,6 +1076,7 @@ def _migrate_logbook_schema():
         "CREATE INDEX IF NOT EXISTS ix_logbook_data_points_entry_id ON logbook_data_points(entry_id)",
         "CREATE INDEX IF NOT EXISTS ix_logbook_data_points_key ON logbook_data_points(key)",
         "CREATE INDEX IF NOT EXISTS ix_logbook_people_owner ON logbook_people(owner)",
+        "CREATE INDEX IF NOT EXISTS ix_logbook_people_contact_uid ON logbook_people(contact_uid)",
         "CREATE INDEX IF NOT EXISTS ix_logbook_people_canonical_name ON logbook_people(canonical_name)",
         "CREATE INDEX IF NOT EXISTS ix_logbook_people_owner_canonical ON logbook_people(owner, canonical_name)",
         "CREATE UNIQUE INDEX IF NOT EXISTS uq_logbook_people_owner_canonical ON logbook_people(owner, canonical_name)",
@@ -1073,6 +1084,7 @@ def _migrate_logbook_schema():
         "CREATE INDEX IF NOT EXISTS ix_logbook_mentions_person_id ON logbook_mentions(person_id)",
         "CREATE INDEX IF NOT EXISTS ix_logbook_mentions_entry_person ON logbook_mentions(entry_id, person_id)",
         "CREATE INDEX IF NOT EXISTS ix_logbook_locations_owner ON logbook_locations(owner)",
+        "CREATE INDEX IF NOT EXISTS ix_logbook_locations_coordinates ON logbook_locations(latitude, longitude)",
         "CREATE INDEX IF NOT EXISTS ix_logbook_locations_canonical_name ON logbook_locations(canonical_name)",
         "CREATE INDEX IF NOT EXISTS ix_logbook_locations_owner_canonical ON logbook_locations(owner, canonical_name)",
         "CREATE UNIQUE INDEX IF NOT EXISTS uq_logbook_locations_owner_canonical ON logbook_locations(owner, canonical_name)",
@@ -1655,6 +1667,11 @@ class LogbookPerson(TimestampMixin, Base):
     canonical_name = Column(String, nullable=False, index=True)
     aliases        = Column(Text, nullable=True)
     notes          = Column(Text, nullable=True)
+    relationship_label = Column(String, nullable=True)
+    llm_context    = Column(Text, nullable=True)
+    contact_uid    = Column(String, nullable=True, index=True)
+    contact_source = Column(String, nullable=True)
+    contact_snapshot_json = Column(Text, nullable=True)
 
     mentions = relationship("LogbookMention", back_populates="person", cascade="all, delete-orphan")
 
@@ -1696,6 +1713,11 @@ class LogbookLocation(TimestampMixin, Base):
     canonical_name = Column(String, nullable=False, index=True)
     aliases        = Column(Text, nullable=True)
     notes          = Column(Text, nullable=True)
+    address        = Column(Text, nullable=True)
+    latitude       = Column(Float, nullable=True)
+    longitude      = Column(Float, nullable=True)
+    location_type  = Column(String, nullable=True)
+    llm_context    = Column(Text, nullable=True)
 
     mentions = relationship("LogbookLocationMention", back_populates="location", cascade="all, delete-orphan")
 

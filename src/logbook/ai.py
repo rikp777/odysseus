@@ -21,8 +21,11 @@ from src.logbook.utils import (
     extract_json_object,
     json_load,
     pair_ids,
+    parse_data_links,
+    parse_location_links,
     parse_locations,
     parse_mentions,
+    parse_person_links,
     validate_date,
 )
 
@@ -30,6 +33,17 @@ from src.logbook.utils import (
 def deterministic_ai_suggestions(content: str) -> Dict[str, Any]:
     people = []
     seen = set()
+    for link in parse_person_links(content or ""):
+        canonical = link["target_name"]
+        if canonical in seen:
+            continue
+        seen.add(canonical)
+        people.append({
+            "display_name": link["target_display_name"] or link["name"],
+            "surface_text": link["surface_text"],
+            "confidence": 98,
+            "reason": "Person link",
+        })
     for mention in parse_mentions(content or ""):
         canonical = canonical_name(mention["name"])
         if canonical in seen:
@@ -40,6 +54,24 @@ def deterministic_ai_suggestions(content: str) -> Dict[str, Any]:
             "surface_text": mention["surface_text"],
             "confidence": 95,
             "reason": "Explicit @mention",
+        })
+    datapoints = []
+    seen_data = set()
+    for link in parse_data_links(content or ""):
+        key = canonical_name(link["key"]).replace(" ", "_")
+        value = str(link.get("value_text") or "").strip()
+        dedupe = (key, value.lower())
+        if not key or not value or dedupe in seen_data:
+            continue
+        seen_data.add(dedupe)
+        datapoints.append({
+            "key": key,
+            "label": link.get("label") or key.replace("_", " ").title(),
+            "value_text": value,
+            "value_number": None,
+            "unit": None,
+            "confidence": 95,
+            "reason": "Structured data link",
         })
     connections = []
     for a, b in itertools.combinations(people, 2):
@@ -53,6 +85,17 @@ def deterministic_ai_suggestions(content: str) -> Dict[str, Any]:
         })
     locations = []
     seen_locations = set()
+    for link in parse_location_links(content or ""):
+        canonical = link["target_name"]
+        if canonical in seen_locations:
+            continue
+        seen_locations.add(canonical)
+        locations.append({
+            "display_name": link["target_display_name"] or link["name"],
+            "surface_text": link["surface_text"],
+            "confidence": 98,
+            "reason": "Location link",
+        })
     for mention in parse_locations(content or ""):
         canonical = canonical_name(mention["name"])
         if canonical in seen_locations:
@@ -66,6 +109,7 @@ def deterministic_ai_suggestions(content: str) -> Dict[str, Any]:
         })
     return {
         "people_suggestions": people,
+        "datapoint_suggestions": datapoints,
         "location_suggestions": locations,
         "connection_suggestions": connections,
     }
@@ -101,6 +145,15 @@ def normalize_ai_payload(mode: str, raw: Dict[str, Any], content: str) -> Dict[s
     for location in deterministic["location_suggestions"]:
         if canonical_name(location["display_name"]) not in seen_locations:
             out["location_suggestions"].append(location)
+    seen_data = {
+        (canonical_name(d.get("key", "")).replace(" ", "_"), str(d.get("value_text") or "").strip().lower())
+        for d in out["datapoint_suggestions"] if isinstance(d, dict)
+    }
+    for datapoint in deterministic["datapoint_suggestions"]:
+        key = canonical_name(datapoint.get("key", "")).replace(" ", "_")
+        value = str(datapoint.get("value_text") or "").strip().lower()
+        if (key, value) not in seen_data:
+            out["datapoint_suggestions"].append(datapoint)
     if not out["connection_suggestions"]:
         out["connection_suggestions"] = deterministic["connection_suggestions"]
     return out
@@ -115,6 +168,11 @@ def ai_system_prompt(mode: str, locale: str) -> str:
         "For ask_questions, ask at most three short questions that can be answered in a few words. "
         "For reflect, give a gentle reflection, not therapy or medical advice. "
         "For people, locations, and connections, use only evidence from the supplied logbook text. "
+        "When mode is structure_day or extract_all, return preview_content that preserves the user's text but marks "
+        "confident person mentions as Markdown links like [Jeanine](person:jeanine_peeters). "
+        "Mark confident locations as Markdown links like [Panningen](place:panningen). "
+        "Mark food or other trackable daily data as data links like [eiwitrijk ontbijt](data:food). "
+        "Use lower_snake_case slugs. Do not link uncertain names or vague places. "
         "Locations are places such as home, gym, office, city, route, venue, or clinic. "
         "Connections are possible suggestions, not facts, unless the user accepts them. "
         f"Locale: {locale}. Mode: {mode}. "
@@ -122,6 +180,30 @@ def ai_system_prompt(mode: str, locale: str) -> str:
         "datapoint_suggestions, people_suggestions, location_suggestions, connection_suggestions, reflection. "
         "connection_suggestions items must include person_a, person_b, connection_type, description, confidence, evidence."
     )
+
+
+def ai_status(owner: str) -> Dict[str, Any]:
+    try:
+        from src.endpoint_resolver import resolve_endpoint
+    except Exception:
+        return {
+            "ok": True,
+            "available": False,
+            "reason": "AI helpers are unavailable",
+        }
+
+    url, model, _headers = resolve_endpoint("utility", owner=owner)
+    source = "utility/default"
+    if not url or not model:
+        url, model, _headers = resolve_endpoint("default", owner=owner)
+    available = bool(url and model)
+    return {
+        "ok": True,
+        "available": available,
+        "source": source if available else None,
+        "model": model if available else None,
+        "reason": None if available else "No utility or default LLM provider/model is configured",
+    }
 
 
 async def run_ai_assist(owner: str, payload: LogbookAIAssist) -> JSONResponse | Dict[str, Any]:

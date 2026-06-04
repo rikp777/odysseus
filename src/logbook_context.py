@@ -6,7 +6,7 @@ import re
 from datetime import date, datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 
-from sqlalchemy import or_
+from sqlalchemy import func, or_
 from sqlalchemy.orm import selectinload
 
 from core.database import (
@@ -19,6 +19,7 @@ from core.database import (
     LogbookPersonConnection,
     SessionLocal,
 )
+from src.logbook.utils import reconnect_suggestion
 
 
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
@@ -32,7 +33,8 @@ DATE_HINT_RE = re.compile(
 LOGBOOK_QUERY_RE = re.compile(
     r"\b(logbook|daily log|journal|diary|that day|what happened|when did|last time|"
     r"on what day|which day|timeline|mood|energy|stress|sleep|workout|gratitude|"
-    r"mentioned|saw|talked to|met|place|places|location|locations)\b",
+    r"mentioned|saw|talked to|met|who is|person|people|who should i message|"
+    r"message|reach out|check in|meet up|meetup|not seen|place|places|location|locations)\b",
     re.IGNORECASE,
 )
 STOPWORDS = {
@@ -151,6 +153,42 @@ def _aliases(row: Any) -> List[str]:
     return [str(x).strip() for x in raw if str(x).strip()] if isinstance(raw, list) else []
 
 
+def _person_stats(db, owner: str) -> Dict[str, Dict[str, Any]]:
+    rows = db.query(
+        LogbookMention.person_id,
+        func.count(LogbookMention.id),
+        func.max(LogbookEntry.entry_date),
+    ).join(LogbookEntry, LogbookMention.entry_id == LogbookEntry.id).filter(
+        LogbookEntry.owner == owner,
+    ).group_by(LogbookMention.person_id).all()
+    return {
+        person_id: {"mention_count": int(count or 0), "last_mentioned": last_date}
+        for person_id, count, last_date in rows
+    }
+
+
+def _person_context(row: LogbookPerson, stats: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    contact = _json_load(getattr(row, "contact_snapshot_json", None), None)
+    data = {
+        "id": row.id,
+        "name": row.display_name,
+        "aliases": _aliases(row),
+        "relationship": getattr(row, "relationship_label", None),
+        "context": getattr(row, "llm_context", None) or getattr(row, "notes", None),
+        "notes": getattr(row, "notes", None),
+        "linked_contact": contact if isinstance(contact, dict) else bool(getattr(row, "contact_uid", None)),
+        "contact_uid": getattr(row, "contact_uid", None),
+        "contact_snapshot": contact if isinstance(contact, dict) else None,
+    }
+    stats = stats or {}
+    data["mention_count"] = int(stats.get("mention_count") or 0)
+    data["last_mentioned"] = stats.get("last_mentioned")
+    data["reconnect_suggestion"] = reconnect_suggestion(data, stats)
+    suggestion = data.get("reconnect_suggestion") or {}
+    data["days_since_mentioned"] = suggestion.get("days_since_mentioned")
+    return data
+
+
 def _canonical(value: str) -> str:
     return re.sub(r"[^a-z0-9]+", " ", (value or "").strip().lower()).strip()
 
@@ -186,12 +224,50 @@ def _entry_people(entry: LogbookEntry) -> List[str]:
     return sorted(people.values(), key=str.lower)
 
 
+def _entry_people_context(entry: LogbookEntry) -> List[str]:
+    rows = {}
+    for mention in entry.mentions or []:
+        person = mention.person
+        if not person or person.id in rows:
+            continue
+        bits = []
+        if getattr(person, "relationship_label", None):
+            bits.append(str(person.relationship_label))
+        if getattr(person, "llm_context", None):
+            bits.append(_snippet(str(person.llm_context), 180))
+        elif getattr(person, "notes", None):
+            bits.append(_snippet(str(person.notes), 140))
+        if bits:
+            rows[person.id] = f"{person.display_name}: " + " | ".join(bits)
+    return [rows[key] for key in sorted(rows, key=lambda item: rows[item].lower())]
+
+
 def _entry_locations(entry: LogbookEntry) -> List[str]:
     locations = {}
     for mention in entry.location_mentions or []:
         if mention.location:
             locations[mention.location.id] = mention.location.display_name
     return sorted(locations.values(), key=str.lower)
+
+
+def _entry_locations_context(entry: LogbookEntry) -> List[str]:
+    rows = {}
+    for mention in entry.location_mentions or []:
+        location = mention.location
+        if not location or location.id in rows:
+            continue
+        bits = []
+        if getattr(location, "location_type", None):
+            bits.append(str(location.location_type))
+        if getattr(location, "address", None):
+            bits.append(str(location.address))
+        if getattr(location, "llm_context", None):
+            bits.append(_snippet(str(location.llm_context), 180))
+        elif getattr(location, "notes", None):
+            bits.append(_snippet(str(location.notes), 140))
+        if bits:
+            rows[location.id] = f"{location.display_name}: " + " | ".join(bits)
+    return [rows[key] for key in sorted(rows, key=lambda item: rows[item].lower())]
 
 
 def _entry_datapoints(entry: LogbookEntry) -> List[Dict[str, Any]]:
@@ -223,7 +299,9 @@ def entry_to_context(entry: LogbookEntry, *, full: bool = False) -> Dict[str, An
             "stress": entry.stress_score,
         },
         "people": _entry_people(entry),
+        "people_context": _entry_people_context(entry),
         "places": _entry_locations(entry),
+        "places_context": _entry_locations_context(entry),
         "datapoints": _entry_datapoints(entry),
         "updated_at": entry.updated_at.isoformat() if entry.updated_at else None,
     }
@@ -353,10 +431,94 @@ def directories(owner: str) -> Dict[str, Any]:
     try:
         people_rows = db.query(LogbookPerson).filter(LogbookPerson.owner == owner).order_by(LogbookPerson.display_name.asc()).all()
         location_rows = db.query(LogbookLocation).filter(LogbookLocation.owner == owner).order_by(LogbookLocation.display_name.asc()).all()
+        stats = _person_stats(db, owner)
         return {
             "ok": True,
-            "people": [{"id": p.id, "name": p.display_name, "aliases": _aliases(p)} for p in people_rows],
-            "places": [{"id": l.id, "name": l.display_name, "aliases": _aliases(l)} for l in location_rows],
+            "people": [_person_context(p, stats.get(p.id, {})) for p in people_rows],
+            "places": [
+                {
+                    "id": l.id,
+                    "name": l.display_name,
+                    "aliases": _aliases(l),
+                    "type": getattr(l, "location_type", None),
+                    "address": getattr(l, "address", None),
+                    "context": getattr(l, "llm_context", None) or getattr(l, "notes", None),
+                    "latitude": getattr(l, "latitude", None),
+                    "longitude": getattr(l, "longitude", None),
+                }
+                for l in location_rows
+            ],
+        }
+    finally:
+        db.close()
+
+
+def person_detail(owner: str, *, person: str = "", person_id: str = "", limit: int = 10) -> Dict[str, Any]:
+    limit = max(1, min(int(limit or 10), 40))
+    db = SessionLocal()
+    try:
+        if person and not person_id:
+            person_id = _find_person_id(db, owner, person) or ""
+        if not person_id:
+            return {"ok": False, "error": "Person not found"}
+        row = db.query(LogbookPerson).filter(LogbookPerson.owner == owner, LogbookPerson.id == person_id).first()
+        if not row:
+            return {"ok": False, "error": "Person not found"}
+        entries = (
+            _entry_query(db, owner)
+            .join(LogbookMention, LogbookMention.entry_id == LogbookEntry.id)
+            .filter(LogbookMention.person_id == row.id)
+            .order_by(LogbookEntry.entry_date.desc(), LogbookEntry.updated_at.desc())
+            .limit(limit)
+            .all()
+        )
+        contact = _json_load(getattr(row, "contact_snapshot_json", None), None)
+        stats = _person_stats(db, owner).get(row.id, {})
+        person_data = _person_context(row, stats)
+        if isinstance(contact, dict):
+            person_data["linked_contact"] = contact
+        return {
+            "ok": True,
+            "person": person_data,
+            "entries": [entry_to_context(entry, full=False) for entry in entries],
+        }
+    finally:
+        db.close()
+
+
+def location_detail(owner: str, *, place: str = "", location_id: str = "", limit: int = 10) -> Dict[str, Any]:
+    limit = max(1, min(int(limit or 10), 40))
+    db = SessionLocal()
+    try:
+        if place and not location_id:
+            location_id = _find_location_id(db, owner, place) or ""
+        if not location_id:
+            return {"ok": False, "error": "Location not found"}
+        row = db.query(LogbookLocation).filter(LogbookLocation.owner == owner, LogbookLocation.id == location_id).first()
+        if not row:
+            return {"ok": False, "error": "Location not found"}
+        entries = (
+            _entry_query(db, owner)
+            .join(LogbookLocationMention, LogbookLocationMention.entry_id == LogbookEntry.id)
+            .filter(LogbookLocationMention.location_id == row.id)
+            .order_by(LogbookEntry.entry_date.desc(), LogbookEntry.updated_at.desc())
+            .limit(limit)
+            .all()
+        )
+        return {
+            "ok": True,
+            "place": {
+                "id": row.id,
+                "name": row.display_name,
+                "aliases": _aliases(row),
+                "type": getattr(row, "location_type", None),
+                "address": getattr(row, "address", None),
+                "latitude": getattr(row, "latitude", None),
+                "longitude": getattr(row, "longitude", None),
+                "notes": getattr(row, "notes", None),
+                "context": getattr(row, "llm_context", None),
+            },
+            "entries": [entry_to_context(entry, full=False) for entry in entries],
         }
     finally:
         db.close()
@@ -436,8 +598,12 @@ def auto_context(owner: Optional[str], message: str, *, limit: int = 4) -> Optio
             bits.append(f"snippet: {item['snippet']}")
         if item.get("people"):
             bits.append("people: " + ", ".join(item["people"]))
+        if item.get("people_context"):
+            bits.append("person context: " + "; ".join(item["people_context"][:3]))
         if item.get("places"):
             bits.append("places: " + ", ".join(item["places"]))
+        if item.get("places_context"):
+            bits.append("place context: " + "; ".join(item["places_context"][:3]))
         mood = item.get("mood") or {}
         if mood.get("label"):
             bits.append(f"mood: {mood['label']}")
@@ -478,6 +644,20 @@ def run_tool(owner: Optional[str], args: Dict[str, Any]) -> Dict[str, Any]:
         return search(owner, args.get("q") or args.get("query") or "", limit=limit)
     if action in {"people", "places", "locations", "directories"}:
         return directories(owner)
+    if action in {"person_detail", "person"}:
+        return person_detail(
+            owner,
+            person=args.get("person") or args.get("name") or "",
+            person_id=args.get("person_id") or "",
+            limit=limit,
+        )
+    if action in {"place_detail", "location_detail", "place", "location"}:
+        return location_detail(
+            owner,
+            place=args.get("place") or args.get("location") or args.get("name") or "",
+            location_id=args.get("location_id") or "",
+            limit=limit,
+        )
     if action == "connections":
         return connections(
             owner,

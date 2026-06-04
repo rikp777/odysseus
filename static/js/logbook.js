@@ -8,8 +8,10 @@ import { makeWindowDraggable } from './windowDrag.js';
 import { applyEdgeDock } from './modalSnap.js';
 import {
   analyzeEntry,
+  applyEntrySuggestions,
   assistLogbook,
   createLocation,
+  getAIStatus,
   getEntry,
   listConnections,
   listEntries,
@@ -27,6 +29,8 @@ import {
   today as _today,
 } from './logbook/utils.js';
 
+const LOGBOOK_LINK_RE = /\[([^\]\n]{1,160})\]\((person:[A-Za-z0-9_-]{2,100}|place:[A-Za-z0-9_-]{2,100}|location:[A-Za-z0-9_-]{2,100}|data:[A-Za-z0-9_-]{2,80}|food:[A-Za-z0-9_-]{2,100}|[a-z][a-z0-9]*(?:_[a-z0-9]+)+)\)/g;
+
 let _open = false;
 let _date = _today();
 let _entry = null;
@@ -42,6 +46,7 @@ let _activeTab = 'write';
 let _aiPreview = null;
 let _aiBusy = false;
 let _aiError = '';
+let _aiStatus = { available: false, reason: 'Checking AI provider...' };
 let _search = '';
 let _filterPerson = '';
 let _filterLocation = '';
@@ -106,6 +111,7 @@ async function _saveNow({ silent = false } = {}) {
     _renderPeoplePanel();
     _renderLocationsPanel();
     _renderNavigator();
+    _refreshContentPreview();
     if (!silent) uiModule?.showToast?.('Saved');
   } catch (err) {
     _setStatus('Save failed');
@@ -155,6 +161,17 @@ async function _loadConnections() {
   _connections = data.connections || [];
 }
 
+async function _loadAIStatus() {
+  try {
+    _aiStatus = await getAIStatus();
+  } catch (err) {
+    _aiStatus = {
+      available: false,
+      reason: err?.message || 'AI status could not be checked',
+    };
+  }
+}
+
 async function _loadDate(date) {
   if (_dirty) {
     try { await _saveNow({ silent: true }); } catch (_) {}
@@ -162,12 +179,168 @@ async function _loadDate(date) {
   _date = date;
   _aiPreview = null;
   _aiError = '';
-  await Promise.all([_loadEntry(_date), _loadPeople(), _loadLocations(), _loadConnections(), _loadEntries()]);
+  await Promise.all([_loadEntry(_date), _loadPeople(), _loadLocations(), _loadConnections(), _loadEntries(), _loadAIStatus()]);
   _render();
 }
 
 function _iconBook(size = 16) {
   return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/><path d="M9 7h6M9 11h6M9 15h4"/></svg>`;
+}
+
+function _slugName(value) {
+  return String(value || '')
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/^(person|place|location|data|food):/i, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+}
+
+function _linkKind(target) {
+  const value = String(target || '').toLowerCase();
+  if (value.startsWith('place:') || value.startsWith('location:')) return 'location';
+  if (value.startsWith('data:') || value.startsWith('food:')) return 'data';
+  return 'person';
+}
+
+function _personForLink(target, label = '') {
+  const targetSlug = _slugName(target);
+  const labelSlug = _slugName(label);
+  return (_people || []).find(person => {
+    const slugs = [
+      person.canonical_name,
+      person.display_name,
+      ...(person.aliases || []),
+    ].map(_slugName).filter(Boolean);
+    return slugs.includes(targetSlug) || Boolean(labelSlug && slugs.includes(labelSlug));
+  }) || null;
+}
+
+function _locationForLink(target, label = '') {
+  const targetSlug = _slugName(target);
+  const labelSlug = _slugName(label);
+  return (_locations || []).find(location => {
+    const slugs = [
+      location.canonical_name,
+      location.display_name,
+      ...(location.aliases || []),
+    ].map(_slugName).filter(Boolean);
+    return slugs.includes(targetSlug) || Boolean(labelSlug && slugs.includes(labelSlug));
+  }) || null;
+}
+
+function _safePersonImage(src) {
+  const value = String(src || '').trim();
+  if (!value) return '';
+  if (/^https?:\/\//i.test(value) || value.startsWith('/')) return value;
+  if (/^data:image\/(?:png|jpe?g|gif|webp);base64,/i.test(value)) return value;
+  return '';
+}
+
+function _personCardHtml(person, label, target) {
+  const snapshot = person?.contact_snapshot || {};
+  const image = _safePersonImage(snapshot.photo || snapshot.avatar || snapshot.image || snapshot.image_url || snapshot.picture);
+  const name = person?.display_name || label || target || 'Person';
+  const relation = person?.relationship_label || '';
+  const notes = person?.notes || person?.llm_context || '';
+  const emails = Array.isArray(snapshot.emails) ? snapshot.emails : (snapshot.email ? [snapshot.email] : []);
+  const phones = Array.isArray(snapshot.phones) ? snapshot.phones : (snapshot.phone ? [snapshot.phone] : []);
+  const contactBits = [
+    snapshot.name,
+    ...emails,
+    ...phones,
+  ].filter(Boolean);
+  const initial = String(name).trim().slice(0, 1).toUpperCase() || '?';
+  return `
+    <span class="logbook-person-card" role="tooltip">
+      <span class="logbook-person-card-head">
+        ${image ? `<img src="${_e(image)}" alt="">` : `<span class="logbook-person-initial">${_e(initial)}</span>`}
+        <span><strong>${_e(name)}</strong>${relation ? `<em>${_e(relation)}</em>` : ''}</span>
+      </span>
+      ${notes ? `<span class="logbook-person-card-note">${_e(notes)}</span>` : ''}
+      ${contactBits.length ? `<span class="logbook-person-card-note">${_e(contactBits.slice(0, 3).join(' | '))}</span>` : ''}
+      ${person?.id ? '<span class="logbook-person-card-link">Open person</span>' : '<span class="logbook-person-card-link">Apply or save to create this person</span>'}
+    </span>
+  `;
+}
+
+function _renderPersonLink(label, target) {
+  const person = _personForLink(target, label);
+  const attrs = person?.id ? ` data-open-person="${_e(person.id)}" role="button"` : ' role="text"';
+  return `<span class="logbook-person-link" tabindex="0"${attrs}>${_e(label)}${_personCardHtml(person, label, target)}</span>`;
+}
+
+function _locationCardHtml(location, label, target) {
+  const name = location?.display_name || label || target || 'Place';
+  const kind = location?.location_type || '';
+  const address = location?.address || '';
+  const notes = location?.notes || location?.llm_context || '';
+  const coords = location?.latitude != null && location?.longitude != null
+    ? `${location.latitude}, ${location.longitude}`
+    : '';
+  return `
+    <span class="logbook-person-card logbook-location-card" role="tooltip">
+      <span class="logbook-person-card-head">
+        <span class="logbook-person-initial">#</span>
+        <span><strong>${_e(name)}</strong>${kind ? `<em>${_e(kind)}</em>` : ''}</span>
+      </span>
+      ${address ? `<span class="logbook-person-card-note">${_e(address)}</span>` : ''}
+      ${coords ? `<span class="logbook-person-card-note">${_e(coords)}</span>` : ''}
+      ${notes ? `<span class="logbook-person-card-note">${_e(notes)}</span>` : ''}
+      ${location?.id ? '<span class="logbook-person-card-link">Open place</span>' : '<span class="logbook-person-card-link">Save to create this place</span>'}
+    </span>
+  `;
+}
+
+function _renderLocationLink(label, target) {
+  const location = _locationForLink(target, label);
+  const attrs = location?.id ? ` data-open-location="${_e(location.id)}" role="button"` : ' role="text"';
+  return `<span class="logbook-person-link logbook-location-link" tabindex="0"${attrs}>${_e(label)}${_locationCardHtml(location, label, target)}</span>`;
+}
+
+function _dataCardHtml(label, target) {
+  const rawKey = String(target || '').split(':', 2);
+  const key = rawKey[0] === 'food' ? 'food' : _slugName(rawKey[1] || target || 'data');
+  const display = key.replace(/_/g, ' ').replace(/\b\w/g, ch => ch.toUpperCase());
+  return `
+    <span class="logbook-person-card logbook-data-card" role="tooltip">
+      <span class="logbook-person-card-head">
+        <span class="logbook-person-initial">D</span>
+        <span><strong>${_e(display)}</strong><em>Datapoint</em></span>
+      </span>
+      <span class="logbook-person-card-note">${_e(label)}</span>
+      <span class="logbook-person-card-link">Saved as structured data</span>
+    </span>
+  `;
+}
+
+function _renderDataLink(label, target) {
+  return `<span class="logbook-person-link logbook-data-link" tabindex="0" role="text">${_e(label)}${_dataCardHtml(label, target)}</span>`;
+}
+
+function _renderLogbookText(content) {
+  const text = String(content || '');
+  let html = '';
+  let last = 0;
+  LOGBOOK_LINK_RE.lastIndex = 0;
+  for (const match of text.matchAll(LOGBOOK_LINK_RE)) {
+    html += _e(text.slice(last, match.index));
+    const kind = _linkKind(match[2]);
+    if (kind === 'location') html += _renderLocationLink(match[1], match[2]);
+    else if (kind === 'data') html += _renderDataLink(match[1], match[2]);
+    else html += _renderPersonLink(match[1], match[2]);
+    last = match.index + match[0].length;
+  }
+  html += _e(text.slice(last));
+  return html || '<span class="logbook-empty">No text yet.</span>';
+}
+
+function _refreshContentPreview() {
+  const preview = document.getElementById('logbook-content-preview');
+  if (!preview) return;
+  preview.innerHTML = _renderLogbookText(_entry?.content || '');
+  _bindEntityLinkEvents(preview);
 }
 
 function _entryStatus(entry) {
@@ -278,8 +451,7 @@ function _render() {
         </div>
         <span id="logbook-save-status" class="logbook-save-status">${_e(_saveStatus)}</span>
         <button type="button" class="cal-btn cal-btn-primary" id="logbook-manual-save">Save</button>
-        <button type="button" class="modal-minimize-btn logbook-minimize" id="logbook-minimize" aria-label="Minimize">_</button>
-        <button type="button" class="close-btn" id="logbook-close" aria-label="Close">x</button>
+        <button type="button" class="close-btn" id="logbook-close" title="Close" aria-label="Close">&#x2716;</button>
       </div>
       <div class="logbook-mobile-tabs">
         ${['write', 'mood', 'data', 'people', 'places', 'ai'].map(tab => `<button type="button" class="logbook-tab ${_activeTab === tab ? 'active' : ''}" data-logbook-tab="${tab}">${tab === 'ai' ? 'AI' : tab[0].toUpperCase() + tab.slice(1)}</button>`).join('')}
@@ -306,6 +478,7 @@ function _render() {
       </div>
     </div>
   `;
+  Modals.injectMinimizeButton(modal, MODAL_ID);
   _wireLogbookWindow(modal);
   _bindEvents();
   _renderMentionMenu();
@@ -366,8 +539,12 @@ function _editorHtml() {
       <input id="logbook-title-input" class="logbook-title-input" value="${_e(_entry?.title || 'Daily log')}" placeholder="Title">
     </div>
     <section class="logbook-write-section" data-mobile-section="write">
-      <textarea id="logbook-content" class="logbook-content" placeholder="Write messy notes. Example: work, training, tired, talked with @Jan. AI can clean it up later.">${_e(_entry?.content || '')}</textarea>
+      <textarea id="logbook-content" class="logbook-content" placeholder="Write messy notes. Example: tired, talked with @Jan, rode through [Panningen](place:panningen), ate [breakfast](data:food).">${_e(_entry?.content || '')}</textarea>
       <div id="logbook-mention-menu" class="logbook-mention-menu hidden"></div>
+    </section>
+    <section class="logbook-rendered-preview" data-mobile-section="write">
+      <div class="logbook-subtitle">Preview</div>
+      <div id="logbook-content-preview" class="logbook-rendered-text">${_renderLogbookText(_entry?.content || '')}</div>
     </section>
     <section class="logbook-mood-section" data-mobile-section="mood">
       <h5>Mood</h5>
@@ -407,10 +584,11 @@ function _peopleHtml() {
   const today = todayPeople.length
     ? todayPeople.map(p => `<span class="logbook-person-chip">@${_e(p.display_name)}</span>`).join('')
     : '<div class="logbook-empty">No people mentioned today.</div>';
-  const suggestions = (_aiPreview?.people_suggestions || []).map(p => `
+  const suggestions = (_aiPreview?.people_suggestions || []).map((p, index) => `
     <div class="logbook-suggestion-row">
       <strong>${_e(p.display_name || p.surface_text || 'Person')}</strong>
       <span>${_e(p.reason || 'Suggested from entry')}</span>
+      <button type="button" class="cal-btn" data-add-ai-person="${index}">Add</button>
     </div>
   `).join('');
   return `
@@ -453,10 +631,11 @@ function _locationsHtml() {
   const today = todayLocations.length
     ? todayLocations.map(l => `<span class="logbook-person-chip">#${_e(l.display_name)}</span>`).join('')
     : '<div class="logbook-empty">No places mentioned today.</div>';
-  const suggestions = (_aiPreview?.location_suggestions || []).map(loc => `
+  const suggestions = (_aiPreview?.location_suggestions || []).map((loc, index) => `
     <div class="logbook-suggestion-row">
       <strong>${_e(loc.display_name || loc.surface_text || 'Place')}</strong>
       <span>${_e(loc.reason || 'Suggested from entry')}</span>
+      <button type="button" class="cal-btn" data-add-ai-location="${index}">Add</button>
     </div>
   `).join('');
   return `
@@ -563,19 +742,28 @@ function _connectionsHtml() {
 }
 
 function _aiHtml() {
-  const preview = _aiPreview ? _aiPreviewHtml() : '<div class="logbook-empty">AI previews appear here.</div>';
+  const aiAvailable = _aiStatus?.available === true;
+  const disabled = aiAvailable ? '' : ' disabled aria-disabled="true"';
+  const disabledTitle = aiAvailable ? '' : ` title="${_e(_aiStatus?.reason || 'No LLM provider configured')}"`;
+  const preview = _aiPreview
+    ? _aiPreviewHtml()
+    : aiAvailable
+      ? '<div class="logbook-empty">AI previews appear here.</div>'
+      : '<div class="logbook-empty">Manual writing still works. Configure a default or utility LLM provider to enable AI help.</div>';
   return `
     <div class="logbook-section-head"><h5>AI help</h5></div>
-    <textarea id="logbook-ai-draft" class="logbook-ai-draft" placeholder="Rough thoughts"></textarea>
+    ${aiAvailable ? `<div class="logbook-ai-status">Using AI model${_aiStatus.model ? `: ${_e(_aiStatus.model)}` : ''}</div>` : `<div class="logbook-ai-disabled">AI help is off: ${_e(_aiStatus?.reason || 'No LLM provider configured')}.</div>`}
+    <textarea id="logbook-ai-draft" class="logbook-ai-draft" placeholder="Rough thoughts"${aiAvailable ? '' : ' disabled'}></textarea>
     <div class="logbook-ai-buttons">
-      <button type="button" class="cal-btn cal-btn-primary" data-ai-mode="structure_day">Help me write today</button>
-      <button type="button" class="cal-btn" data-ai-mode="clean_spelling">Clean spelling</button>
-      <button type="button" class="cal-btn" data-ai-mode="ask_questions">Ask 3 questions</button>
-      <button type="button" class="cal-btn" data-ai-mode="extract_people">Extract people</button>
-      <button type="button" class="cal-btn" data-ai-mode="extract_locations">Extract places</button>
-      <button type="button" class="cal-btn" data-ai-mode="summarize">Summarize</button>
-      <button type="button" class="cal-btn" data-ai-mode="reflect">Reflect</button>
-      <button type="button" class="cal-btn" id="logbook-analyze-entry">Analyze saved</button>
+      <button type="button" class="cal-btn cal-btn-primary" data-ai-mode="structure_day"${disabled}${disabledTitle}>Help me write today</button>
+      <button type="button" class="cal-btn" data-ai-mode="clean_spelling"${disabled}${disabledTitle}>Clean spelling</button>
+      <button type="button" class="cal-btn" data-ai-mode="ask_questions"${disabled}${disabledTitle}>Ask 3 questions</button>
+      <button type="button" class="cal-btn" data-ai-mode="extract_people"${disabled}${disabledTitle}>Extract people</button>
+      <button type="button" class="cal-btn" data-ai-mode="extract_locations"${disabled}${disabledTitle}>Extract places</button>
+      <button type="button" class="cal-btn" data-ai-mode="extract_all"${disabled}${disabledTitle}>Detect text</button>
+      <button type="button" class="cal-btn" data-ai-mode="summarize"${disabled}${disabledTitle}>Summarize</button>
+      <button type="button" class="cal-btn" data-ai-mode="reflect"${disabled}${disabledTitle}>Reflect</button>
+      <button type="button" class="cal-btn" id="logbook-analyze-entry"${disabled}${disabledTitle}>Analyze saved</button>
     </div>
     ${_aiBusy ? '<div class="logbook-ai-status">Thinking...</div>' : ''}
     ${_aiError ? `<div class="logbook-ai-error">${_e(_aiError)}</div>` : ''}
@@ -592,10 +780,18 @@ function _aiPreviewHtml() {
       <span>${_e(d.value_text || d.value_number || '')}${d.unit ? ` ${_e(d.unit)}` : ''}</span>
     </div>
   `).join('');
-  const locations = (p.location_suggestions || []).map(loc => `
+  const people = (p.people_suggestions || []).map((person, index) => `
+    <div class="logbook-suggestion-row">
+      <strong>${_e(person.display_name || person.surface_text || 'Person')}</strong>
+      <span>${_e(person.reason || 'Suggested from entry')}</span>
+      <button type="button" class="cal-btn" data-add-ai-person="${index}">Add</button>
+    </div>
+  `).join('');
+  const locations = (p.location_suggestions || []).map((loc, index) => `
     <div class="logbook-suggestion-row">
       <strong>${_e(loc.display_name || loc.surface_text || 'Place')}</strong>
       <span>${_e(loc.reason || 'Suggested from entry')}</span>
+      <button type="button" class="cal-btn" data-add-ai-location="${index}">Add</button>
     </div>
   `).join('');
   const connections = (p.connection_suggestions || []).map(c => `
@@ -605,12 +801,13 @@ function _aiPreviewHtml() {
     </div>
   `).join('');
   return `
-    ${p.preview_content ? `<div class="logbook-preview-block"><div class="logbook-subtitle">Preview</div><pre>${_e(p.preview_content)}</pre></div>` : ''}
+    ${p.preview_content ? `<div class="logbook-preview-block"><div class="logbook-subtitle">Preview</div><div class="logbook-rendered-text">${_renderLogbookText(p.preview_content)}</div></div>` : ''}
     ${p.summary ? `<div class="logbook-preview-block"><div class="logbook-subtitle">Summary</div><p>${_e(p.summary)}</p></div>` : ''}
     ${p.reflection ? `<div class="logbook-preview-block"><div class="logbook-subtitle">Reflection</div><p>${_e(p.reflection)}</p></div>` : ''}
     ${questions ? `<div class="logbook-preview-block"><div class="logbook-subtitle">Questions</div><ul>${questions}</ul></div>` : ''}
     ${p.mood_suggestion ? `<div class="logbook-preview-block"><div class="logbook-subtitle">Mood</div><p>${_e(p.mood_suggestion.label || '')} ${p.mood_suggestion.score ? `(${_e(p.mood_suggestion.score)})` : ''}</p><button type="button" class="cal-btn" id="logbook-apply-ai-mood">Use mood</button></div>` : ''}
     ${data ? `<div class="logbook-preview-block"><div class="logbook-subtitle">Data suggestions</div>${data}<button type="button" class="cal-btn" id="logbook-add-ai-data">Add data</button></div>` : ''}
+    ${people ? `<div class="logbook-preview-block"><div class="logbook-subtitle">People suggestions</div>${people}</div>` : ''}
     ${locations ? `<div class="logbook-preview-block"><div class="logbook-subtitle">Place suggestions</div>${locations}</div>` : ''}
     ${connections ? `<div class="logbook-preview-block"><div class="logbook-subtitle">Connection suggestions</div>${connections}</div>` : ''}
     <div class="logbook-preview-actions">
@@ -623,7 +820,6 @@ function _aiPreviewHtml() {
 
 function _bindEvents() {
   document.getElementById('logbook-close')?.addEventListener('click', closeLogbook);
-  document.getElementById('logbook-minimize')?.addEventListener('click', () => Modals.minimize(MODAL_ID));
   document.getElementById('logbook-prev-day')?.addEventListener('click', () => _loadDate(_dateAdd(_date, -1)).catch(_showError));
   document.getElementById('logbook-next-day')?.addEventListener('click', () => _loadDate(_dateAdd(_date, 1)).catch(_showError));
   document.getElementById('logbook-today-btn')?.addEventListener('click', () => _loadDate(_today()).catch(_showError));
@@ -661,6 +857,11 @@ function _bindEvents() {
   content?.addEventListener('input', () => {
     _entry.content = content.value;
     _markDirty();
+    const preview = document.getElementById('logbook-content-preview');
+    if (preview) {
+      preview.innerHTML = _renderLogbookText(content.value);
+      _bindEntityLinkEvents(preview);
+    }
     _renderMentionMenu();
   });
   content?.addEventListener('keydown', e => {
@@ -771,6 +972,8 @@ function _bindEvents() {
   });
   document.getElementById('logbook-apply-ai-mood')?.addEventListener('click', () => _applyAIMood());
   document.getElementById('logbook-add-ai-data')?.addEventListener('click', () => _addAIData());
+  _bindAISuggestionEvents();
+  _bindEntityLinkEvents();
   document.querySelectorAll('[data-accept-connection]').forEach(btn => {
     btn.addEventListener('click', () => _connectionAction(btn.dataset.acceptConnection, 'accept').catch(_showError));
   });
@@ -854,6 +1057,7 @@ function _bindDataEvents() {
 
 function _bindPeoplePanelEvents() {
   _bindPeopleRowEvents();
+  _bindAISuggestionEvents();
   document.querySelectorAll('[data-accept-connection]').forEach(btn => {
     btn.addEventListener('click', () => _connectionAction(btn.dataset.acceptConnection, 'accept').catch(_showError));
   });
@@ -865,7 +1069,64 @@ function _bindPeoplePanelEvents() {
 
 function _bindLocationsPanelEvents() {
   _bindLocationRowEvents();
+  _bindAISuggestionEvents();
   _bindLocationDirectoryEvents();
+}
+
+function _bindAISuggestionEvents() {
+  document.querySelectorAll('[data-add-ai-person]').forEach(btn => {
+    btn.addEventListener('click', () => _addAIEntity('person', Number(btn.dataset.addAiPerson)).catch(_showError));
+  });
+  document.querySelectorAll('[data-add-ai-location]').forEach(btn => {
+    btn.addEventListener('click', () => _addAIEntity('location', Number(btn.dataset.addAiLocation)).catch(_showError));
+  });
+}
+
+function _bindEntityLinkEvents(root = document) {
+  root.querySelectorAll('[data-open-person]').forEach(link => {
+    if (link.dataset.boundPersonLink === '1') return;
+    link.dataset.boundPersonLink = '1';
+    link.addEventListener('click', async event => {
+      event.preventDefault();
+      event.stopPropagation();
+      await _openPerson(link.dataset.openPerson);
+    });
+  });
+  root.querySelectorAll('[data-open-location]').forEach(link => {
+    if (link.dataset.boundLocationLink === '1') return;
+    link.dataset.boundLocationLink = '1';
+    link.addEventListener('click', async event => {
+      event.preventDefault();
+      event.stopPropagation();
+      await _openLocation(link.dataset.openLocation);
+    });
+  });
+}
+
+async function _openPerson(personId) {
+  if (!personId) return;
+  try {
+    const atlas = await import('./logbookAtlas.js');
+    await atlas.openAtlas({ tab: 'people', personId });
+  } catch (_) {
+    _filterPerson = personId;
+    _activeTab = 'people';
+    await _loadEntries();
+    _render();
+  }
+}
+
+async function _openLocation(locationId) {
+  if (!locationId) return;
+  try {
+    const atlas = await import('./logbookAtlas.js');
+    await atlas.openAtlas({ tab: 'locations', locationId });
+  } catch (_) {
+    _filterLocation = locationId;
+    _activeTab = 'places';
+    await _loadEntries();
+    _render();
+  }
 }
 
 function _bindPeopleRowEvents() {
@@ -1116,6 +1377,11 @@ async function _createLocation() {
 }
 
 async function _runAI(mode) {
+  if (_aiStatus?.available !== true) {
+    _aiError = _aiStatus?.reason || 'No LLM provider configured.';
+    _render();
+    return;
+  }
   if (_aiBusy) return;
   const draft = document.getElementById('logbook-ai-draft')?.value || '';
   _aiBusy = true;
@@ -1143,6 +1409,11 @@ async function _runAI(mode) {
 }
 
 async function _analyzeEntry() {
+  if (_aiStatus?.available !== true) {
+    _aiError = _aiStatus?.reason || 'No LLM provider configured.';
+    _render();
+    return;
+  }
   if (!_entry?.id || _dirty) {
     await _saveNow({ silent: true });
   }
@@ -1160,6 +1431,26 @@ async function _analyzeEntry() {
     _aiBusy = false;
     _render();
   }
+}
+
+async function _addAIEntity(kind, index) {
+  if (!_entry?.id || _dirty) {
+    await _saveNow({ silent: true });
+  }
+  if (!_entry?.id) return;
+  const isPerson = kind === 'person';
+  const list = isPerson ? (_aiPreview?.people_suggestions || []) : (_aiPreview?.location_suggestions || []);
+  const item = list[index];
+  if (!item) return;
+  const result = await applyEntrySuggestions(_entry.id, {
+    people_suggestions: isPerson ? [item] : [],
+    location_suggestions: isPerson ? [] : [item],
+  });
+  _entry = result.entry || _entry;
+  await Promise.all([_loadPeople(), _loadLocations(), _loadConnections(), _loadEntries()]);
+  _activeTab = isPerson ? 'people' : 'places';
+  uiModule?.showToast?.(isPerson ? 'Person linked' : 'Place linked');
+  _render();
 }
 
 function _applyAIContent() {

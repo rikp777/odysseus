@@ -2143,6 +2143,52 @@ def _format_logbook_tool_output(result: Dict[str, Any]) -> str:
     if "entry" in result:
         entry = result.get("entry")
         return _format_logbook_entry(entry, full=True) if entry else "No Daily Logbook entry found for that day."
+    if "person" in result:
+        person = result.get("person") or {}
+        lines = [f"Logbook person: {person.get('name') or person.get('id') or 'Person'}"]
+        if person.get("aliases"):
+            lines.append("Aliases: " + ", ".join(person["aliases"]))
+        if person.get("relationship"):
+            lines.append(f"Relationship: {person['relationship']}")
+        if person.get("context"):
+            lines.append(f"Context: {person['context']}")
+        if person.get("notes"):
+            lines.append(f"Notes: {person['notes']}")
+        suggestion = person.get("reconnect_suggestion") or {}
+        if suggestion.get("message"):
+            lines.append(f"Reconnect hint: {suggestion['message']}")
+        if person.get("linked_contact"):
+            contact = person["linked_contact"]
+            emails = ", ".join(contact.get("emails") or []) if isinstance(contact, dict) else ""
+            if emails:
+                lines.append(f"Linked contact emails: {emails}")
+        entries = result.get("entries") or []
+        if entries:
+            lines.append("Recent entries:")
+            for entry in entries[:8]:
+                lines.append(_format_logbook_entry(entry, full=False))
+        return "\n\n".join(lines)
+    if "place" in result:
+        place = result.get("place") or {}
+        lines = [f"Logbook place: {place.get('name') or place.get('id') or 'Place'}"]
+        if place.get("aliases"):
+            lines.append("Aliases: " + ", ".join(place["aliases"]))
+        if place.get("type"):
+            lines.append(f"Type: {place['type']}")
+        if place.get("address"):
+            lines.append(f"Address: {place['address']}")
+        if place.get("latitude") is not None and place.get("longitude") is not None:
+            lines.append(f"Coordinates: {place['latitude']}, {place['longitude']}")
+        if place.get("context"):
+            lines.append(f"Context: {place['context']}")
+        if place.get("notes"):
+            lines.append(f"Notes: {place['notes']}")
+        entries = result.get("entries") or []
+        if entries:
+            lines.append("Recent entries:")
+            for entry in entries[:8]:
+                lines.append(_format_logbook_entry(entry, full=False))
+        return "\n\n".join(lines)
     if "entries" in result:
         entries = result.get("entries") or []
         if not entries:
@@ -2160,6 +2206,13 @@ def _format_logbook_tool_output(result: Dict[str, Any]) -> str:
         places = result.get("places") or []
         if people:
             lines.append("People: " + ", ".join(p.get("name") or p.get("id") or "" for p in people if p))
+            reconnect = [
+                (p.get("reconnect_suggestion") or {}).get("message")
+                for p in people
+                if isinstance(p, dict) and (p.get("reconnect_suggestion") or {}).get("message")
+            ]
+            if reconnect:
+                lines.append("Reconnect hints: " + " | ".join(reconnect[:5]))
         if places:
             lines.append("Places: " + ", ".join(p.get("name") or p.get("id") or "" for p in places if p))
         return "\n".join(lines) if lines else "No Logbook people or places found."
@@ -4035,8 +4088,8 @@ async def do_resolve_contact(content: str, owner: Optional[str] = None) -> Dict:
     # cookie and would 401 under require_user.
     try:
         import asyncio
-        from routes import contacts_routes as cc
-        all_contacts = await asyncio.to_thread(cc._fetch_contacts)
+        from src.contacts import service as contacts_service
+        all_contacts = await asyncio.to_thread(contacts_service.fetch_contacts)
         q = name.lower()
         for c in (all_contacts or []):
             hay_name = (c.get("name") or "").lower()
@@ -4083,7 +4136,7 @@ async def do_manage_contact(content: str, owner: Optional[str] = None) -> Dict:
         return {"error": "Invalid JSON arguments", "exit_code": 1}
     action = (args.get("action") or "").strip().lower()
     try:
-        from routes import contacts_routes as cc
+        from src.contacts import service as contacts_service
     except Exception as e:
         return {"error": f"Contacts module unavailable: {e}", "exit_code": 1}
     # The contacts helpers are sync (httpx blocking calls to CardDAV) — run
@@ -4091,7 +4144,7 @@ async def do_manage_contact(content: str, owner: Optional[str] = None) -> Dict:
     import asyncio
     try:
         if action == "list":
-            rows = await asyncio.to_thread(cc._fetch_contacts, True)
+            rows = await asyncio.to_thread(contacts_service.fetch_contacts, True)
             if not rows:
                 return {"output": "No contacts.", "exit_code": 0}
             lines = [f"{len(rows)} contacts:"]
@@ -4106,11 +4159,11 @@ async def do_manage_contact(content: str, owner: Optional[str] = None) -> Dict:
                 return {"error": "email is required for add", "exit_code": 1}
             name = (args.get("name") or "").strip() or email.split("@")[0]
             # Dedupe by email (same as the /add route).
-            existing = await asyncio.to_thread(cc._fetch_contacts)
+            existing = await asyncio.to_thread(contacts_service.fetch_contacts)
             for c in existing:
                 if email.lower() in [e.lower() for e in c.get("emails", [])]:
                     return {"output": f"{email} is already a contact ({c.get('name','')}).", "exit_code": 0}
-            ok = await asyncio.to_thread(cc._create_contact, name, email)
+            ok = await asyncio.to_thread(contacts_service.create_contact, name, email)
             return {"output": f"{'Added' if ok else 'Failed to add'} {name} <{email}>.", "exit_code": 0 if ok else 1}
 
         if action in ("update", "edit"):
@@ -4127,14 +4180,14 @@ async def do_manage_contact(content: str, owner: Optional[str] = None) -> Dict:
                 return {"error": "Provide a name or emails to update", "exit_code": 1}
             if not name and emails:
                 name = emails[0].split("@")[0]
-            ok = await asyncio.to_thread(cc._update_contact, uid, name, emails, phones)
+            ok = await asyncio.to_thread(contacts_service.update_contact, uid, name, emails, phones)
             return {"output": "Contact updated." if ok else "Update failed.", "exit_code": 0 if ok else 1}
 
         if action == "delete":
             uid = (args.get("uid") or "").strip()
             if not uid:
                 return {"error": "uid is required for delete (use action=list to find it)", "exit_code": 1}
-            ok = await asyncio.to_thread(cc._delete_contact, uid)
+            ok = await asyncio.to_thread(contacts_service.delete_contact, uid)
             return {"output": "Contact deleted." if ok else "Delete failed.", "exit_code": 0 if ok else 1}
 
         return {"error": f"Unknown action '{action}'. Use list, add, update, or delete.", "exit_code": 1}

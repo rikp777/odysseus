@@ -31,15 +31,20 @@ from src.logbook.utils import (
     add_evidence,
     aliases,
     canonical_name,
+    clamp_confidence,
     clamp_score,
     clean_key,
     entry_snippet,
     json_dump,
     json_load,
+    known_entity_matches,
     normalized_title,
     pair_ids,
+    parse_data_links,
+    parse_location_links,
     parse_locations,
     parse_mentions,
+    parse_person_links,
 )
 
 
@@ -191,6 +196,42 @@ def replace_datapoints(db, entry: LogbookEntry, datapoints: List[LogbookDataPoin
         ))
 
 
+def sync_linked_datapoints(db, entry: LogbookEntry) -> None:
+    links = parse_data_links(entry.content or "")
+    if not links:
+        return
+    existing = db.query(LogbookDataPoint).filter(LogbookDataPoint.entry_id == entry.id).all()
+    seen = {
+        (str(dp.key or "").strip().lower(), str(dp.value_text or "").strip().lower())
+        for dp in existing
+    }
+    sort_order = max([int(dp.sort_order or 0) for dp in existing] or [-1]) + 1
+    for item in links:
+        key = clean_key(item.get("key") or item.get("label") or "datapoint")
+        value_text = str(item.get("value_text") or "").strip()
+        if not key or not value_text:
+            continue
+        dedupe = (key.lower(), value_text.lower())
+        if dedupe in seen:
+            continue
+        seen.add(dedupe)
+        db.add(LogbookDataPoint(
+            id=str(uuid.uuid4()),
+            entry_id=entry.id,
+            key=key,
+            label=str(item.get("label") or "").strip() or key.replace("_", " ").title(),
+            value_text=value_text,
+            value_json=json_dump({
+                "source": "markdown_link",
+                "surface_text": item.get("surface_text"),
+                "start_offset": item.get("start_offset"),
+                "end_offset": item.get("end_offset"),
+            }),
+            sort_order=sort_order,
+        ))
+        sort_order += 1
+
+
 def upsert_co_mentioned_connection(db, owner: str, entry: LogbookEntry, person_a_id: str, person_b_id: str, snippet: str) -> None:
     pair = pair_ids(person_a_id, person_b_id)
     if not pair:
@@ -234,13 +275,139 @@ def sync_co_mentioned_connections(db, owner: str, entry: LogbookEntry, people: L
         upsert_co_mentioned_connection(db, owner, entry, a_id, b_id, snippet)
 
 
+def _first_surface_offsets(content: str, surface_text: str) -> tuple[Optional[int], Optional[int]]:
+    surface = str(surface_text or "").strip()
+    if not content or not surface:
+        return None, None
+    index = content.lower().find(surface.lower())
+    if index < 0:
+        return None, None
+    return index, index + len(surface)
+
+
+def _entry_people(db, entry: LogbookEntry) -> List[LogbookPerson]:
+    mentions = db.query(LogbookMention).options(selectinload(LogbookMention.person)).filter(
+        LogbookMention.entry_id == entry.id,
+    ).all()
+    return [mention.person for mention in mentions if mention.person]
+
+
+def link_person_suggestion(
+    db,
+    owner: str,
+    entry: LogbookEntry,
+    suggestion: Dict[str, Any],
+    *,
+    source: str = "ai",
+) -> Optional[LogbookPerson]:
+    if not isinstance(suggestion, dict):
+        return None
+    name = str(suggestion.get("display_name") or suggestion.get("surface_text") or "").strip()
+    if not canonical_name(name):
+        return None
+    alias_values = suggestion.get("aliases") if isinstance(suggestion.get("aliases"), list) else None
+    person = get_or_create_person(db, owner, name, alias_values)
+    exists = db.query(LogbookMention.id).filter(
+        LogbookMention.entry_id == entry.id,
+        LogbookMention.person_id == person.id,
+    ).first()
+    if exists:
+        return person
+    surface = str(suggestion.get("surface_text") or name).strip()
+    start, end = _first_surface_offsets(entry.content or "", surface)
+    db.add(LogbookMention(
+        id=str(uuid.uuid4()),
+        entry_id=entry.id,
+        person_id=person.id,
+        surface_text=surface,
+        start_offset=start,
+        end_offset=end,
+        source=source,
+        confidence=clamp_confidence(suggestion.get("confidence"), default=70),
+    ))
+    db.flush()
+    sync_co_mentioned_connections(db, owner, entry, _entry_people(db, entry))
+    return person
+
+
+def link_location_suggestion(
+    db,
+    owner: str,
+    entry: LogbookEntry,
+    suggestion: Dict[str, Any],
+    *,
+    source: str = "ai",
+) -> Optional[LogbookLocation]:
+    if not isinstance(suggestion, dict):
+        return None
+    name = str(suggestion.get("display_name") or suggestion.get("surface_text") or "").strip()
+    if not canonical_name(name):
+        return None
+    alias_values = suggestion.get("aliases") if isinstance(suggestion.get("aliases"), list) else None
+    location = get_or_create_location(db, owner, name, alias_values)
+    exists = db.query(LogbookLocationMention.id).filter(
+        LogbookLocationMention.entry_id == entry.id,
+        LogbookLocationMention.location_id == location.id,
+    ).first()
+    if exists:
+        return location
+    surface = str(suggestion.get("surface_text") or name).strip()
+    start, end = _first_surface_offsets(entry.content or "", surface)
+    db.add(LogbookLocationMention(
+        id=str(uuid.uuid4()),
+        entry_id=entry.id,
+        location_id=location.id,
+        surface_text=surface,
+        start_offset=start,
+        end_offset=end,
+        source=source,
+        confidence=clamp_confidence(suggestion.get("confidence"), default=70),
+    ))
+    db.flush()
+    return location
+
+
 def rebuild_mentions(db, owner: str, entry: LogbookEntry) -> List[LogbookPerson]:
     db.query(LogbookMention).filter(LogbookMention.entry_id == entry.id).delete(synchronize_session=False)
     db.flush()
     people_cache = db.query(LogbookPerson).filter(LogbookPerson.owner == owner).all()
     mentioned_people: List[LogbookPerson] = []
     seen_mentions = set()
+    blocked_ranges: List[tuple[int, int]] = []
+    for parsed in parse_person_links(entry.content or ""):
+        person = find_person(db, owner, parsed["target_name"], people_cache)
+        if not person:
+            person = find_person(db, owner, parsed["name"], people_cache)
+        if not person:
+            aliases_ = [parsed["name"]] if canonical_name(parsed["name"]) != parsed["target_name"] else None
+            person = get_or_create_person(
+                db,
+                owner,
+                parsed["target_display_name"] or parsed["name"],
+                aliases_,
+            )
+            people_cache.append(person)
+        elif canonical_name(parsed["name"]) != person.canonical_name:
+            merge_aliases(person, [parsed["name"]])
+        key = (person.id, parsed["start_offset"], parsed["end_offset"])
+        if key in seen_mentions:
+            continue
+        seen_mentions.add(key)
+        blocked_ranges.append((parsed["start_offset"], parsed["end_offset"]))
+        db.add(LogbookMention(
+            id=str(uuid.uuid4()),
+            entry_id=entry.id,
+            person_id=person.id,
+            surface_text=parsed["surface_text"],
+            start_offset=parsed["start_offset"],
+            end_offset=parsed["end_offset"],
+            source="mention",
+            confidence=100,
+        ))
+        mentioned_people.append(person)
     for parsed in parse_mentions(entry.content or ""):
+        if any(parsed["start_offset"] < end and parsed["end_offset"] > start for start, end in blocked_ranges):
+            continue
         person = find_person(db, owner, parsed["name"], people_cache)
         if not person:
             person = get_or_create_person(db, owner, parsed["name"])
@@ -260,6 +427,24 @@ def rebuild_mentions(db, owner: str, entry: LogbookEntry) -> List[LogbookPerson]
             confidence=100,
         ))
         mentioned_people.append(person)
+        blocked_ranges.append((parsed["start_offset"], parsed["end_offset"]))
+    for parsed in known_entity_matches(entry.content or "", people_cache, blocked_ranges):
+        person = parsed["row"]
+        key = (person.id, parsed["start_offset"], parsed["end_offset"])
+        if key in seen_mentions:
+            continue
+        seen_mentions.add(key)
+        db.add(LogbookMention(
+            id=str(uuid.uuid4()),
+            entry_id=entry.id,
+            person_id=person.id,
+            surface_text=parsed["surface_text"],
+            start_offset=parsed["start_offset"],
+            end_offset=parsed["end_offset"],
+            source="known",
+            confidence=80,
+        ))
+        mentioned_people.append(person)
     sync_co_mentioned_connections(db, owner, entry, mentioned_people)
     return mentioned_people
 
@@ -270,7 +455,41 @@ def rebuild_location_mentions(db, owner: str, entry: LogbookEntry) -> List[Logbo
     locations_cache = db.query(LogbookLocation).filter(LogbookLocation.owner == owner).all()
     mentioned_locations: List[LogbookLocation] = []
     seen_mentions = set()
+    blocked_ranges: List[tuple[int, int]] = []
+    for parsed in parse_location_links(entry.content or ""):
+        location = find_location(db, owner, parsed["target_name"], locations_cache)
+        if not location:
+            location = find_location(db, owner, parsed["name"], locations_cache)
+        if not location:
+            aliases_ = [parsed["name"]] if canonical_name(parsed["name"]) != parsed["target_name"] else None
+            location = get_or_create_location(
+                db,
+                owner,
+                parsed["target_display_name"] or parsed["name"],
+                aliases_,
+            )
+            locations_cache.append(location)
+        elif canonical_name(parsed["name"]) != location.canonical_name:
+            merge_location_aliases(location, [parsed["name"]])
+        key = (location.id, parsed["start_offset"], parsed["end_offset"])
+        if key in seen_mentions:
+            continue
+        seen_mentions.add(key)
+        blocked_ranges.append((parsed["start_offset"], parsed["end_offset"]))
+        db.add(LogbookLocationMention(
+            id=str(uuid.uuid4()),
+            entry_id=entry.id,
+            location_id=location.id,
+            surface_text=parsed["surface_text"],
+            start_offset=parsed["start_offset"],
+            end_offset=parsed["end_offset"],
+            source="location",
+            confidence=100,
+        ))
+        mentioned_locations.append(location)
     for parsed in parse_locations(entry.content or ""):
+        if any(parsed["start_offset"] < end and parsed["end_offset"] > start for start, end in blocked_ranges):
+            continue
         location = find_location(db, owner, parsed["name"], locations_cache)
         if not location:
             location = get_or_create_location(db, owner, parsed["name"])
@@ -288,6 +507,24 @@ def rebuild_location_mentions(db, owner: str, entry: LogbookEntry) -> List[Logbo
             end_offset=parsed["end_offset"],
             source="location",
             confidence=100,
+        ))
+        mentioned_locations.append(location)
+        blocked_ranges.append((parsed["start_offset"], parsed["end_offset"]))
+    for parsed in known_entity_matches(entry.content or "", locations_cache, blocked_ranges):
+        location = parsed["row"]
+        key = (location.id, parsed["start_offset"], parsed["end_offset"])
+        if key in seen_mentions:
+            continue
+        seen_mentions.add(key)
+        db.add(LogbookLocationMention(
+            id=str(uuid.uuid4()),
+            entry_id=entry.id,
+            location_id=location.id,
+            surface_text=parsed["surface_text"],
+            start_offset=parsed["start_offset"],
+            end_offset=parsed["end_offset"],
+            source="known",
+            confidence=80,
         ))
         mentioned_locations.append(location)
     return mentioned_locations
@@ -358,6 +595,46 @@ def load_location_or_404(db, owner: str, location_id: str) -> LogbookLocation:
     return location
 
 
+def entries_for_person(db, owner: str, person_id: str, *, limit: int = 20) -> List[LogbookEntry]:
+    limit = max(1, min(int(limit or 20), 100))
+    return (
+        entry_query(db, owner)
+        .join(LogbookMention, LogbookMention.entry_id == LogbookEntry.id)
+        .filter(LogbookMention.person_id == person_id)
+        .order_by(LogbookEntry.entry_date.desc(), LogbookEntry.updated_at.desc())
+        .limit(limit)
+        .all()
+    )
+
+
+def entries_for_location(db, owner: str, location_id: str, *, limit: int = 20) -> List[LogbookEntry]:
+    limit = max(1, min(int(limit or 20), 100))
+    return (
+        entry_query(db, owner)
+        .join(LogbookLocationMention, LogbookLocationMention.entry_id == LogbookEntry.id)
+        .filter(LogbookLocationMention.location_id == location_id)
+        .order_by(LogbookEntry.entry_date.desc(), LogbookEntry.updated_at.desc())
+        .limit(limit)
+        .all()
+    )
+
+
+def entries_for_people(db, owner: str, person_ids: List[str], *, limit: int = 20) -> List[LogbookEntry]:
+    ids = [str(item) for item in person_ids or [] if item]
+    if not ids:
+        return []
+    limit = max(1, min(int(limit or 20), 100))
+    return (
+        entry_query(db, owner)
+        .join(LogbookMention, LogbookMention.entry_id == LogbookEntry.id)
+        .filter(LogbookMention.person_id.in_(ids))
+        .distinct()
+        .order_by(LogbookEntry.entry_date.desc(), LogbookEntry.updated_at.desc())
+        .limit(limit)
+        .all()
+    )
+
+
 def load_connection_or_404(db, owner: str, connection_id: str) -> LogbookPersonConnection:
     conn = db.query(LogbookPersonConnection).options(
         selectinload(LogbookPersonConnection.person_a),
@@ -397,4 +674,3 @@ def location_stats(db, owner: str) -> Dict[str, Dict[str, Any]]:
         location_id: {"mention_count": int(count or 0), "last_mentioned": last_date}
         for location_id, count, last_date in rows
     }
-

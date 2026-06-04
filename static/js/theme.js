@@ -308,6 +308,12 @@ const _ROUTE_FAVICON_SHAPES = {
     "<line x1='12' y1='10' x2='19' y2='10' stroke='__C__' stroke-width='2'/>" +
     "<line x1='12' y1='15' x2='19' y2='15' stroke='__C__' stroke-width='2'/>" +
     "<line x1='12' y1='20' x2='17' y2='20' stroke='__C__' stroke-width='2'/>",
+  '/logbook/atlas':
+    "<circle cx='9' cy='8' r='3' fill='none' stroke='__C__' stroke-width='2.5'/>" +
+    "<path d='M3 23 V21 A5 5 0 0 1 8 16 H10' fill='none' stroke='__C__' stroke-width='2.5' stroke-linecap='round'/>" +
+    "<path d='M15 5 L26 9 L15 13 L4 9 Z' fill='none' stroke='__C__' stroke-width='2.5' stroke-linejoin='round'/>" +
+    "<path d='M4 9 V20 L15 27 L26 20 V9' fill='none' stroke='__C__' stroke-width='2' stroke-linejoin='round'/>" +
+    "<path d='M15 13 V27' fill='none' stroke='__C__' stroke-width='2'/>",
   '/cookbook':
     "<path d='M5 8 L5 26 A2 2 0 0 0 7 28 L25 28 A2 2 0 0 0 27 26 L27 8' fill='none' stroke='__C__' stroke-width='2.5' stroke-linejoin='round'/>" +
     "<path d='M9 4 L23 4 L23 8 L9 8 Z' fill='none' stroke='__C__' stroke-width='2.5' stroke-linejoin='round'/>" +

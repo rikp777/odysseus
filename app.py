@@ -756,6 +756,10 @@ async def serve_notes(request: Request):
 async def serve_logbook(request: Request):
     return await serve_index(request)
 
+@app.get("/logbook/atlas")
+async def serve_logbook_atlas(request: Request):
+    return await serve_index(request)
+
 @app.get("/calendar")
 async def serve_calendar(request: Request):
     return await serve_index(request)

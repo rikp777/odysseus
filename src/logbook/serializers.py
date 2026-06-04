@@ -17,6 +17,7 @@ from src.logbook.utils import aliases, json_load
 
 
 def person_to_dict(person: LogbookPerson) -> Dict[str, Any]:
+    contact_snapshot = json_load(getattr(person, "contact_snapshot_json", None), None)
     return {
         "id": person.id,
         "owner": person.owner,
@@ -24,6 +25,11 @@ def person_to_dict(person: LogbookPerson) -> Dict[str, Any]:
         "canonical_name": person.canonical_name,
         "aliases": aliases(person),
         "notes": person.notes,
+        "relationship_label": getattr(person, "relationship_label", None),
+        "llm_context": getattr(person, "llm_context", None),
+        "contact_uid": getattr(person, "contact_uid", None),
+        "contact_source": getattr(person, "contact_source", None),
+        "contact_snapshot": contact_snapshot if isinstance(contact_snapshot, dict) else None,
         "created_at": person.created_at.isoformat() if person.created_at else None,
         "updated_at": person.updated_at.isoformat() if person.updated_at else None,
     }
@@ -37,6 +43,11 @@ def location_to_dict(location: LogbookLocation) -> Dict[str, Any]:
         "canonical_name": location.canonical_name,
         "aliases": aliases(location),
         "notes": location.notes,
+        "address": getattr(location, "address", None),
+        "latitude": getattr(location, "latitude", None),
+        "longitude": getattr(location, "longitude", None),
+        "location_type": getattr(location, "location_type", None),
+        "llm_context": getattr(location, "llm_context", None),
         "created_at": location.created_at.isoformat() if location.created_at else None,
         "updated_at": location.updated_at.isoformat() if location.updated_at else None,
     }
@@ -167,4 +178,3 @@ def empty_entry_shape(entry_date: str) -> Dict[str, Any]:
         "location_mentions": [],
         "locations": [],
     }
-
