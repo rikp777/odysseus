@@ -1,0 +1,2 @@
+"""Contacts service package."""
+

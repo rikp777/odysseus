@@ -21,10 +21,12 @@ from core.database import (
     SessionLocal,
 )
 from src.auth_helpers import effective_user, require_user
+from src.contacts import service as contacts_service
 from src.logbook import ai as logbook_ai
 from src.logbook import repository as logbook_repo
 from src.logbook import serializers as logbook_serializers
 from src.logbook import utils as logbook_utils
+from src.tool_security import owner_is_admin_or_single_user
 from src.logbook.schemas import (
     LogbookAIAssist,
     LogbookEntryUpdate,
@@ -33,6 +35,7 @@ from src.logbook.schemas import (
     LogbookLocationsMerge,
     LogbookLocationUpdate,
     LogbookPeopleMerge,
+    LogbookPersonContactLink,
     LogbookPersonCreate,
     LogbookPersonUpdate,
 )
@@ -43,8 +46,106 @@ def _owner(request: Request) -> str:
     return effective_user(request) or ""
 
 
+def _clean_optional(value: Optional[str]) -> Optional[str]:
+    text = str(value or "").strip()
+    return text or None
+
+
+def _contacts_allowed(owner: str) -> bool:
+    try:
+        return owner_is_admin_or_single_user(owner or None)
+    except Exception:
+        return not bool(owner)
+
+
+def _contact_to_candidate(contact: dict) -> dict:
+    return {
+        "uid": str(contact.get("uid") or ""),
+        "name": contact.get("name") or "",
+        "emails": contact.get("emails") or [],
+        "phones": contact.get("phones") or [],
+        "source": "contacts",
+    }
+
+
+def _load_contact_or_404(owner: str, contact_uid: str) -> dict:
+    if not _contacts_allowed(owner):
+        raise HTTPException(403, "Contacts are not available for this user")
+    uid = str(contact_uid or "").strip()
+    if not uid:
+        raise HTTPException(400, "contact_uid is required")
+    for contact in contacts_service.fetch_contacts(force=True):
+        if str(contact.get("uid") or "") == uid:
+            return contact
+    raise HTTPException(404, "Contact not found")
+
+
+def _apply_contact_link(person: LogbookPerson, contact: dict) -> None:
+    person.contact_uid = str(contact.get("uid") or "") or None
+    person.contact_source = "contacts"
+    person.contact_snapshot_json = json.dumps(_contact_to_candidate(contact), ensure_ascii=False)
+    if not person.display_name and contact.get("name"):
+        person.display_name = str(contact["name"]).strip()
+
+
+def _clear_contact_link(person: LogbookPerson) -> None:
+    person.contact_uid = None
+    person.contact_source = None
+    person.contact_snapshot_json = None
+
+
 def setup_logbook_routes() -> APIRouter:
     router = APIRouter(prefix="/api/logbook", tags=["logbook"])
+
+    @router.get("/atlas")
+    def atlas(request: Request, status: Optional[str] = None):
+        owner = _owner(request)
+        db = SessionLocal()
+        try:
+            people = logbook_repo.person_query(db, owner).order_by(LogbookPerson.display_name.asc()).all()
+            locations = logbook_repo.location_query(db, owner).order_by(LogbookLocation.display_name.asc()).all()
+            person_stats = logbook_repo.person_stats(db, owner)
+            location_stats = logbook_repo.location_stats(db, owner)
+            conn_query = db.query(LogbookPersonConnection).options(
+                selectinload(LogbookPersonConnection.person_a),
+                selectinload(LogbookPersonConnection.person_b),
+            ).filter(LogbookPersonConnection.owner == owner)
+            if status:
+                conn_query = conn_query.filter(LogbookPersonConnection.status == status)
+            connections = conn_query.order_by(LogbookPersonConnection.updated_at.desc()).all()
+            return {
+                "people": [
+                    logbook_utils.with_stats(logbook_serializers.person_to_dict(person), person_stats.get(person.id, {}))
+                    for person in people
+                ],
+                "locations": [
+                    logbook_utils.with_stats(logbook_serializers.location_to_dict(location), location_stats.get(location.id, {}))
+                    for location in locations
+                ],
+                "connections": [logbook_serializers.connection_to_dict(conn) for conn in connections],
+                "contacts_available": _contacts_allowed(owner),
+            }
+        finally:
+            db.close()
+
+    @router.get("/map")
+    def map_locations(request: Request, with_coordinates: bool = False):
+        owner = _owner(request)
+        db = SessionLocal()
+        try:
+            query = logbook_repo.location_query(db, owner)
+            if with_coordinates:
+                query = query.filter(LogbookLocation.latitude.isnot(None), LogbookLocation.longitude.isnot(None))
+            locations = query.order_by(LogbookLocation.display_name.asc()).all()
+            stats = logbook_repo.location_stats(db, owner)
+            return {
+                "locations": [
+                    logbook_utils.with_stats(logbook_serializers.location_to_dict(location), stats.get(location.id, {}))
+                    for location in locations
+                ]
+            }
+        finally:
+            db.close()
 
     @router.get("/entries")
     def list_entries(
@@ -167,6 +268,15 @@ def setup_logbook_routes() -> APIRouter:
         finally:
             db.close()
 
+    @router.get("/contacts/candidates")
+    def contact_candidates(request: Request, q: Optional[str] = None):
+        owner = _owner(request)
+        if not _contacts_allowed(owner):
+            return {"contacts": [], "available": False}
+        term = (q or "").strip()
+        contacts = contacts_service.search_contacts(term, limit=20) if term else contacts_service.fetch_contacts()[:20]
+        return {"contacts": [_contact_to_candidate(c) for c in contacts], "available": True}
+
     @router.get("/people")
     def list_people(request: Request, q: Optional[str] = None):
         owner = _owner(request)
@@ -199,8 +309,53 @@ def setup_logbook_routes() -> APIRouter:
         try:
             existing = logbook_repo.find_person(db, owner, body.display_name)
             person = logbook_repo.get_or_create_person(db, owner, body.display_name, body.aliases, body.notes, update_existing=not existing)
+            if body.relationship_label is not None:
+                person.relationship_label = _clean_optional(body.relationship_label)
+            if body.llm_context is not None:
+                person.llm_context = _clean_optional(body.llm_context)
+            if body.contact_uid:
+                _apply_contact_link(person, _load_contact_or_404(owner, body.contact_uid))
             db.commit()
             return {"ok": True, "duplicate": bool(existing), "person": logbook_serializers.person_to_dict(person)}
+        finally:
+            db.close()
+
+    @router.get("/people/{person_id}")
+    def get_person(request: Request, person_id: str, limit: int = 20):
+        owner = _owner(request)
+        db = SessionLocal()
+        try:
+            person = logbook_repo.load_person_or_404(db, owner, person_id)
+            entries = logbook_repo.entries_for_person(db, owner, person.id, limit=limit)
+            connections = db.query(LogbookPersonConnection).options(
+                selectinload(LogbookPersonConnection.person_a),
+                selectinload(LogbookPersonConnection.person_b),
+            ).filter(
+                LogbookPersonConnection.owner == owner,
+                or_(
+                    LogbookPersonConnection.person_a_id == person.id,
+                    LogbookPersonConnection.person_b_id == person.id,
+                ),
+            ).order_by(LogbookPersonConnection.updated_at.desc()).all()
+            return {
+                "person": logbook_utils.with_stats(
+                    logbook_serializers.person_to_dict(person),
+                    logbook_repo.person_stats(db, owner).get(person.id, {}),
+                ),
+                "entries": [logbook_serializers.entry_to_dict(entry, full=False) for entry in entries],
+                "connections": [logbook_serializers.connection_to_dict(conn) for conn in connections],
+            }
+        finally:
+            db.close()
+
+    @router.get("/people/{person_id}/entries")
+    def person_entries(request: Request, person_id: str, limit: int = 50):
+        owner = _owner(request)
+        db = SessionLocal()
+        try:
+            person = logbook_repo.load_person_or_404(db, owner, person_id)
+            entries = logbook_repo.entries_for_person(db, owner, person.id, limit=limit)
+            return {"entries": [logbook_serializers.entry_to_dict(entry, full=False) for entry in entries]}
         finally:
             db.close()
 
@@ -210,6 +365,7 @@ def setup_logbook_routes() -> APIRouter:
         db = SessionLocal()
         try:
             person = logbook_repo.load_person_or_404(db, owner, person_id)
+            fields_set = getattr(body, "__fields_set__", getattr(body, "model_fields_set", set()))
             if body.display_name is not None:
                 canonical = logbook_utils.canonical_name(body.display_name)
                 if not canonical:
@@ -225,8 +381,46 @@ def setup_logbook_routes() -> APIRouter:
             if body.aliases is not None:
                 aliases = [a.strip() for a in body.aliases if str(a).strip()]
                 person.aliases = json.dumps(aliases, ensure_ascii=False) if aliases else None
-            if body.notes is not None:
+            if "notes" in fields_set:
                 person.notes = body.notes
+            if "relationship_label" in fields_set:
+                person.relationship_label = _clean_optional(body.relationship_label)
+            if "llm_context" in fields_set:
+                person.llm_context = _clean_optional(body.llm_context)
+            if "contact_uid" in fields_set:
+                if body.contact_uid:
+                    _apply_contact_link(person, _load_contact_or_404(owner, body.contact_uid))
+                else:
+                    _clear_contact_link(person)
+            if "contact_source" in fields_set:
+                person.contact_source = _clean_optional(body.contact_source)
+            if "contact_snapshot_json" in fields_set:
+                person.contact_snapshot_json = json.dumps(body.contact_snapshot_json, ensure_ascii=False) if body.contact_snapshot_json else None
+            db.commit()
+            return {"ok": True, "person": logbook_serializers.person_to_dict(person)}
+        finally:
+            db.close()
+
+    @router.post("/people/{person_id}/link-contact")
+    def link_person_contact(request: Request, person_id: str, body: LogbookPersonContactLink):
+        owner = _owner(request)
+        db = SessionLocal()
+        try:
+            person = logbook_repo.load_person_or_404(db, owner, person_id)
+            contact = _load_contact_or_404(owner, body.contact_uid)
+            _apply_contact_link(person, contact)
+            db.commit()
+            return {"ok": True, "person": logbook_serializers.person_to_dict(person)}
+        finally:
+            db.close()
+
+    @router.post("/people/{person_id}/unlink-contact")
+    def unlink_person_contact(request: Request, person_id: str):
+        owner = _owner(request)
+        db = SessionLocal()
+        try:
+            person = logbook_repo.load_person_or_404(db, owner, person_id)
+            _clear_contact_link(person)
             db.commit()
             return {"ok": True, "person": logbook_serializers.person_to_dict(person)}
         finally:
@@ -288,6 +482,19 @@ def setup_logbook_routes() -> APIRouter:
                     conn.person_a_id = a_id
                     conn.person_b_id = b_id
             logbook_repo.merge_aliases(target, [source.display_name] + logbook_utils.aliases(source))
+            if source.notes and not target.notes:
+                target.notes = source.notes
+            if source.relationship_label and not target.relationship_label:
+                target.relationship_label = source.relationship_label
+            if source.llm_context:
+                if not target.llm_context:
+                    target.llm_context = source.llm_context
+                elif source.llm_context not in target.llm_context:
+                    target.llm_context = f"{target.llm_context}\n\n{source.llm_context}"
+            if source.contact_uid and not target.contact_uid:
+                target.contact_uid = source.contact_uid
+                target.contact_source = source.contact_source
+                target.contact_snapshot_json = source.contact_snapshot_json
             db.delete(source)
             db.commit()
             return {"ok": True, "person": logbook_serializers.person_to_dict(target)}
@@ -326,8 +533,46 @@ def setup_logbook_routes() -> APIRouter:
         try:
             existing = logbook_repo.find_location(db, owner, body.display_name)
             location = logbook_repo.get_or_create_location(db, owner, body.display_name, body.aliases, body.notes, update_existing=not existing)
+            if body.address is not None:
+                location.address = _clean_optional(body.address)
+            if body.latitude is not None:
+                location.latitude = body.latitude
+            if body.longitude is not None:
+                location.longitude = body.longitude
+            if body.location_type is not None:
+                location.location_type = _clean_optional(body.location_type)
+            if body.llm_context is not None:
+                location.llm_context = _clean_optional(body.llm_context)
             db.commit()
             return {"ok": True, "duplicate": bool(existing), "location": logbook_serializers.location_to_dict(location)}
+        finally:
+            db.close()
+
+    @router.get("/locations/{location_id}")
+    def get_location(request: Request, location_id: str, limit: int = 20):
+        owner = _owner(request)
+        db = SessionLocal()
+        try:
+            location = logbook_repo.load_location_or_404(db, owner, location_id)
+            entries = logbook_repo.entries_for_location(db, owner, location.id, limit=limit)
+            return {
+                "location": logbook_utils.with_stats(
+                    logbook_serializers.location_to_dict(location),
+                    logbook_repo.location_stats(db, owner).get(location.id, {}),
+                ),
+                "entries": [logbook_serializers.entry_to_dict(entry, full=False) for entry in entries],
+            }
+        finally:
+            db.close()
+
+    @router.get("/locations/{location_id}/entries")
+    def location_entries(request: Request, location_id: str, limit: int = 50):
+        owner = _owner(request)
+        db = SessionLocal()
+        try:
+            location = logbook_repo.load_location_or_404(db, owner, location_id)
+            entries = logbook_repo.entries_for_location(db, owner, location.id, limit=limit)
+            return {"entries": [logbook_serializers.entry_to_dict(entry, full=False) for entry in entries]}
         finally:
             db.close()
 
@@ -337,6 +582,7 @@ def setup_logbook_routes() -> APIRouter:
         db = SessionLocal()
         try:
             location = logbook_repo.load_location_or_404(db, owner, location_id)
+            fields_set = getattr(body, "__fields_set__", getattr(body, "model_fields_set", set()))
             if body.display_name is not None:
                 canonical = logbook_utils.canonical_name(body.display_name)
                 if not canonical:
@@ -352,8 +598,18 @@ def setup_logbook_routes() -> APIRouter:
             if body.aliases is not None:
                 aliases = [a.strip() for a in body.aliases if str(a).strip()]
                 location.aliases = json.dumps(aliases, ensure_ascii=False) if aliases else None
-            if body.notes is not None:
+            if "notes" in fields_set:
                 location.notes = body.notes
+            if "address" in fields_set:
+                location.address = _clean_optional(body.address)
+            if "latitude" in fields_set:
+                location.latitude = body.latitude
+            if "longitude" in fields_set:
+                location.longitude = body.longitude
+            if "location_type" in fields_set:
+                location.location_type = _clean_optional(body.location_type)
+            if "llm_context" in fields_set:
+                location.llm_context = _clean_optional(body.llm_context)
             db.commit()
             return {"ok": True, "location": logbook_serializers.location_to_dict(location)}
         finally:
@@ -373,6 +629,21 @@ def setup_logbook_routes() -> APIRouter:
                 synchronize_session=False,
             )
             logbook_repo.merge_location_aliases(target, [source.display_name] + logbook_utils.aliases(source))
+            if source.notes and not target.notes:
+                target.notes = source.notes
+            if source.address and not target.address:
+                target.address = source.address
+            if source.latitude is not None and target.latitude is None:
+                target.latitude = source.latitude
+            if source.longitude is not None and target.longitude is None:
+                target.longitude = source.longitude
+            if source.location_type and not target.location_type:
+                target.location_type = source.location_type
+            if source.llm_context:
+                if not target.llm_context:
+                    target.llm_context = source.llm_context
+                elif source.llm_context not in target.llm_context:
+                    target.llm_context = f"{target.llm_context}\n\n{source.llm_context}"
             db.delete(source)
             db.commit()
             return {"ok": True, "location": logbook_serializers.location_to_dict(target)}

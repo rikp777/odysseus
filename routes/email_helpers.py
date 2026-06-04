@@ -1210,8 +1210,8 @@ def _pre_retrieve_context(
         is_known = False
         if contacts_allowed:
             try:
-                from routes.contacts_routes import _fetch_contacts
-                for c in _fetch_contacts() or []:
+                from src.contacts import service as contacts_service
+                for c in contacts_service.fetch_contacts() or []:
                     # Contacts are normalized to plural `emails` lists, but
                     # keep the legacy singular key fallback for older data.
                     contact_emails = []
@@ -1309,8 +1309,8 @@ def _pre_retrieve_context(
             logger.warning(f"IMAP context search failed: {_e}")
 
         try:
-            from routes.contacts_routes import _fetch_contacts
-            all_contacts = _fetch_contacts() if contacts_allowed else []
+            from src.contacts import service as contacts_service
+            all_contacts = contacts_service.fetch_contacts() if contacts_allowed else []
             for term in terms_list:
                 t_lower = term.lower()
                 matches = [c for c in all_contacts

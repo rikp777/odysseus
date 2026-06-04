@@ -358,6 +358,46 @@ def load_location_or_404(db, owner: str, location_id: str) -> LogbookLocation:
     return location
 
 
+def entries_for_person(db, owner: str, person_id: str, *, limit: int = 20) -> List[LogbookEntry]:
+    limit = max(1, min(int(limit or 20), 100))
+    return (
+        entry_query(db, owner)
+        .join(LogbookMention, LogbookMention.entry_id == LogbookEntry.id)
+        .filter(LogbookMention.person_id == person_id)
+        .order_by(LogbookEntry.entry_date.desc(), LogbookEntry.updated_at.desc())
+        .limit(limit)
+        .all()
+    )
+
+
+def entries_for_location(db, owner: str, location_id: str, *, limit: int = 20) -> List[LogbookEntry]:
+    limit = max(1, min(int(limit or 20), 100))
+    return (
+        entry_query(db, owner)
+        .join(LogbookLocationMention, LogbookLocationMention.entry_id == LogbookEntry.id)
+        .filter(LogbookLocationMention.location_id == location_id)
+        .order_by(LogbookEntry.entry_date.desc(), LogbookEntry.updated_at.desc())
+        .limit(limit)
+        .all()
+    )
+
+
+def entries_for_people(db, owner: str, person_ids: List[str], *, limit: int = 20) -> List[LogbookEntry]:
+    ids = [str(item) for item in person_ids or [] if item]
+    if not ids:
+        return []
+    limit = max(1, min(int(limit or 20), 100))
+    return (
+        entry_query(db, owner)
+        .join(LogbookMention, LogbookMention.entry_id == LogbookEntry.id)
+        .filter(LogbookMention.person_id.in_(ids))
+        .distinct()
+        .order_by(LogbookEntry.entry_date.desc(), LogbookEntry.updated_at.desc())
+        .limit(limit)
+        .all()
+    )
+
+
 def load_connection_or_404(db, owner: str, connection_id: str) -> LogbookPersonConnection:
     conn = db.query(LogbookPersonConnection).options(
         selectinload(LogbookPersonConnection.person_a),
@@ -397,4 +437,3 @@ def location_stats(db, owner: str) -> Dict[str, Dict[str, Any]]:
         location_id: {"mention_count": int(count or 0), "last_mentioned": last_date}
         for location_id, count, last_date in rows
     }
-

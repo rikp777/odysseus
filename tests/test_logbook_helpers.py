@@ -1,5 +1,7 @@
 from types import SimpleNamespace
+from datetime import datetime
 
+import src.logbook.utils as logbook_utils
 from src.logbook.ai import normalize_ai_payload
 from src.logbook.serializers import entry_to_dict
 from src.logbook.utils import canonical_name, parse_locations, parse_mentions
@@ -20,6 +22,41 @@ def test_logbook_location_parser_supports_common_forms():
 
 def test_logbook_canonical_name_normalizes_aliases():
     assert canonical_name("@Ján_Peter!") == "jan peter"
+
+
+def test_logbook_reconnect_suggestion_prefers_meetup_for_social_context(monkeypatch):
+    class FixedDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(2026, 6, 4)
+
+    monkeypatch.setattr(logbook_utils, "datetime", FixedDatetime)
+
+    person = {
+        "display_name": "Jan",
+        "relationship_label": "friend",
+        "contact_snapshot": {"emails": ["jan@example.test"]},
+    }
+    data = logbook_utils.with_stats(person, {"mention_count": 3, "last_mentioned": "2026-04-20"})
+
+    assert data["days_since_mentioned"] == 45
+    assert data["reconnect_suggestion"]["suggested_action"] == "meetup"
+    assert "Maybe plan a meetup with Jan." in data["reconnect_suggestion"]["message"]
+
+
+def test_logbook_reconnect_suggestion_stays_quiet_for_recent_mentions(monkeypatch):
+    class FixedDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(2026, 6, 4)
+
+    monkeypatch.setattr(logbook_utils, "datetime", FixedDatetime)
+
+    person = {"display_name": "Lisa", "relationship_label": "work"}
+    data = logbook_utils.with_stats(person, {"mention_count": 1, "last_mentioned": "2026-05-30"})
+
+    assert data["days_since_mentioned"] == 5
+    assert data["reconnect_suggestion"] is None
 
 
 def test_logbook_ai_normalization_keeps_questions_short_and_adds_deterministic_suggestions():
@@ -107,4 +144,3 @@ def test_logbook_entry_serializer_counts_unique_people_and_locations():
     assert data["location_count"] == 1
     assert data["people"][0]["display_name"] == "Jan"
     assert data["locations"][0]["display_name"] == "Gym"
-

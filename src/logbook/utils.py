@@ -192,10 +192,75 @@ def extract_json_object(text: str) -> Dict[str, Any]:
     return {}
 
 
+def _days_since_entry_date(value: Any) -> Optional[int]:
+    if not value:
+        return None
+    try:
+        seen = datetime.strptime(str(value), "%Y-%m-%d").date()
+    except (TypeError, ValueError):
+        return None
+    return max(0, (datetime.now().date() - seen).days)
+
+
+def _has_linked_contact(data: Dict[str, Any]) -> bool:
+    if data.get("contact_uid"):
+        return True
+    snapshot = data.get("contact_snapshot")
+    if not isinstance(snapshot, dict):
+        return False
+    return bool(snapshot.get("emails") or snapshot.get("phones"))
+
+
+def reconnect_suggestion(data: Dict[str, Any], stats: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    last_mentioned = stats.get("last_mentioned") or data.get("last_mentioned")
+    days = _days_since_entry_date(last_mentioned)
+    if days is None or days < 21:
+        return None
+
+    name = str(data.get("display_name") or data.get("name") or "this person").strip() or "this person"
+    relationship = str(data.get("relationship_label") or data.get("relationship") or "").lower()
+    context = " ".join([
+        relationship,
+        str(data.get("llm_context") or data.get("context") or ""),
+        str(data.get("notes") or ""),
+    ]).lower()
+    has_contact = _has_linked_contact(data)
+
+    action = "reach_out"
+    action_text = f"reach out to {name}"
+    if any(word in context for word in ("work", "colleague", "client", "boss", "coworker", "project")):
+        action = "check_in"
+        action_text = f"check in with {name}"
+    elif days >= 45 and any(word in context for word in ("friend", "family", "partner", "social", "training", "coach", "team")):
+        action = "meetup"
+        action_text = f"plan a meetup with {name}"
+    elif has_contact:
+        action = "message"
+        action_text = f"send a message to {name}"
+
+    level = "soft"
+    if days >= 90:
+        level = "overdue"
+    elif days >= 45:
+        level = "due"
+
+    return {
+        "message": f"You last wrote about {name} {days} days ago. Maybe {action_text}.",
+        "suggested_action": action,
+        "days_since_mentioned": days,
+        "last_mentioned": last_mentioned,
+        "level": level,
+        "basis": f"Last logbook mention was {last_mentioned}.",
+    }
+
+
 def with_stats(data: Dict[str, Any], stats: Dict[str, Any]) -> Dict[str, Any]:
+    days = _days_since_entry_date(stats.get("last_mentioned"))
     data.update({
         "mention_count": int(stats.get("mention_count") or 0),
         "last_mentioned": stats.get("last_mentioned"),
+        "days_since_mentioned": days,
     })
+    if "relationship_label" in data or "contact_uid" in data or "contact_snapshot" in data:
+        data["reconnect_suggestion"] = reconnect_suggestion(data, stats)
     return data
-

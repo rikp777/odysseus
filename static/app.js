@@ -24,6 +24,7 @@ import tasksModule from './js/tasks.js';
 import calendarModule from './js/calendar.js';
 import notesModule from './js/notes.js';
 import logbookModule from './js/logbook.js';
+import logbookAtlasModule from './js/logbookAtlas.js';
 import adminModule from './js/admin.js';
 import settingsModule from './js/settings.js';
 
@@ -934,6 +935,15 @@ function initializeEventListeners() {
     });
   }
 
+  const toolLogbookAtlasBtn = el('tool-logbook-atlas-btn');
+  if (toolLogbookAtlasBtn) {
+    toolLogbookAtlasBtn.addEventListener('click', () => {
+      if (logbookAtlasModule) {
+        logbookAtlasModule.toggleAtlas();
+      }
+    });
+  }
+
   // URL-based panel routing — bookmark /calendar, /notes, /cookbook etc
   // and the matching tool opens automatically on page load.
   const urlPath = window.location.pathname;
@@ -997,6 +1007,7 @@ function initializeEventListeners() {
     }
   }
   const _routeOpen = {
+    '/logbook/atlas': () => logbookAtlasModule && logbookAtlasModule.openAtlas(),
     '/logbook': () => logbookModule && logbookModule.openLogbook(),
     '/notes':    () => {
       if (!notesModule) return;
@@ -2413,6 +2424,7 @@ function initializeEventListeners() {
     'tool-library':        '#tool-library-btn',
     'tool-memory':         '#tool-memory-btn',
     'tool-logbook':        '#tool-logbook-btn',
+    'tool-logbook-atlas':  '#tool-logbook-atlas-btn',
     'tool-notes':          '#tool-notes-btn',
     'tool-tasks':          '#tool-tasks-btn',
     'tool-theme':          '#tool-theme-btn',
@@ -3475,6 +3487,7 @@ function startOdysseusApp() {
     'rail-tasks':     'tool-tasks-btn',
     'rail-calendar':  'tool-calendar-btn',
     'rail-logbook':   'tool-logbook-btn',
+    'rail-logbook-atlas': 'tool-logbook-atlas-btn',
     'rail-notes':     'tool-notes-btn',
     'rail-memory':    'tool-memory-btn',
     'rail-theme':     'tool-theme-btn',
