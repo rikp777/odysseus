@@ -43,6 +43,7 @@ def location_to_dict(location: LogbookLocation) -> Dict[str, Any]:
         "canonical_name": location.canonical_name,
         "aliases": aliases(location),
         "notes": location.notes,
+        "hidden": bool(getattr(location, "hidden", False)),
         "address": getattr(location, "address", None),
         "latitude": getattr(location, "latitude", None),
         "longitude": getattr(location, "longitude", None),

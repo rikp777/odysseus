@@ -21,6 +21,7 @@ import {
   updateConnection,
 } from './logbook/api.js';
 import { MODAL_ID, MOODS, QUICK_DATA, SAVE_DELAY } from './logbook/constants.js';
+import { iconBook as _iconBook, logbookIcon as _logbookIcon } from './logbook/icons.js';
 import {
   cleanKey as _cleanKey,
   dateAdd as _dateAdd,
@@ -30,6 +31,8 @@ import {
 } from './logbook/utils.js';
 
 const LOGBOOK_LINK_RE = /\[([^\]\n]{1,160})\]\((person:[A-Za-z0-9_-]{2,100}|place:[A-Za-z0-9_-]{2,100}|location:[A-Za-z0-9_-]{2,100}|data:[A-Za-z0-9_-]{2,80}|food:[A-Za-z0-9_-]{2,100}|[a-z][a-z0-9]*(?:_[a-z0-9]+)+)\)/g;
+const LOGBOOK_PERSON_RE = /(^|[^\w.])@(?:\[([^\]\n]{1,80})\]|"([^"\n]{1,80})"|([A-Za-z0-9À-ÖØ-öø-ÿ][A-Za-z0-9À-ÖØ-öø-ÿ_-]*(?:\s+(?:[A-ZÀ-ÖØ-Þ][A-Za-z0-9À-ÖØ-öø-ÿ0-9_-]*|van|de|der|den|ten|ter|von|da|del|di|la|le|du)){0,3}))/g;
+const LOGBOOK_LOCATION_RE = /(^|[^\w#])#(?:\[([^\]\n]{1,80})\]|"([^"\n]{1,80})"|([A-Za-zÀ-ÖØ-öø-ÿ][A-Za-z0-9À-ÖØ-öø-ÿ_-]*(?:\s+(?:[A-ZÀ-ÖØ-Þ][A-Za-z0-9À-ÖØ-öø-ÿ0-9_-]*|van|de|der|den|ten|ter|von|da|del|di|la|le|du)){0,3}))/g;
 
 let _open = false;
 let _date = _today();
@@ -57,6 +60,8 @@ let _peopleSearch = '';
 let _locationSearch = '';
 let _peopleSort = 'recent';
 let _locationSort = 'recent';
+let _editorMode = 'rich';
+let _entitySignature = '';
 
 function _setStatus(text) {
   _saveStatus = text;
@@ -96,6 +101,7 @@ function _entryPayload() {
 
 async function _saveNow({ silent = false } = {}) {
   if (!_entry || _saving) return;
+  _syncEntryFromEditor();
   if (_saveTimer) {
     clearTimeout(_saveTimer);
     _saveTimer = null;
@@ -105,13 +111,14 @@ async function _saveNow({ silent = false } = {}) {
   try {
     const saved = await saveEntry(_date, _entryPayload());
     _entry = saved;
+    _entitySignature = _entityListSignature(_entry.people || [], _entry.locations || []);
     _dirty = false;
     _setStatus('Saved');
     await Promise.all([_loadPeople(), _loadLocations(), _loadConnections(), _loadEntries()]);
     _renderPeoplePanel();
     _renderLocationsPanel();
     _renderNavigator();
-    _refreshContentPreview();
+    _refreshEditorContent({ preserveFocus: true });
     if (!silent) uiModule?.showToast?.('Saved');
   } catch (err) {
     _setStatus('Save failed');
@@ -129,6 +136,7 @@ async function _loadEntry(date) {
   if (!_entry.mentions) _entry.mentions = [];
   if (!_entry.locations) _entry.locations = [];
   if (!_entry.location_mentions) _entry.location_mentions = [];
+  _entitySignature = _entityListSignature(_entry.people || [], _entry.locations || []);
   _dirty = false;
   _setStatus('Saved');
 }
@@ -152,7 +160,7 @@ async function _loadPeople() {
 }
 
 async function _loadLocations() {
-  const data = await listLocations();
+  const data = await listLocations({ includeHidden: true });
   _locations = data.locations || [];
 }
 
@@ -183,10 +191,6 @@ async function _loadDate(date) {
   _render();
 }
 
-function _iconBook(size = 16) {
-  return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/><path d="M9 7h6M9 11h6M9 15h4"/></svg>`;
-}
-
 function _slugName(value) {
   return String(value || '')
     .normalize('NFKD')
@@ -195,11 +199,6 @@ function _slugName(value) {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '_')
     .replace(/^_+|_+$/g, '');
-}
-
-function _hasLogbookLinks(content) {
-  LOGBOOK_LINK_RE.lastIndex = 0;
-  return LOGBOOK_LINK_RE.test(String(content || ''));
 }
 
 function _linkKind(target) {
@@ -222,10 +221,11 @@ function _personForLink(target, label = '') {
   }) || null;
 }
 
-function _locationForLink(target, label = '') {
+function _locationForLink(target, label = '', { includeHidden = false } = {}) {
   const targetSlug = _slugName(target);
   const labelSlug = _slugName(label);
   return (_locations || []).find(location => {
+    if (location.hidden && !includeHidden) return false;
     const slugs = [
       location.canonical_name,
       location.display_name,
@@ -233,6 +233,88 @@ function _locationForLink(target, label = '') {
     ].map(_slugName).filter(Boolean);
     return slugs.includes(targetSlug) || Boolean(labelSlug && slugs.includes(labelSlug));
   }) || null;
+}
+
+function _displayNameFromSlug(value) {
+  const particles = new Set(['van', 'de', 'der', 'den', 'ten', 'ter', 'von', 'da', 'del', 'di', 'la', 'le', 'du']);
+  return _slugName(value)
+    .split('_')
+    .filter(Boolean)
+    .map((part, index) => (index > 0 && particles.has(part)) ? part : part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
+}
+
+function _entityKey(item) {
+  return item?.id || _slugName(item?.canonical_name || item?.display_name || '');
+}
+
+function _addEntity(list, item) {
+  const key = _entityKey(item);
+  if (!key || list.some(existing => _entityKey(existing) === key)) return;
+  list.push(item);
+}
+
+function _entityFromLabel(kind, label, target = '') {
+  if (kind === 'location') {
+    const existing = _locationForLink(target, label, { includeHidden: true });
+    if (existing?.hidden) return null;
+    if (existing) return existing;
+  }
+  const existing = kind === 'location' ? null : _personForLink(target, label);
+  if (existing) return existing;
+  const displayName = label || _displayNameFromSlug(target);
+  return displayName ? { id: '', display_name: displayName, canonical_name: _slugName(target || label) } : null;
+}
+
+function _currentEntitiesFromContent(content) {
+  const text = String(content || '');
+  const people = [];
+  const locations = [];
+  LOGBOOK_LINK_RE.lastIndex = 0;
+  for (const match of text.matchAll(LOGBOOK_LINK_RE)) {
+    const kind = _linkKind(match[2]);
+    if (kind === 'location') _addEntity(locations, _entityFromLabel('location', match[1], match[2]));
+    else if (kind !== 'data') _addEntity(people, _entityFromLabel('person', match[1], match[2]));
+  }
+  LOGBOOK_PERSON_RE.lastIndex = 0;
+  for (const match of text.matchAll(LOGBOOK_PERSON_RE)) {
+    const label = (match[2] || match[3] || match[4] || '').replace(/\s+/g, ' ').trim();
+    if (label) _addEntity(people, _entityFromLabel('person', label));
+  }
+  LOGBOOK_LOCATION_RE.lastIndex = 0;
+  for (const match of text.matchAll(LOGBOOK_LOCATION_RE)) {
+    const label = (match[2] || match[3] || match[4] || '').replace(/\s+/g, ' ').trim();
+    if (label) _addEntity(locations, _entityFromLabel('location', label));
+  }
+  return { people, locations };
+}
+
+function _entityListSignature(people = [], locations = []) {
+  const personKeys = people.map(_entityKey).filter(Boolean).sort().join(',');
+  const locationKeys = locations.map(_entityKey).filter(Boolean).sort().join(',');
+  return `${personKeys}|${locationKeys}`;
+}
+
+function _syncCurrentEntryEntitiesFromContent() {
+  if (!_entry) return false;
+  const { people, locations } = _currentEntitiesFromContent(_entry.content || '');
+  const nextSignature = _entityListSignature(people, locations);
+  const changed = nextSignature !== _entitySignature;
+  _entry.people = people;
+  _entry.locations = locations;
+  _entry.people_count = people.length;
+  _entry.location_count = locations.length;
+  _entry.mention_count = people.length;
+  _entry.location_mention_count = locations.length;
+  _entitySignature = nextSignature;
+  return changed;
+}
+
+function _refreshEntityPanelsFromContent() {
+  if (!_syncCurrentEntryEntitiesFromContent()) return;
+  _renderPeoplePanel();
+  _renderLocationsPanel();
+  _renderNavigator();
 }
 
 function _safePersonImage(src) {
@@ -260,7 +342,7 @@ function _personCardHtml(person, label, target) {
   return `
     <span class="logbook-person-card" role="tooltip">
       <span class="logbook-person-card-head">
-        ${image ? `<img src="${_e(image)}" alt="">` : `<span class="logbook-person-initial">${_e(initial)}</span>`}
+        ${image ? `<img src="${_e(image)}" alt="">` : `<span class="logbook-person-initial logbook-card-icon" title="${_e(initial)}">${_logbookIcon('person', 16)}</span>`}
         <span><strong>${_e(name)}</strong>${relation ? `<em>${_e(relation)}</em>` : ''}</span>
       </span>
       ${notes ? `<span class="logbook-person-card-note">${_e(notes)}</span>` : ''}
@@ -273,7 +355,7 @@ function _personCardHtml(person, label, target) {
 function _renderPersonLink(label, target) {
   const person = _personForLink(target, label);
   const attrs = person?.id ? ` data-open-person="${_e(person.id)}" role="button"` : ' role="text"';
-  return `<span class="logbook-person-link" tabindex="0"${attrs}>${_e(label)}${_personCardHtml(person, label, target)}</span>`;
+  return `<span class="logbook-person-link" tabindex="0"${attrs}><span class="logbook-link-label">${_logbookIcon('person', 12)}<span>${_e(label)}</span></span>${_personCardHtml(person, label, target)}</span>`;
 }
 
 function _locationCardHtml(location, label, target) {
@@ -287,7 +369,7 @@ function _locationCardHtml(location, label, target) {
   return `
     <span class="logbook-person-card logbook-location-card" role="tooltip">
       <span class="logbook-person-card-head">
-        <span class="logbook-person-initial">#</span>
+        <span class="logbook-person-initial logbook-card-icon">${_logbookIcon('location', 16)}</span>
         <span><strong>${_e(name)}</strong>${kind ? `<em>${_e(kind)}</em>` : ''}</span>
       </span>
       ${address ? `<span class="logbook-person-card-note">${_e(address)}</span>` : ''}
@@ -301,7 +383,7 @@ function _locationCardHtml(location, label, target) {
 function _renderLocationLink(label, target) {
   const location = _locationForLink(target, label);
   const attrs = location?.id ? ` data-open-location="${_e(location.id)}" role="button"` : ' role="text"';
-  return `<span class="logbook-person-link logbook-location-link" tabindex="0"${attrs}>${_e(label)}${_locationCardHtml(location, label, target)}</span>`;
+  return `<span class="logbook-person-link logbook-location-link" tabindex="0"${attrs}><span class="logbook-link-label">${_logbookIcon('location', 12)}<span>${_e(label)}</span></span>${_locationCardHtml(location, label, target)}</span>`;
 }
 
 function _dataCardHtml(label, target) {
@@ -311,7 +393,7 @@ function _dataCardHtml(label, target) {
   return `
     <span class="logbook-person-card logbook-data-card" role="tooltip">
       <span class="logbook-person-card-head">
-        <span class="logbook-person-initial">D</span>
+        <span class="logbook-person-initial logbook-card-icon">${_logbookIcon('food', 16)}</span>
         <span><strong>${_e(display)}</strong><em>Datapoint</em></span>
       </span>
       <span class="logbook-person-card-note">${_e(label)}</span>
@@ -321,7 +403,45 @@ function _dataCardHtml(label, target) {
 }
 
 function _renderDataLink(label, target) {
-  return `<span class="logbook-person-link logbook-data-link" tabindex="0" role="text">${_e(label)}${_dataCardHtml(label, target)}</span>`;
+  return `<span class="logbook-person-link logbook-data-link" tabindex="0" role="text"><span class="logbook-link-label">${_logbookIcon('food', 12)}<span>${_e(label)}</span></span>${_dataCardHtml(label, target)}</span>`;
+}
+
+function _editorTokenHtml(label, target) {
+  const kind = _linkKind(target);
+  const cls = kind === 'location'
+    ? 'logbook-editor-token-place'
+    : kind === 'data' ? 'logbook-editor-token-data' : 'logbook-editor-token-person';
+  const iconKind = kind === 'location' ? 'location' : kind === 'data' ? 'food' : 'person';
+  const card = kind === 'location'
+    ? _locationCardHtml(_locationForLink(target, label), label, target)
+    : kind === 'data' ? _dataCardHtml(label, target) : _personCardHtml(_personForLink(target, label), label, target);
+  let openAttrs = ' role="text"';
+  if (kind === 'location') {
+    const location = _locationForLink(target, label);
+    if (location?.id) {
+      openAttrs = ` role="button" tabindex="0" data-open-location="${_e(location.id)}" aria-label="Open place ${_e(label)}"`;
+    }
+  } else if (kind !== 'data') {
+    const person = _personForLink(target, label);
+    if (person?.id) {
+      openAttrs = ` role="button" tabindex="0" data-open-person="${_e(person.id)}" aria-label="Open person ${_e(label)}"`;
+    }
+  }
+  return `<span class="logbook-editor-token ${cls}" contenteditable="false" data-logbook-token="1" data-target="${_e(target)}" data-label="${_e(label)}"${openAttrs}><span class="logbook-editor-token-icon">${_logbookIcon(iconKind, 12)}</span><span>${_e(label)}</span>${card}</span>`;
+}
+
+function _renderLogbookEditorText(content) {
+  const text = String(content || '');
+  let html = '';
+  let last = 0;
+  LOGBOOK_LINK_RE.lastIndex = 0;
+  for (const match of text.matchAll(LOGBOOK_LINK_RE)) {
+    html += _e(text.slice(last, match.index));
+    html += _editorTokenHtml(match[1], match[2]);
+    last = match.index + match[0].length;
+  }
+  html += _e(text.slice(last));
+  return html;
 }
 
 function _renderLogbookText(content) {
@@ -341,13 +461,49 @@ function _renderLogbookText(content) {
   return html || '<span class="logbook-empty">No text yet.</span>';
 }
 
-function _refreshContentPreview() {
-  const section = document.getElementById('logbook-rendered-preview');
-  const preview = document.getElementById('logbook-content-preview');
-  if (!preview) return;
-  preview.innerHTML = _renderLogbookText(_entry?.content || '');
-  section?.classList.toggle('hidden', !_hasLogbookLinks(_entry?.content || ''));
-  _bindEntityLinkEvents(preview);
+function _blockNeedsNewline(el) {
+  return el && /^(DIV|P|LI|H[1-6]|BLOCKQUOTE)$/i.test(el.nodeName || '');
+}
+
+function _serializeRichEditorNode(node, root) {
+  if (!node) return '';
+  if (node.nodeType === Node.TEXT_NODE) return node.nodeValue.replace(/\u00a0/g, ' ');
+  if (node.nodeType !== Node.ELEMENT_NODE) return '';
+  if (node.dataset?.logbookToken === '1') {
+    const label = node.dataset.label || node.textContent.replace(/^[@#]/, '').trim();
+    const target = node.dataset.target || '';
+    return label && target ? `[${label}](${target})` : node.textContent || '';
+  }
+  if (node.nodeName === 'BR') return '\n';
+  let out = '';
+  node.childNodes.forEach(child => { out += _serializeRichEditorNode(child, root); });
+  if (node !== root && _blockNeedsNewline(node) && out && !out.endsWith('\n')) out += '\n';
+  return out;
+}
+
+function _richEditorToMarkdown(editor = document.getElementById('logbook-rich-content')) {
+  if (!editor) return '';
+  return _serializeRichEditorNode(editor, editor).replace(/\n{3,}/g, '\n\n').replace(/[ \t]+\n/g, '\n').trimEnd();
+}
+
+function _syncEntryFromEditor() {
+  const raw = document.getElementById('logbook-content');
+  const rich = document.getElementById('logbook-rich-content');
+  if (!rich && !raw) return '';
+  const value = _editorMode === 'raw' ? (raw?.value || '') : _richEditorToMarkdown(rich);
+  if (_entry) _entry.content = value;
+  return value;
+}
+
+function _refreshEditorContent({ preserveFocus = false } = {}) {
+  const raw = document.getElementById('logbook-content');
+  const rich = document.getElementById('logbook-rich-content');
+  const value = _entry?.content || '';
+  if (raw && raw.value !== value) raw.value = value;
+  if (rich && (!preserveFocus || document.activeElement !== rich)) {
+    rich.innerHTML = _renderLogbookEditorText(value);
+    _bindEntityLinkEvents(rich);
+  }
 }
 
 function _entryStatus(entry) {
@@ -436,7 +592,7 @@ function _wireLogbookWindow(modal) {
   makeWindowDraggable(modal, {
     content,
     header,
-    skipSelector: 'button, input, select, textarea, label',
+    skipSelector: 'button, input, select, textarea, label, [contenteditable="true"]',
     mobileSkip: 980,
     enableDock: true,
     onDragEnd: () => _captureWindowRect(modal),
@@ -534,24 +690,31 @@ function _navigatorHtml() {
 
 function _editorHtml() {
   const mood = _entry?.mood_label || '';
-  const showPreview = _hasLogbookLinks(_entry?.content || '');
   const moodChips = MOODS.map(item => `
     <button type="button" class="logbook-chip ${mood === item.value ? 'active' : ''}" data-mood="${_e(item.value)}" data-mood-score="${item.score}">${_e(item.label)}</button>
   `).join('');
+  const richActive = _editorMode !== 'raw';
   return `
     <div class="logbook-editor-head">
       <div>
         <div class="logbook-date-title">${_e(_dateLabel(_date))}</div>
         <div class="logbook-date-sub">${_e(_date)}</div>
       </div>
+      <div class="logbook-editor-toggle" role="group" aria-label="Editor mode">
+        <button type="button" class="${richActive ? 'active' : ''}" aria-pressed="${richActive ? 'true' : 'false'}" data-logbook-editor-mode="rich">Editor</button>
+        <button type="button" class="${!richActive ? 'active' : ''}" aria-pressed="${!richActive ? 'true' : 'false'}" data-logbook-editor-mode="raw">Raw</button>
+      </div>
+    </div>
+    <div class="logbook-link-toolbar" role="toolbar" aria-label="Link selected text">
+      <button type="button" data-logbook-link-selection="person" title="Link selected text as person">${_logbookIcon('person', 13)}<span>Person</span></button>
+      <button type="button" data-logbook-link-selection="location" title="Link selected text as place">${_logbookIcon('location', 13)}<span>Place</span></button>
+      <button type="button" data-logbook-link-selection="food" title="Link selected text as food">${_logbookIcon('food', 13)}<span>Food</span></button>
+      <button type="button" data-logbook-unlink-selection title="Remove link from selected token or markdown link">${_logbookIcon('unlink', 13)}<span>Unlink</span></button>
     </div>
     <section class="logbook-write-section" data-mobile-section="write">
-      <textarea id="logbook-content" class="logbook-content" placeholder="Write messy notes. Example: tired, talked with @Jan, rode through [Panningen](place:panningen), ate [breakfast](data:food).">${_e(_entry?.content || '')}</textarea>
+      <div id="logbook-rich-content" class="logbook-rich-content ${richActive ? '' : 'hidden'}" contenteditable="true" role="textbox" aria-multiline="true" aria-label="Logbook editor" data-placeholder="Write messy notes. Add people and places from the panels, or switch to Raw for markdown.">${_renderLogbookEditorText(_entry?.content || '')}</div>
+      <textarea id="logbook-content" class="logbook-content ${richActive ? 'hidden' : ''}" placeholder="Write messy notes. Example: tired, talked with [Jan](person:jan), rode through [Panningen](place:panningen), ate [breakfast](data:food).">${_e(_entry?.content || '')}</textarea>
       <div id="logbook-mention-menu" class="logbook-mention-menu hidden"></div>
-    </section>
-    <section id="logbook-rendered-preview" class="logbook-rendered-preview ${showPreview ? '' : 'hidden'}" data-mobile-section="write">
-      <div class="logbook-subtitle">Links</div>
-      <div id="logbook-content-preview" class="logbook-rendered-text">${_renderLogbookText(_entry?.content || '')}</div>
     </section>
     <section class="logbook-mood-section" data-mobile-section="mood">
       <h5>Mood</h5>
@@ -589,7 +752,7 @@ function _datapointsHtml() {
 function _peopleHtml() {
   const todayPeople = _entry?.people || [];
   const today = todayPeople.length
-    ? todayPeople.map(p => `<span class="logbook-person-chip">@${_e(p.display_name)}</span>`).join('')
+    ? todayPeople.map(p => `<span class="logbook-person-chip">${_logbookIcon('person', 12)}${_e(p.display_name)}</span>`).join('')
     : '<div class="logbook-empty">No people mentioned today.</div>';
   const suggestions = (_aiPreview?.people_suggestions || []).map((p, index) => `
     <div class="logbook-suggestion-row">
@@ -624,7 +787,7 @@ function _peopleRowsHtml() {
     return `
       <div class="logbook-directory-row${active}">
         <button type="button" class="logbook-directory-main" data-filter-person="${_e(p.id)}">
-          <strong>@${_e(p.display_name)}</strong>
+          <strong>${_logbookIcon('person', 12)}${_e(p.display_name)}</strong>
           <span>${_e(meta)}</span>
         </button>
         <button type="button" class="logbook-icon-btn" data-insert-person="${_e(p.display_name)}" aria-label="Insert">+</button>
@@ -636,7 +799,7 @@ function _peopleRowsHtml() {
 function _locationsHtml() {
   const todayLocations = _entry?.locations || [];
   const today = todayLocations.length
-    ? todayLocations.map(l => `<span class="logbook-person-chip">#${_e(l.display_name)}</span>`).join('')
+    ? todayLocations.map(l => `<span class="logbook-person-chip">${_logbookIcon('location', 12)}${_e(l.display_name)}</span>`).join('')
     : '<div class="logbook-empty">No places mentioned today.</div>';
   const suggestions = (_aiPreview?.location_suggestions || []).map((loc, index) => `
     <div class="logbook-suggestion-row">
@@ -675,7 +838,7 @@ function _locationRowsHtml() {
     return `
       <div class="logbook-directory-row${active}">
         <button type="button" class="logbook-directory-main" data-filter-location="${_e(loc.id)}">
-          <strong>#${_e(loc.display_name)}</strong>
+          <strong>${_logbookIcon('location', 12)}${_e(loc.display_name)}</strong>
           <span>${_e(meta)}</span>
         </button>
         <button type="button" class="logbook-icon-btn" data-insert-location="${_e(loc.display_name)}" aria-label="Insert">+</button>
@@ -707,6 +870,7 @@ function _visiblePeople() {
 function _visibleLocations() {
   const term = _locationSearch.trim().toLowerCase();
   const list = _locations.filter(loc => {
+    if (loc.hidden) return false;
     if (!term) return true;
     const names = [loc.display_name, ...(loc.aliases || [])].map(x => String(x || '').toLowerCase());
     return names.some(name => name.includes(term));
@@ -832,8 +996,29 @@ function _bindEvents() {
   document.getElementById('logbook-date-input')?.addEventListener('change', e => _loadDate(e.target.value).catch(_showError));
   document.getElementById('logbook-manual-save')?.addEventListener('click', () => _saveNow().catch(_showError));
 
+  document.querySelectorAll('[data-logbook-editor-mode]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      _syncEntryFromEditor();
+      _editorMode = btn.dataset.logbookEditorMode === 'raw' ? 'raw' : 'rich';
+      _hideMentionMenu();
+      _render();
+      const next = document.getElementById(_editorMode === 'raw' ? 'logbook-content' : 'logbook-rich-content');
+      next?.focus();
+    });
+  });
+
+  document.querySelectorAll('[data-logbook-link-selection]').forEach(btn => {
+    btn.addEventListener('mousedown', event => event.preventDefault());
+    btn.addEventListener('click', () => _linkSelectedText(btn.dataset.logbookLinkSelection || 'person'));
+  });
+  document.querySelectorAll('[data-logbook-unlink-selection]').forEach(btn => {
+    btn.addEventListener('mousedown', event => event.preventDefault());
+    btn.addEventListener('click', _unlinkSelectedText);
+  });
+
   document.querySelectorAll('[data-logbook-tab]').forEach(btn => {
     btn.addEventListener('click', () => {
+      _syncEntryFromEditor();
       _activeTab = btn.dataset.logbookTab || 'write';
       _render();
     });
@@ -856,20 +1041,33 @@ function _bindEvents() {
   const content = document.getElementById('logbook-content');
   content?.addEventListener('input', () => {
     _entry.content = content.value;
+    _refreshEntityPanelsFromContent();
     _markDirty();
-    document.getElementById('logbook-rendered-preview')?.classList.toggle('hidden', !_hasLogbookLinks(content.value));
-    const preview = document.getElementById('logbook-content-preview');
-    if (preview) {
-      preview.innerHTML = _renderLogbookText(content.value);
-      _bindEntityLinkEvents(preview);
-    }
     _renderMentionMenu();
+  });
+  content?.addEventListener('blur', () => {
+    _entry.content = content.value;
+    setTimeout(_hideMentionMenu, 180);
   });
   content?.addEventListener('keydown', e => {
     if (e.key === 'Escape') _hideMentionMenu();
   });
   content?.addEventListener('click', _renderMentionMenu);
-  content?.addEventListener('blur', () => setTimeout(_hideMentionMenu, 180));
+
+  const rich = document.getElementById('logbook-rich-content');
+  rich?.addEventListener('input', () => {
+    _syncEntryFromEditor();
+    _refreshEntityPanelsFromContent();
+    _markDirty();
+  });
+  rich?.addEventListener('keydown', e => {
+    if (e.key === 'Escape') rich.blur();
+  });
+  rich?.addEventListener('blur', () => {
+    _syncEntryFromEditor();
+    _refreshEntityPanelsFromContent();
+    _refreshEditorContent();
+  });
 
   document.querySelectorAll('[data-mood]').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -1092,11 +1290,23 @@ function _bindEntityLinkEvents(root = document) {
       event.stopPropagation();
       await _openPerson(link.dataset.openPerson);
     });
+    link.addEventListener('keydown', async event => {
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      event.preventDefault();
+      event.stopPropagation();
+      await _openPerson(link.dataset.openPerson);
+    });
   });
   root.querySelectorAll('[data-open-location]').forEach(link => {
     if (link.dataset.boundLocationLink === '1') return;
     link.dataset.boundLocationLink = '1';
     link.addEventListener('click', async event => {
+      event.preventDefault();
+      event.stopPropagation();
+      await _openLocation(link.dataset.openLocation);
+    });
+    link.addEventListener('keydown', async event => {
+      if (event.key !== 'Enter' && event.key !== ' ') return;
       event.preventDefault();
       event.stopPropagation();
       await _openLocation(link.dataset.openLocation);
@@ -1239,6 +1449,7 @@ function _addDatapoint(key = '', label = '') {
 }
 
 function _mentionContext() {
+  if (_editorMode !== 'raw') return null;
   const ta = document.getElementById('logbook-content');
   if (!ta) return null;
   const pos = ta.selectionStart ?? 0;
@@ -1254,6 +1465,7 @@ function _mentionContext() {
 }
 
 function _locationContext() {
+  if (_editorMode !== 'raw') return null;
   const ta = document.getElementById('logbook-content');
   if (!ta) return null;
   const pos = ta.selectionStart ?? 0;
@@ -1292,8 +1504,8 @@ function _renderMentionMenu() {
   }
   menu.classList.remove('hidden');
   menu.innerHTML = ctx
-    ? matches.map(p => `<button type="button" data-mention-person="${_e(p.display_name)}">@${_e(p.display_name)}</button>`).join('')
-    : matches.map(loc => `<button type="button" data-mention-location="${_e(loc.display_name)}">#${_e(loc.display_name)}</button>`).join('');
+    ? matches.map(p => `<button type="button" data-mention-person="${_e(p.display_name)}">${_logbookIcon('person', 12)}<span>${_e(p.display_name)}</span></button>`).join('')
+    : matches.map(loc => `<button type="button" data-mention-location="${_e(loc.display_name)}">${_logbookIcon('location', 12)}<span>${_e(loc.display_name)}</span></button>`).join('');
   menu.querySelectorAll('[data-mention-person], [data-mention-location]').forEach(btn => {
     btn.addEventListener('mousedown', e => {
       e.preventDefault();
@@ -1309,11 +1521,230 @@ function _hideMentionMenu() {
 }
 
 function _mentionText(name) {
-  return /\s/.test(name) ? `@[${name}]` : `@${name}`;
+  const person = _personForLink('', name);
+  const target = `person:${_slugName(person?.canonical_name || person?.display_name || name)}`;
+  return `[${name}](${target})`;
 }
 
 function _locationText(name) {
-  return /\s/.test(name) ? `#[${name}]` : `#${name}`;
+  const location = _locationForLink('', name);
+  const target = `place:${_slugName(location?.canonical_name || location?.display_name || name)}`;
+  return `[${name}](${target})`;
+}
+
+function _selectionLinkParts(text) {
+  const value = String(text || '');
+  const leading = value.match(/^\s*/)?.[0] || '';
+  const trailing = value.match(/\s*$/)?.[0] || '';
+  const label = value
+    .slice(leading.length, value.length - trailing.length)
+    .replace(/[\[\]\r\n]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 160);
+  return label ? { leading, label, trailing } : null;
+}
+
+function _selectionLinkTarget(kind, label) {
+  if (kind === 'food') return 'data:food';
+  if (kind === 'location') {
+    const location = _locationForLink('', label);
+    return `place:${_slugName(location?.canonical_name || location?.display_name || label)}`;
+  }
+  const person = _personForLink('', label);
+  return `person:${_slugName(person?.canonical_name || person?.display_name || label)}`;
+}
+
+function _replaceRawSelectionWithLink(kind) {
+  const ta = document.getElementById('logbook-content');
+  if (!ta || ta.selectionStart === ta.selectionEnd) return false;
+  const start = ta.selectionStart ?? 0;
+  const end = ta.selectionEnd ?? start;
+  const parts = _selectionLinkParts(ta.value.slice(start, end));
+  if (!parts) return false;
+  const target = _selectionLinkTarget(kind, parts.label);
+  const linked = `${parts.leading}[${parts.label}](${target})${parts.trailing}`;
+  ta.value = ta.value.slice(0, start) + linked + ta.value.slice(end);
+  const pos = start + linked.length;
+  ta.focus();
+  ta.setSelectionRange(pos, pos);
+  if (_entry) _entry.content = ta.value;
+  _refreshEntityPanelsFromContent();
+  _markDirty();
+  return true;
+}
+
+function _replaceRichSelectionWithLink(kind) {
+  const editor = document.getElementById('logbook-rich-content');
+  const selection = window.getSelection?.();
+  if (!editor || !selection || !selection.rangeCount) return false;
+  const range = selection.getRangeAt(0);
+  const startsInside = range.startContainer === editor || editor.contains(range.startContainer);
+  const endsInside = range.endContainer === editor || editor.contains(range.endContainer);
+  if (range.collapsed || !startsInside || !endsInside) return false;
+  const parts = _selectionLinkParts(selection.toString());
+  if (!parts) return false;
+  const target = _selectionLinkTarget(kind, parts.label);
+  const template = document.createElement('template');
+  template.innerHTML = `${_e(parts.leading)}${_editorTokenHtml(parts.label, target)}${_e(parts.trailing)}`;
+  const fragment = template.content;
+  const last = fragment.lastChild;
+  range.deleteContents();
+  range.insertNode(fragment);
+  if (last) {
+    range.setStartAfter(last);
+    range.collapse(true);
+    selection.removeAllRanges();
+    selection.addRange(range);
+  }
+  editor.focus();
+  _syncEntryFromEditor();
+  _bindEntityLinkEvents(editor);
+  _refreshEntityPanelsFromContent();
+  _markDirty();
+  return true;
+}
+
+function _replaceRawSelectionWithText(start, end, text) {
+  const ta = document.getElementById('logbook-content');
+  if (!ta) return false;
+  ta.value = ta.value.slice(0, start) + text + ta.value.slice(end);
+  const pos = start + text.length;
+  ta.focus();
+  ta.setSelectionRange(pos, pos);
+  if (_entry) _entry.content = ta.value;
+  _refreshEntityPanelsFromContent();
+  _markDirty();
+  return true;
+}
+
+function _unlinkRawSelection() {
+  const ta = document.getElementById('logbook-content');
+  if (!ta) return false;
+  const start = ta.selectionStart ?? 0;
+  const end = ta.selectionEnd ?? start;
+  const value = ta.value || '';
+  LOGBOOK_LINK_RE.lastIndex = 0;
+  for (const match of value.matchAll(LOGBOOK_LINK_RE)) {
+    const matchStart = match.index ?? 0;
+    const matchEnd = matchStart + match[0].length;
+    if (matchStart <= start && matchEnd >= end) {
+      return _replaceRawSelectionWithText(matchStart, matchEnd, match[1]);
+    }
+  }
+  if (start === end) return false;
+  const selected = value.slice(start, end);
+  LOGBOOK_LINK_RE.lastIndex = 0;
+  const unlinked = selected.replace(LOGBOOK_LINK_RE, '$1');
+  if (unlinked === selected) return false;
+  return _replaceRawSelectionWithText(start, end, unlinked);
+}
+
+function _tokenPlainText(token) {
+  const label = token?.dataset?.label || '';
+  if (label) return label;
+  return String(token?.textContent || '').replace(/^[@#]/, '');
+}
+
+function _unlinkRichSelection() {
+  const editor = document.getElementById('logbook-rich-content');
+  if (!editor) return false;
+  const selection = window.getSelection?.();
+  const active = document.activeElement;
+  const activeToken = active?.dataset?.logbookToken === '1' && editor.contains(active) ? active : null;
+  let tokens = activeToken ? [activeToken] : [];
+  if (!tokens.length && selection?.rangeCount) {
+    const range = selection.getRangeAt(0);
+    const startsInside = range.startContainer === editor || editor.contains(range.startContainer);
+    const endsInside = range.endContainer === editor || editor.contains(range.endContainer);
+    if (startsInside && endsInside) {
+      tokens = [...editor.querySelectorAll('[data-logbook-token="1"]')]
+        .filter(token => {
+          try {
+            return range.intersectsNode(token);
+          } catch (_) {
+            return false;
+          }
+        });
+    }
+  }
+  if (!tokens.length) return false;
+  let last = null;
+  tokens.forEach(token => {
+    const textNode = document.createTextNode(_tokenPlainText(token));
+    token.replaceWith(textNode);
+    last = textNode;
+  });
+  if (last && selection) {
+    const range = document.createRange();
+    range.setStartAfter(last);
+    range.collapse(true);
+    selection.removeAllRanges();
+    selection.addRange(range);
+  }
+  editor.focus();
+  _syncEntryFromEditor();
+  _refreshEntityPanelsFromContent();
+  _markDirty();
+  return true;
+}
+
+function _linkSelectedText(kind) {
+  const linked = _editorMode === 'raw'
+    ? _replaceRawSelectionWithLink(kind)
+    : _replaceRichSelectionWithLink(kind);
+  if (!linked) _setStatus('Select text first');
+}
+
+function _unlinkSelectedText() {
+  const unlinked = _editorMode === 'raw'
+    ? _unlinkRawSelection()
+    : _unlinkRichSelection();
+  if (!unlinked) _setStatus('Select a linked token first');
+}
+
+function _selectionInside(el) {
+  const selection = window.getSelection?.();
+  if (!selection || !selection.rangeCount || !el) return false;
+  const node = selection.anchorNode;
+  return Boolean(node && (node === el || el.contains(node)));
+}
+
+function _focusRichEditorEnd(editor) {
+  if (!editor) return;
+  editor.focus();
+  const range = document.createRange();
+  range.selectNodeContents(editor);
+  range.collapse(false);
+  const selection = window.getSelection?.();
+  selection?.removeAllRanges();
+  selection?.addRange(range);
+}
+
+function _insertIntoRichEditor(html) {
+  const editor = document.getElementById('logbook-rich-content');
+  if (!editor) return false;
+  if (!_selectionInside(editor)) _focusRichEditorEnd(editor);
+  const selection = window.getSelection?.();
+  if (!selection || !selection.rangeCount) return false;
+  const range = selection.getRangeAt(0);
+  range.deleteContents();
+  const template = document.createElement('template');
+  template.innerHTML = html;
+  const fragment = template.content;
+  const last = fragment.lastChild;
+  range.insertNode(fragment);
+  if (last) {
+    range.setStartAfter(last);
+    range.collapse(true);
+    selection.removeAllRanges();
+    selection.addRange(range);
+  }
+  editor.focus();
+  _syncEntryFromEditor();
+  _bindEntityLinkEvents(editor);
+  _refreshEntityPanelsFromContent();
+  return true;
 }
 
 function _replaceMention(ctx, name) {
@@ -1324,6 +1755,7 @@ function _replaceMention(ctx, name) {
   ta.focus();
   ta.setSelectionRange(pos, pos);
   _entry.content = ta.value;
+  _refreshEntityPanelsFromContent();
   _markDirty();
   _hideMentionMenu();
 }
@@ -1336,13 +1768,23 @@ function _replaceLocation(ctx, name) {
   ta.focus();
   ta.setSelectionRange(pos, pos);
   _entry.content = ta.value;
+  _refreshEntityPanelsFromContent();
   _markDirty();
   _hideMentionMenu();
 }
 
 function _insertMention(name) {
+  if (!name) return;
+  if (_editorMode !== 'raw') {
+    _syncEntryFromEditor();
+    const target = _mentionText(name).match(/\(([^)]+)\)$/)?.[1] || `person:${_slugName(name)}`;
+    const prefix = _entry?.content && !/\s$/.test(_entry.content) ? ' ' : '';
+    _insertIntoRichEditor(`${_e(prefix)}${_editorTokenHtml(name, target)} `);
+    _markDirty();
+    return;
+  }
   const ta = document.getElementById('logbook-content');
-  if (!ta || !name) return;
+  if (!ta) return;
   const insert = `${ta.value && !/\s$/.test(ta.value) ? ' ' : ''}${_mentionText(name)} `;
   const pos = ta.selectionStart ?? ta.value.length;
   ta.value = ta.value.slice(0, pos) + insert + ta.value.slice(pos);
@@ -1350,12 +1792,22 @@ function _insertMention(name) {
   ta.focus();
   ta.setSelectionRange(next, next);
   _entry.content = ta.value;
+  _refreshEntityPanelsFromContent();
   _markDirty();
 }
 
 function _insertLocation(name) {
+  if (!name) return;
+  if (_editorMode !== 'raw') {
+    _syncEntryFromEditor();
+    const target = _locationText(name).match(/\(([^)]+)\)$/)?.[1] || `place:${_slugName(name)}`;
+    const prefix = _entry?.content && !/\s$/.test(_entry.content) ? ' ' : '';
+    _insertIntoRichEditor(`${_e(prefix)}${_editorTokenHtml(name, target)} `);
+    _markDirty();
+    return;
+  }
   const ta = document.getElementById('logbook-content');
-  if (!ta || !name) return;
+  if (!ta) return;
   const insert = `${ta.value && !/\s$/.test(ta.value) ? ' ' : ''}${_locationText(name)} `;
   const pos = ta.selectionStart ?? ta.value.length;
   ta.value = ta.value.slice(0, pos) + insert + ta.value.slice(pos);
@@ -1363,6 +1815,7 @@ function _insertLocation(name) {
   ta.focus();
   ta.setSelectionRange(next, next);
   _entry.content = ta.value;
+  _refreshEntityPanelsFromContent();
   _markDirty();
 }
 
@@ -1456,6 +1909,7 @@ function _applyAIContent() {
   const ta = document.getElementById('logbook-content');
   _entry.content = _aiPreview.preview_content;
   if (ta) ta.value = _entry.content;
+  _refreshEditorContent();
   _markDirty();
   _activeTab = 'write';
   _render();

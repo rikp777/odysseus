@@ -37,7 +37,6 @@ from src.logbook.utils import (
     entry_snippet,
     json_dump,
     json_load,
-    known_entity_matches,
     normalized_title,
     pair_ids,
     parse_data_links,
@@ -113,7 +112,18 @@ def get_or_create_person(
     return person
 
 
-def find_location(db, owner: str, name: str, locations: Optional[List[LogbookLocation]] = None) -> Optional[LogbookLocation]:
+def location_is_hidden(location: Optional[LogbookLocation]) -> bool:
+    return bool(getattr(location, "hidden", False))
+
+
+def find_location(
+    db,
+    owner: str,
+    name: str,
+    locations: Optional[List[LogbookLocation]] = None,
+    *,
+    include_hidden: bool = False,
+) -> Optional[LogbookLocation]:
     canonical = canonical_name(name)
     if not canonical:
         return None
@@ -121,6 +131,8 @@ def find_location(db, owner: str, name: str, locations: Optional[List[LogbookLoc
     if candidates is None:
         candidates = db.query(LogbookLocation).filter(LogbookLocation.owner == owner).all()
     for location in candidates:
+        if location_is_hidden(location) and not include_hidden:
+            continue
         if location.canonical_name == canonical:
             return location
         for alias in aliases(location):
@@ -150,12 +162,13 @@ def get_or_create_location(
     notes: Optional[str] = None,
     *,
     update_existing: bool = False,
+    include_hidden: bool = False,
 ) -> LogbookLocation:
     name = re.sub(r"\s+", " ", (display_name or "").strip())
     canonical = canonical_name(name)
     if not canonical:
         raise HTTPException(400, "display_name is required")
-    location = find_location(db, owner, name)
+    location = find_location(db, owner, name, include_hidden=include_hidden)
     if location:
         if update_existing:
             location.display_name = name
@@ -344,7 +357,10 @@ def link_location_suggestion(
     if not canonical_name(name):
         return None
     alias_values = suggestion.get("aliases") if isinstance(suggestion.get("aliases"), list) else None
-    location = get_or_create_location(db, owner, name, alias_values)
+    existing = find_location(db, owner, name, include_hidden=True)
+    if location_is_hidden(existing):
+        return None
+    location = existing or get_or_create_location(db, owner, name, alias_values)
     exists = db.query(LogbookLocationMention.id).filter(
         LogbookLocationMention.entry_id == entry.id,
         LogbookLocationMention.location_id == location.id,
@@ -428,23 +444,6 @@ def rebuild_mentions(db, owner: str, entry: LogbookEntry) -> List[LogbookPerson]
         ))
         mentioned_people.append(person)
         blocked_ranges.append((parsed["start_offset"], parsed["end_offset"]))
-    for parsed in known_entity_matches(entry.content or "", people_cache, blocked_ranges):
-        person = parsed["row"]
-        key = (person.id, parsed["start_offset"], parsed["end_offset"])
-        if key in seen_mentions:
-            continue
-        seen_mentions.add(key)
-        db.add(LogbookMention(
-            id=str(uuid.uuid4()),
-            entry_id=entry.id,
-            person_id=person.id,
-            surface_text=parsed["surface_text"],
-            start_offset=parsed["start_offset"],
-            end_offset=parsed["end_offset"],
-            source="known",
-            confidence=80,
-        ))
-        mentioned_people.append(person)
     sync_co_mentioned_connections(db, owner, entry, mentioned_people)
     return mentioned_people
 
@@ -457,9 +456,12 @@ def rebuild_location_mentions(db, owner: str, entry: LogbookEntry) -> List[Logbo
     seen_mentions = set()
     blocked_ranges: List[tuple[int, int]] = []
     for parsed in parse_location_links(entry.content or ""):
-        location = find_location(db, owner, parsed["target_name"], locations_cache)
+        location = find_location(db, owner, parsed["target_name"], locations_cache, include_hidden=True)
         if not location:
-            location = find_location(db, owner, parsed["name"], locations_cache)
+            location = find_location(db, owner, parsed["name"], locations_cache, include_hidden=True)
+        if location_is_hidden(location):
+            blocked_ranges.append((parsed["start_offset"], parsed["end_offset"]))
+            continue
         if not location:
             aliases_ = [parsed["name"]] if canonical_name(parsed["name"]) != parsed["target_name"] else None
             location = get_or_create_location(
@@ -490,7 +492,10 @@ def rebuild_location_mentions(db, owner: str, entry: LogbookEntry) -> List[Logbo
     for parsed in parse_locations(entry.content or ""):
         if any(parsed["start_offset"] < end and parsed["end_offset"] > start for start, end in blocked_ranges):
             continue
-        location = find_location(db, owner, parsed["name"], locations_cache)
+        location = find_location(db, owner, parsed["name"], locations_cache, include_hidden=True)
+        if location_is_hidden(location):
+            blocked_ranges.append((parsed["start_offset"], parsed["end_offset"]))
+            continue
         if not location:
             location = get_or_create_location(db, owner, parsed["name"])
             locations_cache.append(location)
@@ -510,23 +515,6 @@ def rebuild_location_mentions(db, owner: str, entry: LogbookEntry) -> List[Logbo
         ))
         mentioned_locations.append(location)
         blocked_ranges.append((parsed["start_offset"], parsed["end_offset"]))
-    for parsed in known_entity_matches(entry.content or "", locations_cache, blocked_ranges):
-        location = parsed["row"]
-        key = (location.id, parsed["start_offset"], parsed["end_offset"])
-        if key in seen_mentions:
-            continue
-        seen_mentions.add(key)
-        db.add(LogbookLocationMention(
-            id=str(uuid.uuid4()),
-            entry_id=entry.id,
-            location_id=location.id,
-            surface_text=parsed["surface_text"],
-            start_offset=parsed["start_offset"],
-            end_offset=parsed["end_offset"],
-            source="known",
-            confidence=80,
-        ))
-        mentioned_locations.append(location)
     return mentioned_locations
 
 
@@ -584,12 +572,15 @@ def load_person_or_404(db, owner: str, person_id: str) -> LogbookPerson:
     return person
 
 
-def location_query(db, owner: str):
-    return db.query(LogbookLocation).filter(LogbookLocation.owner == owner)
+def location_query(db, owner: str, *, include_hidden: bool = False):
+    query = db.query(LogbookLocation).filter(LogbookLocation.owner == owner)
+    if not include_hidden:
+        query = query.filter((LogbookLocation.hidden == False) | (LogbookLocation.hidden.is_(None)))
+    return query
 
 
-def load_location_or_404(db, owner: str, location_id: str) -> LogbookLocation:
-    location = location_query(db, owner).filter(LogbookLocation.id == location_id).first()
+def load_location_or_404(db, owner: str, location_id: str, *, include_hidden: bool = True) -> LogbookLocation:
+    location = location_query(db, owner, include_hidden=include_hidden).filter(LogbookLocation.id == location_id).first()
     if not location:
         raise HTTPException(404, "Location not found")
     return location

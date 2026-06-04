@@ -77,8 +77,11 @@ export function listContactCandidates(q = '') {
   return jsonFetch(`${API_BASE}/api/logbook/contacts/candidates?${params.toString()}`);
 }
 
-export function listLocations() {
-  return jsonFetch(`${API_BASE}/api/logbook/locations`);
+export function listLocations(options = {}) {
+  const params = new URLSearchParams();
+  if (options.includeHidden) params.set('include_hidden', 'true');
+  const query = params.toString();
+  return jsonFetch(`${API_BASE}/api/logbook/locations${query ? `?${query}` : ''}`);
 }
 
 export function getLocation(locationId, params = new URLSearchParams()) {
@@ -90,6 +93,24 @@ export function updateLocation(locationId, payload) {
   return jsonFetch(`${API_BASE}/api/logbook/locations/${encodeURIComponent(locationId)}`, {
     method: 'PUT',
     body: JSON.stringify(payload),
+  });
+}
+
+export function hideLocation(locationId) {
+  return jsonFetch(`${API_BASE}/api/logbook/locations/${encodeURIComponent(locationId)}/hide`, {
+    method: 'POST',
+  });
+}
+
+export function unhideLocation(locationId) {
+  return jsonFetch(`${API_BASE}/api/logbook/locations/${encodeURIComponent(locationId)}/unhide`, {
+    method: 'POST',
+  });
+}
+
+export function deleteLocation(locationId) {
+  return jsonFetch(`${API_BASE}/api/logbook/locations/${encodeURIComponent(locationId)}`, {
+    method: 'DELETE',
   });
 }
 

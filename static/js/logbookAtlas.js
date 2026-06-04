@@ -10,16 +10,20 @@ import { pointsWithCoordinates, pointsWithoutCoordinates, renderCoordinateMap } 
 import {
   createLocation,
   createPerson,
+  deleteLocation,
   getAtlas,
   getPerson,
   getLocation,
+  hideLocation,
   listContactCandidates,
   linkPersonContact,
   unlinkPersonContact,
+  unhideLocation,
   updateConnection,
   updateLocation,
   updatePerson,
 } from './logbook/api.js';
+import { logbookIcon as _logbookIcon } from './logbook/icons.js';
 import { escapeHtml as _e } from './logbook/utils.js';
 
 const MODAL_ID = 'logbook-atlas-modal';
@@ -276,7 +280,7 @@ function _peopleTabHtml() {
   const reconnect = _reconnectPeople().map(person => _reconnectCardHtml(person, true)).join('');
   const rows = _visiblePeople().map(person => `
     <button type="button" class="logbook-atlas-row ${person.id === _selectedPersonId ? 'active' : ''} ${_reconnect(person) ? 'needs-reconnect' : ''}" data-person-id="${_e(person.id)}">
-      <strong>@${_e(person.display_name || 'Person')}</strong>
+      <strong>${_logbookIcon('person', 12)}${_e(person.display_name || 'Person')}</strong>
       <span>${_e(_reconnect(person)?.message || person.relationship_label || _meta(person))}</span>
     </button>
   `).join('') || '<div class="logbook-empty">No people yet.</div>';
@@ -335,9 +339,9 @@ function _personDetailHtml() {
 function _locationsTabHtml() {
   const types = _locationTypes().map(type => `<option value="${_e(type)}" ${_locationTypeFilter === type ? 'selected' : ''}>${_e(type)}</option>`).join('');
   const rows = _visibleLocations().map(location => `
-    <button type="button" class="logbook-atlas-row ${location.id === _selectedLocationId ? 'active' : ''}" data-location-id="${_e(location.id)}">
-      <strong>#${_e(location.display_name || 'Place')}</strong>
-      <span>${_e(location.address || location.location_type || _meta(location))}</span>
+    <button type="button" class="logbook-atlas-row ${location.id === _selectedLocationId ? 'active' : ''} ${location.hidden ? 'is-hidden' : ''}" data-location-id="${_e(location.id)}">
+      <strong>${_logbookIcon('location', 12)}${_e(location.display_name || 'Place')}${location.hidden ? '<em>Hidden</em>' : ''}</strong>
+      <span>${_e(location.hidden ? 'Hidden from linking' : location.address || location.location_type || _meta(location))}</span>
     </button>
   `).join('') || '<div class="logbook-empty">No places yet.</div>';
   return `
@@ -359,6 +363,14 @@ function _locationDetailHtml() {
     : _locationDetail?.location || (_atlas.locations || []).find(l => l.id === _selectedLocationId);
   if (!detail) return '<div class="logbook-empty">Select a place.</div>';
   const aliases = (detail.aliases || []).join(', ');
+  const mentionCount = Number(detail.mention_count || 0);
+  const actionButton = _creatingLocation
+    ? ''
+    : detail.hidden
+      ? `<button type="button" class="cal-btn" id="atlas-unhide-location">Unhide</button>${mentionCount === 0 ? '<button type="button" class="cal-btn" id="atlas-delete-location">Delete</button>' : ''}`
+      : mentionCount === 0
+        ? '<button type="button" class="cal-btn" id="atlas-delete-location">Delete</button>'
+        : '<button type="button" class="cal-btn" id="atlas-hide-location">Hide from linking</button>';
   const entries = (_locationDetail?.entries || []).map(entry => `
     <button type="button" class="logbook-atlas-entry" data-entry-date="${_e(entry.entry_date)}">
       <strong>${_e(entry.entry_date)}</strong>
@@ -367,7 +379,8 @@ function _locationDetailHtml() {
   `).join('') || '<div class="logbook-empty">No linked entries.</div>';
   return `
     <div class="logbook-atlas-form">
-      <div class="logbook-section-head"><h5>${_creatingLocation ? 'New place' : 'Place'}</h5><button type="button" class="cal-btn cal-btn-primary" id="atlas-save-location">Save</button></div>
+      <div class="logbook-section-head"><h5>${_creatingLocation ? 'New place' : 'Place'}${detail.hidden ? ' <span class="logbook-muted-badge">Hidden</span>' : ''}</h5><div class="logbook-atlas-actions">${actionButton}<button type="button" class="cal-btn cal-btn-primary" id="atlas-save-location">Save</button></div></div>
+      ${detail.hidden ? '<div class="logbook-ai-disabled">This place is hidden from linking and autocomplete. Existing entry history stays intact.</div>' : ''}
       <label>Name<input id="atlas-location-name" class="memory-search-input" value="${_e(detail.display_name || '')}"></label>
       <label>Aliases<input id="atlas-location-aliases" class="memory-search-input" value="${_e(aliases)}" placeholder="office, gym"></label>
       <label>Type<input id="atlas-location-kind" class="memory-search-input" value="${_e(detail.location_type || '')}" placeholder="home, work, gym"></label>
@@ -385,7 +398,7 @@ function _locationDetailHtml() {
 }
 
 function _mapTabHtml() {
-  const locations = _atlas.locations || [];
+  const locations = (_atlas.locations || []).filter(location => !location.hidden);
   const points = pointsWithCoordinates(locations);
   const noCoords = pointsWithoutCoordinates(locations);
   const map = renderCoordinateMap(locations, {
@@ -398,7 +411,7 @@ function _mapTabHtml() {
       <div class="logbook-section-head"><h5>Map</h5><span>${points.length} pinned</span></div>
       ${map}
       <div class="logbook-subtitle">Needs coordinates</div>
-      <div class="logbook-atlas-missing">${noCoords.map(location => `<button type="button" class="cal-btn" data-map-location="${_e(location.id)}">#${_e(location.display_name)}</button>`).join('') || '<div class="logbook-empty">All places with coordinates are pinned.</div>'}</div>
+      <div class="logbook-atlas-missing">${noCoords.map(location => `<button type="button" class="cal-btn" data-map-location="${_e(location.id)}">${_logbookIcon('location', 12)}${_e(location.display_name)}</button>`).join('') || '<div class="logbook-empty">All places with coordinates are pinned.</div>'}</div>
     </section>
   `;
 }
@@ -488,6 +501,9 @@ function _bindLocations() {
   });
   document.getElementById('atlas-new-location')?.addEventListener('click', _newLocation);
   document.getElementById('atlas-save-location')?.addEventListener('click', () => _saveLocation().catch(_setError));
+  document.getElementById('atlas-delete-location')?.addEventListener('click', () => _deleteSelectedLocation().catch(_setError));
+  document.getElementById('atlas-hide-location')?.addEventListener('click', () => _hideSelectedLocation().catch(_setError));
+  document.getElementById('atlas-unhide-location')?.addEventListener('click', () => _unhideSelectedLocation().catch(_setError));
 }
 
 function _bindMap() {
@@ -565,6 +581,60 @@ async function _saveLocation() {
     await _loadAtlas();
     _locationDetail = await getLocation(result.location.id, new URLSearchParams({ limit: '30' }));
     uiModule?.showToast?.(result.duplicate ? 'Opened existing place' : 'Saved');
+  } finally {
+    _busy = false;
+    _render();
+  }
+}
+
+async function _deleteSelectedLocation() {
+  if (!_selectedLocationId) return;
+  const detail = _locationDetail?.location || (_atlas.locations || []).find(l => l.id === _selectedLocationId);
+  if (Number(detail?.mention_count || 0) > 0) throw new Error('Place has linked entries; hide it instead');
+  if (!window.confirm('Delete this unused place?')) return;
+  _busy = true;
+  _render();
+  try {
+    await deleteLocation(_selectedLocationId);
+    _selectedLocationId = '';
+    _locationDetail = null;
+    await _loadAtlas();
+    if (_atlas.locations?.length) {
+      _selectedLocationId = _atlas.locations[0].id;
+      _locationDetail = await getLocation(_selectedLocationId, new URLSearchParams({ limit: '30' }));
+    }
+    uiModule?.showToast?.('Deleted place');
+  } finally {
+    _busy = false;
+    _render();
+  }
+}
+
+async function _hideSelectedLocation() {
+  if (!_selectedLocationId) return;
+  if (!window.confirm('Hide this place from linking and autocomplete?')) return;
+  _busy = true;
+  _render();
+  try {
+    await hideLocation(_selectedLocationId);
+    await _loadAtlas();
+    _locationDetail = await getLocation(_selectedLocationId, new URLSearchParams({ limit: '30' }));
+    uiModule?.showToast?.('Hidden from linking');
+  } finally {
+    _busy = false;
+    _render();
+  }
+}
+
+async function _unhideSelectedLocation() {
+  if (!_selectedLocationId) return;
+  _busy = true;
+  _render();
+  try {
+    await unhideLocation(_selectedLocationId);
+    await _loadAtlas();
+    _locationDetail = await getLocation(_selectedLocationId, new URLSearchParams({ limit: '30' }));
+    uiModule?.showToast?.('Visible for linking');
   } finally {
     _busy = false;
     _render();

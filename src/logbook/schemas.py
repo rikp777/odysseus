@@ -98,6 +98,7 @@ class LogbookLocationUpdate(BaseModel):
     display_name: Optional[str] = None
     aliases: Optional[List[str]] = None
     notes: Optional[str] = None
+    hidden: Optional[bool] = None
     address: Optional[str] = None
     latitude: Optional[float] = None
     longitude: Optional[float] = None

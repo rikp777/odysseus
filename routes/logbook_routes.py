@@ -99,12 +99,12 @@ def setup_logbook_routes() -> APIRouter:
     router = APIRouter(prefix="/api/logbook", tags=["logbook"])
 
     @router.get("/atlas")
-    def atlas(request: Request, status: Optional[str] = None):
+    def atlas(request: Request, status: Optional[str] = None, include_hidden: bool = True):
         owner = _owner(request)
         db = SessionLocal()
         try:
             people = logbook_repo.person_query(db, owner).order_by(LogbookPerson.display_name.asc()).all()
-            locations = logbook_repo.location_query(db, owner).order_by(LogbookLocation.display_name.asc()).all()
+            locations = logbook_repo.location_query(db, owner, include_hidden=include_hidden).order_by(LogbookLocation.display_name.asc()).all()
             person_stats = logbook_repo.person_stats(db, owner)
             location_stats = logbook_repo.location_stats(db, owner)
             conn_query = db.query(LogbookPersonConnection).options(
@@ -130,11 +130,11 @@ def setup_logbook_routes() -> APIRouter:
             db.close()
 
     @router.get("/map")
-    def map_locations(request: Request, with_coordinates: bool = False):
+    def map_locations(request: Request, with_coordinates: bool = False, include_hidden: bool = False):
         owner = _owner(request)
         db = SessionLocal()
         try:
-            query = logbook_repo.location_query(db, owner)
+            query = logbook_repo.location_query(db, owner, include_hidden=include_hidden)
             if with_coordinates:
                 query = query.filter(LogbookLocation.latitude.isnot(None), LogbookLocation.longitude.isnot(None))
             locations = query.order_by(LogbookLocation.display_name.asc()).all()
@@ -536,11 +536,11 @@ def setup_logbook_routes() -> APIRouter:
             db.close()
 
     @router.get("/locations")
-    def list_locations(request: Request, q: Optional[str] = None):
+    def list_locations(request: Request, q: Optional[str] = None, include_hidden: bool = False):
         owner = _owner(request)
         db = SessionLocal()
         try:
-            locations = logbook_repo.location_query(db, owner).all()
+            locations = logbook_repo.location_query(db, owner, include_hidden=include_hidden).all()
             stats = logbook_repo.location_stats(db, owner)
             term = logbook_utils.canonical_name(q or "")
             if term:
@@ -565,8 +565,10 @@ def setup_logbook_routes() -> APIRouter:
         owner = _owner(request)
         db = SessionLocal()
         try:
-            existing = logbook_repo.find_location(db, owner, body.display_name)
-            location = logbook_repo.get_or_create_location(db, owner, body.display_name, body.aliases, body.notes, update_existing=not existing)
+            existing = logbook_repo.find_location(db, owner, body.display_name, include_hidden=True)
+            if existing:
+                return {"ok": True, "duplicate": True, "location": logbook_serializers.location_to_dict(existing)}
+            location = logbook_repo.get_or_create_location(db, owner, body.display_name, body.aliases, body.notes)
             if body.notes is not None:
                 location.notes = body.notes
             if body.address is not None:
@@ -580,7 +582,7 @@ def setup_logbook_routes() -> APIRouter:
             if body.llm_context is not None:
                 location.llm_context = _clean_optional(body.llm_context)
             db.commit()
-            return {"ok": True, "duplicate": bool(existing), "location": logbook_serializers.location_to_dict(location)}
+            return {"ok": True, "duplicate": False, "location": logbook_serializers.location_to_dict(location)}
         finally:
             db.close()
 
@@ -623,7 +625,7 @@ def setup_logbook_routes() -> APIRouter:
                 canonical = logbook_utils.canonical_name(body.display_name)
                 if not canonical:
                     raise HTTPException(400, "display_name is required")
-                duplicate = logbook_repo.location_query(db, owner).filter(
+                duplicate = logbook_repo.location_query(db, owner, include_hidden=True).filter(
                     LogbookLocation.canonical_name == canonical,
                     LogbookLocation.id != location.id,
                 ).first()
@@ -646,8 +648,51 @@ def setup_logbook_routes() -> APIRouter:
                 location.location_type = _clean_optional(body.location_type)
             if "llm_context" in fields_set:
                 location.llm_context = _clean_optional(body.llm_context)
+            if "hidden" in fields_set:
+                location.hidden = bool(body.hidden)
             db.commit()
             return {"ok": True, "location": logbook_serializers.location_to_dict(location)}
+        finally:
+            db.close()
+
+    @router.post("/locations/{location_id}/hide")
+    def hide_location(request: Request, location_id: str):
+        owner = _owner(request)
+        db = SessionLocal()
+        try:
+            location = logbook_repo.load_location_or_404(db, owner, location_id)
+            location.hidden = True
+            db.commit()
+            return {"ok": True, "location": logbook_serializers.location_to_dict(location)}
+        finally:
+            db.close()
+
+    @router.post("/locations/{location_id}/unhide")
+    def unhide_location(request: Request, location_id: str):
+        owner = _owner(request)
+        db = SessionLocal()
+        try:
+            location = logbook_repo.load_location_or_404(db, owner, location_id)
+            location.hidden = False
+            db.commit()
+            return {"ok": True, "location": logbook_serializers.location_to_dict(location)}
+        finally:
+            db.close()
+
+    @router.delete("/locations/{location_id}")
+    def delete_location(request: Request, location_id: str):
+        owner = _owner(request)
+        db = SessionLocal()
+        try:
+            location = logbook_repo.load_location_or_404(db, owner, location_id)
+            mention_count = db.query(LogbookLocationMention.id).filter(
+                LogbookLocationMention.location_id == location.id,
+            ).count()
+            if mention_count:
+                raise HTTPException(409, "Place has linked entries; hide it instead")
+            db.delete(location)
+            db.commit()
+            return {"ok": True, "deleted": True, "id": location_id}
         finally:
             db.close()
 

@@ -37644,6 +37644,79 @@ body.theme-frosted .modal {
   gap: 10px;
 }
 
+.logbook-editor-toggle {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--fg) 4%, transparent);
+}
+
+.logbook-editor-toggle button {
+  min-height: 28px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.logbook-editor-toggle button.active {
+  background: var(--accent, var(--red));
+  color: var(--accent-contrast, #fff);
+}
+
+.logbook-link-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.logbook-link-toolbar button {
+  min-height: 28px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 9px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--fg) 5%, transparent);
+  color: var(--fg);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.logbook-link-toolbar button:hover,
+.logbook-link-toolbar button:focus {
+  border-color: var(--accent, var(--red));
+  background: color-mix(in srgb, var(--accent, var(--red)) 12%, transparent);
+  outline: none;
+}
+
+.logbook-link-toolbar [data-logbook-unlink-selection] {
+  color: color-mix(in srgb, var(--fg) 72%, transparent);
+}
+
+.logbook-link-toolbar button span {
+  font-weight: 700;
+}
+
+.logbook-link-toolbar svg,
+.logbook-editor-token svg,
+.logbook-link-label svg,
+.logbook-card-icon svg,
+.logbook-mention-menu svg,
+.logbook-person-chip svg,
+.logbook-directory-main strong svg {
+  flex: 0 0 auto;
+}
+
 .logbook-date-title {
   font-size: 18px;
   font-weight: 650;
@@ -37670,11 +37743,86 @@ body.theme-frosted .modal {
   box-sizing: border-box;
 }
 
+.logbook-rich-content {
+  width: 100%;
+  min-height: 300px;
+  padding: 14px;
+  line-height: 1.58;
+  font-size: 15px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--fg);
+  box-sizing: border-box;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  overflow-y: auto;
+}
+
+.logbook-rich-content:empty::before {
+  content: attr(data-placeholder);
+  color: color-mix(in srgb, var(--fg) 45%, transparent);
+  pointer-events: none;
+}
+
 .logbook-content:focus,
+.logbook-rich-content:focus,
 .logbook-datapoint input:focus,
 .logbook-select:focus {
   outline: none;
   border-color: var(--accent, var(--red));
+}
+
+.logbook-editor-token {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  min-height: 1.45em;
+  margin: 0 1px;
+  padding: 0 6px;
+  border-radius: 999px;
+  font-size: 0.94em;
+  font-weight: 650;
+  line-height: 1.45;
+  vertical-align: baseline;
+  cursor: default;
+  user-select: all;
+}
+
+.logbook-editor-token-icon {
+  display: inline-flex;
+  align-items: center;
+}
+
+.logbook-editor-token[data-open-person],
+.logbook-editor-token[data-open-location] {
+  cursor: pointer;
+}
+
+.logbook-editor-token[data-open-person]:focus,
+.logbook-editor-token[data-open-location]:focus {
+  outline: 1px solid currentColor;
+  outline-offset: 2px;
+}
+
+.logbook-editor-token-person {
+  background: color-mix(in srgb, #2f80ed 17%, transparent);
+  color: color-mix(in srgb, #2f80ed 72%, var(--fg));
+  border: 1px solid color-mix(in srgb, #2f80ed 36%, transparent);
+}
+
+.logbook-editor-token-place {
+  background: color-mix(in srgb, #00a878 17%, transparent);
+  color: color-mix(in srgb, #00a878 72%, var(--fg));
+  border: 1px solid color-mix(in srgb, #00a878 36%, transparent);
+}
+
+.logbook-editor-token-data {
+  background: color-mix(in srgb, #b35cff 15%, transparent);
+  color: color-mix(in srgb, #b35cff 70%, var(--fg));
+  border: 1px solid color-mix(in srgb, #b35cff 34%, transparent);
 }
 
 .logbook-mention-menu {
@@ -37695,7 +37843,9 @@ body.theme-frosted .modal {
 }
 
 .logbook-mention-menu button {
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: 6px;
   width: 100%;
   min-height: 30px;
   padding: 0 8px;
@@ -37732,6 +37882,7 @@ body.theme-frosted .modal {
   min-height: 30px;
   display: inline-flex;
   align-items: center;
+  gap: 5px;
   justify-content: center;
   border: 1px solid var(--border);
   border-radius: 999px;
@@ -37868,11 +38019,6 @@ body.theme-frosted .modal {
   line-height: 1.45;
 }
 
-.logbook-rendered-preview {
-  display: grid;
-  gap: 4px;
-}
-
 .logbook-rendered-text {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -37887,6 +38033,13 @@ body.theme-frosted .modal {
   color: var(--accent, var(--red));
   border-bottom: 1px dotted currentColor;
   cursor: pointer;
+}
+
+.logbook-link-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  vertical-align: -2px;
 }
 
 .logbook-person-link:focus {
@@ -37912,7 +38065,9 @@ body.theme-frosted .modal {
 }
 
 .logbook-person-link:hover .logbook-person-card,
-.logbook-person-link:focus .logbook-person-card {
+.logbook-person-link:focus .logbook-person-card,
+.logbook-editor-token:hover .logbook-person-card,
+.logbook-editor-token:focus .logbook-person-card {
   display: grid;
   gap: 7px;
 }
@@ -38020,6 +38175,12 @@ body.theme-frosted .modal {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.logbook-directory-main strong {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
 }
 
 .logbook-directory-main span {
@@ -38311,12 +38472,40 @@ body.theme-frosted .modal {
   border-color: color-mix(in srgb, var(--accent, var(--red)) 36%, var(--border));
 }
 
+.logbook-atlas-row.is-hidden {
+  border-style: dashed;
+  opacity: 0.72;
+}
+
 .logbook-atlas-row strong,
 .logbook-atlas-row span {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.logbook-atlas-row strong {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.logbook-atlas-row strong svg,
+.logbook-atlas-missing .cal-btn svg {
+  flex: 0 0 auto;
+}
+
+.logbook-atlas-row strong em,
+.logbook-muted-badge {
+  margin-left: 3px;
+  padding: 1px 5px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-style: normal;
+  font-size: 10px;
+  font-weight: 650;
+  opacity: 0.72;
 }
 
 .logbook-atlas-row span {
@@ -38367,6 +38556,13 @@ body.theme-frosted .modal {
 .logbook-atlas-form {
   display: grid;
   gap: 10px;
+}
+
+.logbook-atlas-actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
 }
 
 .logbook-atlas-form label {
@@ -38534,6 +38730,12 @@ body.theme-frosted .modal {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
+}
+
+.logbook-atlas-missing .cal-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
 }
 
 @media (max-width: 900px) {

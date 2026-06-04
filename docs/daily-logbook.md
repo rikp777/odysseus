@@ -20,10 +20,14 @@ Datapoints are flexible structured rows for things like sleep, workout, pain, fo
 
 ## People And Places
 
-Daily Logbook extracts context from explicit mentions:
+Daily Logbook extracts context from explicit links and mentions:
 
+- In the rich editor, select text and use the Person, Place, or Food actions to turn it into a linked token.
+- Use Unlink to turn a linked token back into normal text.
+- Plain names are left as plain text. This keeps unlinking intentional and prevents known people or places from being recreated automatically after autosave.
 - `@Jan` creates or links a Logbook person.
 - `#Amsterdam` creates or links a Logbook place.
+- `[Jan](person:jan)` and `[Amsterdam](place:amsterdam)` are the raw Markdown forms used by the editor.
 - Known people and places show up in autocomplete while writing.
 - Mentions remain linked to the day they came from.
 
@@ -31,7 +35,9 @@ The People & Places atlas is available at `/logbook/atlas`. It has tabs for Peop
 
 People can be created manually, created from mentions, edited, and optionally linked to an existing contact. A Logbook person is not a duplicate contact record; it is journal context that can point at a contact when useful. Person details can include aliases, relationship, notes, LLM context, and reconnect settings.
 
-Places can also be created manually or from `#place` mentions. They can store address text, notes, aliases, LLM context, and optional latitude/longitude.
+Places can also be created manually or from `#place` mentions. They can store address text, notes, aliases, LLM context, and optional latitude/longitude. Duplicate place names and aliases open the existing place instead of creating another row.
+
+Unused places with zero linked entries can be deleted from the atlas. Places with existing entry history should be hidden instead: hidden places stay in history, but they are removed from linking, autocomplete, and the map until they are unhidden.
 
 ## Map
 
