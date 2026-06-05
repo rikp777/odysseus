@@ -29,7 +29,8 @@ from core.database import SessionLocal, get_session_mode, set_session_mode
 from core.database import Session as DBSession, ChatMessage as DBChatMessage
 from core.database import Document as DBDocument, ModelEndpoint
 from routes.research_routes import _resolve_research_endpoint
-from routes.model_routes import _visible_models
+from routes.model_routes import _visible_chat_models
+from src.model_capabilities import is_chat_model as _is_chat_model
 from routes.chat_helpers import (
     resolve_session_auth,
     build_chat_context,
@@ -239,9 +240,13 @@ def _recover_empty_session_model(sess, session_id: str, owner: str | None = None
         if not cached:
             return False
         try:
-            visible = _visible_models(cached, getattr(ep, "hidden_models", None))
+            visible = _visible_chat_models(
+                cached,
+                getattr(ep, "hidden_models", None),
+                getattr(ep, "pinned_models", None),
+            )
         except Exception:
-            visible = cached
+            visible = [m for m in cached if isinstance(m, str) and m.strip()]
         if not visible:
             return False
         model = visible[0]
@@ -290,6 +295,62 @@ def _set_user_time_from_request(request: Request) -> None:
         pass
 
 
+def _recover_non_chat_session_model(sess, session_id: str, owner: str | None = None) -> bool:
+    """Replace a stored non-chat model with the first chat-capable model.
+
+    Providers can list embeddings, image models, and completions-only models
+    beside chat models. Older sessions may still point at one after the picker
+    learns to hide it, so repair before sending a guaranteed-bad chat request.
+    """
+    current_model = (getattr(sess, "model", "") or "").strip()
+    if not current_model or _is_chat_model(current_model):
+        return False
+    if not getattr(sess, "endpoint_url", ""):
+        return False
+
+    db = SessionLocal()
+    try:
+        q = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True)
+        if owner:
+            from src.auth_helpers import owner_filter
+            q = owner_filter(q, ModelEndpoint, owner)
+        endpoints = q.all()
+        ep = None
+        for cand in endpoints:
+            if _session_url_matches_endpoint(sess.endpoint_url or "", cand.base_url or ""):
+                ep = cand
+                break
+        if not ep:
+            return False
+        visible = _visible_chat_models(
+            getattr(ep, "cached_models", None),
+            getattr(ep, "hidden_models", None),
+            getattr(ep, "pinned_models", None),
+        )
+        if not visible:
+            return False
+        model = str(visible[0] or "").strip()
+        if not model or model == current_model:
+            return False
+        db_session = db.query(DBSession).filter(DBSession.id == session_id).first()
+        if db_session:
+            db_session.model = model
+            db_session.updated_at = datetime.utcnow()
+            db.commit()
+        sess.model = model
+        logger.warning(
+            "Recovered non-chat session model for %s - replaced %r with %r",
+            session_id, current_model, model,
+        )
+        return True
+    except Exception as e:
+        db.rollback()
+        logger.warning("Failed to recover non-chat session model for %s: %s", session_id, e)
+        return False
+    finally:
+        db.close()
+
+
 def setup_chat_routes(
     session_manager,
     chat_handler,
@@ -334,6 +395,7 @@ def setup_chat_routes(
         # the endpoint's cached model list before privilege checks, which
         # otherwise see "" and behave inconsistently with the allowlist.
         _recover_empty_session_model(sess, session, owner=owner)
+        _recover_non_chat_session_model(sess, session, owner=owner)
         if not getattr(sess, "model", "").strip():
             raise HTTPException(
                 400,
@@ -500,6 +562,7 @@ def setup_chat_routes(
             # upstream isn't called with model="" (which surfaces as a
             # generic 401/503).
             _recover_empty_session_model(sess, session, owner=owner)
+            _recover_non_chat_session_model(sess, session, owner=owner)
             if not getattr(sess, "model", "").strip():
                 raise HTTPException(
                     400,

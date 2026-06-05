@@ -26,6 +26,12 @@ from src.endpoint_resolver import (
     build_headers,
 )
 from src.auth_helpers import _auth_disabled, owner_filter
+
+from src.model_capabilities import (
+    filter_chat_models as _filter_chat_models,
+    first_chat_model as _first_chat_model,
+    is_chat_model as _is_chat_model,
+)
 from src.model_pricing import _model_pricing_map
 
 logger = logging.getLogger(__name__)
@@ -473,37 +479,6 @@ def _is_ollama_base(base_url: str) -> bool:
         return "ollama" in (base_url or "").lower()
 
 
-# Prefixes/substrings for models that are NOT chat-completions-capable
-_NON_CHAT_PREFIXES = (
-    "dall-e", "tts-", "whisper", "text-embedding", "embedding",
-    "davinci", "babbage", "moderation", "omni-moderation",
-    "sora", "gpt-image", "chatgpt-image",
-)
-_NON_CHAT_CONTAINS = (
-    "-realtime", "-transcribe", "-tts", "-codex",
-    "codex-",
-)
-_NON_CHAT_EXACT_PREFIXES = (
-    "gpt-audio",  # gpt-audio, gpt-audio-mini etc. (not gpt-4o-audio-preview which is chat)
-    "gpt-3.5-turbo-instruct",  # legacy OpenAI completions model
-)
-
-
-def _is_chat_model(model_id: str) -> bool:
-    """Return True if the model ID looks like a chat/completions-capable model."""
-    mid = model_id.lower()
-    for prefix in _NON_CHAT_PREFIXES:
-        if mid.startswith(prefix):
-            return False
-    for prefix in _NON_CHAT_EXACT_PREFIXES:
-        if mid.startswith(prefix):
-            return False
-    for substr in _NON_CHAT_CONTAINS:
-        if substr in mid:
-            return False
-    return True
-
-
 def _probe_single_model(base: str, api_key: str, model_id: str, timeout: int = 10, with_tools: bool = False) -> dict:
     """Send a realistic completion request to a single model. Returns {status, latency_ms, error?}."""
     provider = _detect_provider(base)
@@ -852,6 +827,11 @@ def _visible_models(cached_models, hidden_models, pinned_models=None):
     return [m for m in merged if m not in hidden]
 
 
+def _visible_chat_models(cached_models, hidden_models, pinned_models=None):
+    """Visible model IDs that are safe to offer in chat/completions pickers."""
+    return _filter_chat_models(_visible_models(cached_models, hidden_models, pinned_models))
+
+
 def setup_model_routes(model_discovery):
     router = APIRouter(prefix="/api")
 
@@ -1031,13 +1011,20 @@ def setup_model_routes(model_discovery):
         for ep in endpoints:
             base = _normalize_base(ep.base_url)
             provider = _detect_provider(base)
-            # Merge cached + pinned models, then filter out hidden ones
             ep_model_type = getattr(ep, "model_type", None) or "llm"
-            model_ids = _visible_models(
-                _cached_model_ids(ep),
-                ep.hidden_models,
-                getattr(ep, "pinned_models", None),
-            )
+            # Merge cached + pinned models, then filter hidden/non-chat entries.
+            if ep_model_type == "llm":
+                model_ids = _visible_chat_models(
+                    _cached_model_ids(ep),
+                    ep.hidden_models,
+                    getattr(ep, "pinned_models", None),
+                )
+            else:
+                model_ids = _visible_models(
+                    _cached_model_ids(ep),
+                    ep.hidden_models,
+                    getattr(ep, "pinned_models", None),
+                )
             # Build correct URL based on provider
             chat_url = build_chat_url(base)
             kind = _effective_endpoint_kind(ep, base)
@@ -1330,7 +1317,7 @@ def setup_model_routes(model_discovery):
                     yield f"data: {json.dumps({'type': 'probe_start', 'endpoint': ep['name'], 'model_count': 0, 'error': 'No models found or endpoint offline'})}\n\n"
                     continue
 
-                models = [m for m in all_models if _is_chat_model(m)]
+                models = _filter_chat_models(all_models)
                 skipped = len(all_models) - len(models)
                 yield f"data: {json.dumps({'type': 'probe_start', 'endpoint': ep['name'], 'model_count': len(models), 'skipped': skipped})}\n\n"
 
@@ -1589,7 +1576,6 @@ def setup_model_routes(model_discovery):
             # to list first.
             settings = _load_settings()
             if not settings.get("default_endpoint_id"):
-                from src.endpoint_resolver import _first_chat_model
                 settings["default_endpoint_id"] = ep.id
                 settings["default_model"] = _first_chat_model(model_ids) or ""
                 _save_settings(settings)
@@ -1658,7 +1644,7 @@ def setup_model_routes(model_discovery):
 
         base = _normalize_base(ep_data["base_url"])
         all_models = _probe_endpoint(base, ep_data["api_key"])
-        chat_models = [m for m in all_models if _is_chat_model(m)]
+        chat_models = _filter_chat_models(all_models)
         skipped = len(all_models) - len(chat_models)
 
         def _stream():

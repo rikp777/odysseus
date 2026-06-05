@@ -339,7 +339,12 @@ def setup_webhook_routes(
                                 for m in (data.get("models") or [])
                                 if m.get("name") or m.get("model")
                             ]
-                        model = ids[0] if ids else "auto"
+                        from src.model_capabilities import first_chat_model
+                        model = first_chat_model(ids) or ""
+                        if not model:
+                            raise HTTPException(400, "No chat-capable model served by endpoint")
+                except HTTPException:
+                    raise
                 except Exception:
                     raise HTTPException(500, "Could not discover models from endpoint")
 

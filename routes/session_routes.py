@@ -12,6 +12,7 @@ from core.models import ChatMessage
 from src.request_models import SessionResponse
 from core.database import Session as DbSession, SessionLocal, Document, GalleryImage
 from src.auth_helpers import get_current_user, effective_user
+from src.model_capabilities import first_chat_model as _first_chat_model
 
 
 def _sanitize_export_filename(name: str) -> str:
@@ -377,10 +378,9 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
             # Default to the first CHAT model — endpoints often list embedding/
             # tts/whisper models first (e.g. text-embedding-ada-002), which
             # can't hold a conversation.
-            _NON_CHAT = ("text-embedding", "embedding", "tts-", "whisper",
-                         "text-moderation", "moderation-", "dall-e", "rerank")
-            chat_ids = [m for m in ids if not any(p in m.lower() for p in _NON_CHAT)]
-            model_to_use = (chat_ids or ids)[0]
+            model_to_use = _first_chat_model(ids)
+            if not model_to_use:
+                raise HTTPException(400, "No chat-capable models found at server")
         else:
             from src.llm_core import list_model_ids
             import os as _os

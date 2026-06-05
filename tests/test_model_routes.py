@@ -43,12 +43,16 @@ import routes.model_routes as model_routes
 import src.database as src_database
 import src.endpoint_resolver as endpoint_resolver
 import src.llm_core as llm_core
+from src.model_capabilities import (
+    is_chat_model as _is_chat_model,
+    resolve_served_chat_model,
+)
 from routes.model_routes import (
     _match_provider_curated,
     _curate_models,
     _visible_models,
+    _visible_chat_models,
     _normalize_model_ids,
-    _is_chat_model,
     _classify_endpoint,
     _effective_endpoint_kind,
     _probe_endpoint,
@@ -288,13 +292,18 @@ class TestIsChatModel:
         "gpt-4o", "gpt-4o-mini", "claude-sonnet-4", "llama-3.3-70b",
         "deepseek-chat", "gemini-2.0-flash", "o3",
         "llama-4-scout-17b-16e-instruct",
+        "openai-gpt-5.1-codex-max",
+        "openai-gpt-5.3-codex",
+        "eclipse-chat",
     ])
     def test_chat_models(self, model_id):
         assert _is_chat_model(model_id) is True
 
     @pytest.mark.parametrize("model_id", [
         "dall-e-3", "tts-1", "whisper-1", "text-embedding-3-small",
-        "gpt-image-1", "sora-1",
+        "gpt-image-1", "sora-1", "qwen3-embedding-0.6b",
+        "bge-reranker-v2-m3", "openai-gpt-image-1.5",
+        "openai-gpt-5.4-pro", "clip-vit-large-patch14",
     ])
     def test_non_chat_models(self, model_id):
         assert _is_chat_model(model_id) is False
@@ -311,6 +320,18 @@ class TestIsChatModel:
 
     def test_legacy_openai_instruct_is_not_chat(self):
         assert _is_chat_model("gpt-3.5-turbo-instruct") is False
+
+    def test_resolve_served_chat_model_uses_basename_match(self):
+        assert resolve_served_chat_model(
+            "models/deepseek-4-flash",
+            ["openai-gpt-5.4-pro", "deepseek-4-flash"],
+        ) == "deepseek-4-flash"
+
+    def test_resolve_served_chat_model_does_not_fallback_to_non_chat(self):
+        assert resolve_served_chat_model(
+            "missing-model",
+            ["openai-gpt-5.4-pro", "qwen3-embedding-0.6b"],
+        ) is None
 
 
 # ── _classify_endpoint ──
@@ -814,6 +835,19 @@ def test_visible_models_handles_malformed_strings():
     assert _visible_models("only-cached", None, None) == ["only-cached"]
 
 
+def test_visible_chat_models_filters_non_chat_provider_ids():
+    result = _visible_chat_models(
+        [
+            "deepseek-4-flash",
+            "openai-gpt-5.4-pro",
+            "qwen3-embedding-0.6b",
+            "openai-gpt-5-nano",
+        ],
+        None,
+    )
+    assert result == ["deepseek-4-flash", "openai-gpt-5-nano"]
+
+
 def _create_form_kwargs(**overrides):
     """Defaults for every Form() param create_model_endpoint reads directly.
 
@@ -1066,6 +1100,35 @@ def test_api_models_returns_cached_proxy_models_without_refresh_probe(monkeypatc
     assert result["items"][0]["endpoint_kind"] == "proxy"
     assert "offline" not in result["items"][0]
     assert json.loads(row.cached_models) == ["cached-model"]
+
+
+def test_api_models_filters_non_chat_models_from_llm_endpoint(monkeypatch):
+    row = _route_ep(
+        "digitalocean",
+        "https://inference.do-ai.run/v1",
+        cached_models=[
+            "deepseek-4-flash",
+            "openai-gpt-5.4-pro",
+            "qwen3-embedding-0.6b",
+            "openai-gpt-5-nano",
+        ],
+        endpoint_kind="api",
+        api_key="fake-key",
+    )
+    db = _RouteDb([row])
+    router = model_routes.setup_model_routes(model_discovery=None)
+
+    monkeypatch.setattr(model_routes, "ModelEndpoint", _RouteModelEndpoint)
+    monkeypatch.setattr(model_routes, "SessionLocal", lambda: db)
+    monkeypatch.setattr(model_routes, "_auth_disabled", lambda: True)
+    monkeypatch.setattr(model_routes, "build_chat_url", lambda base: f"{base}/chat/completions")
+    monkeypatch.setattr(threading, "Thread", _ImmediateThread)
+
+    result = _route_endpoint(router, "/api/models")(_route_request())
+
+    item = result["items"][0]
+    all_models = item["models"] + item["models_extra"]
+    assert all_models == ["deepseek-4-flash", "openai-gpt-5-nano"]
 
 
 @pytest.mark.asyncio

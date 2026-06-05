@@ -13,27 +13,9 @@ from urllib.parse import urlparse, urlunparse
 
 from core.database import SessionLocal, ModelEndpoint
 from src.llm_core import _detect_provider, _host_match
+from src.model_capabilities import first_chat_model as _first_chat_model
 
 logger = logging.getLogger(__name__)
-
-# Model-name substrings that are NOT chat/generation models. When an endpoint
-# has no explicit model configured we pick the first CHAT model from its list —
-# never an embedding/tts/etc. (an OpenAI-style endpoint often lists
-# `text-embedding-ada-002` first, which silently broke email-summarize and
-# other resolve_endpoint callers with "Cannot reach model").
-_NON_CHAT_MODEL = (
-    "text-embedding", "embedding", "tts-", "whisper", "dall-e",
-    "moderation", "rerank", "reranker", "clip", "stable-diffusion",
-)
-
-
-def _first_chat_model(models) -> Optional[str]:
-    """First model that isn't an embedding/tts/etc.; falls back to models[0]."""
-    for m in (models or []):
-        if not any(p in str(m).lower() for p in _NON_CHAT_MODEL):
-            return m
-    return (models[0] if models else None)
-
 
 def _endpoint_cached_models(ep) -> list:
     """Return cached model ids from the current or legacy endpoint field."""
@@ -283,7 +265,7 @@ def resolve_endpoint(
         # endpoint (e.g. a stale `default_model` left pointing at a now-hidden
         # model). Treat it as unset so the picker below selects a live one
         # instead of dispatching to a disabled model that 400s.
-        if model and model in _endpoint_hidden_models(ep):
+        if model and (model in _endpoint_hidden_models(ep) or not _first_chat_model([model])):
             model = ""
         # If no (usable) model specified, pick the first enabled chat model.
         if not model:
@@ -327,7 +309,7 @@ def resolve_endpoint_by_id(
         m = (model or "").strip()
         # Drop a model the user disabled on the endpoint, then pick the first
         # enabled chat model rather than a hidden one.
-        if m and m in _endpoint_hidden_models(ep):
+        if m and (m in _endpoint_hidden_models(ep) or not _first_chat_model([m])):
             m = ""
         if not m:
             m = _first_chat_model(_endpoint_enabled_models(ep)) or ""

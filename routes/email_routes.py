@@ -2672,12 +2672,13 @@ def setup_email_routes():
             # by exact id, then basename; fall back to the first served model.
             try:
                 from src.llm_core import list_model_ids
+                from src.model_capabilities import resolve_served_chat_model
                 _avail = list_model_ids(url, headers=headers)
                 if _avail and model not in _avail:
-                    import os as _os
-                    _base = _os.path.basename((model or "").rstrip("/"))
-                    _match = next((a for a in _avail if _os.path.basename(a.rstrip("/")) == _base), None)
-                    model = _match or _avail[0]
+                    resolved_model = resolve_served_chat_model(model, _avail)
+                    if not resolved_model:
+                        return {"success": False, "error": "No chat-capable model served by endpoint"}
+                    model = resolved_model
             except Exception as _e:
                 logger.warning(f"AI reply model resolve failed: {_e}")
 

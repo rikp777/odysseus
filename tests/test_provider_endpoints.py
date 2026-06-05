@@ -159,9 +159,9 @@ def test_first_chat_model_skips_non_chat():
     assert er._first_chat_model(models) == "gpt-4o"
 
 
-def test_first_chat_model_falls_back_to_first_when_all_non_chat():
+def test_first_chat_model_returns_none_when_all_non_chat():
     models = ["text-embedding-3-large", "text-embedding-3-small"]
-    assert er._first_chat_model(models) == "text-embedding-3-large"
+    assert er._first_chat_model(models) is None
 
 
 @pytest.mark.parametrize("models", [[], None])

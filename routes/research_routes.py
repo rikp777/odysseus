@@ -14,28 +14,11 @@ from fastapi.responses import HTMLResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from src.endpoint_resolver import resolve_endpoint
 from src.auth_helpers import _auth_disabled, get_current_user
+from src.model_capabilities import first_chat_model as _first_chat_model
 
 _SESSION_ID_RE = re.compile(r"^[a-zA-Z0-9-]{1,128}$")
 
 logger = logging.getLogger(__name__)
-
-# Model-name substrings that are NOT chat/generation models — research must
-# never pick these as its model. An OpenAI-style endpoint often lists
-# `text-embedding-ada-002` etc. first in its model list, which is why research
-# was failing with "Cannot reach model 'text-embedding-ada-002'".
-_NON_CHAT_MODEL = (
-    "text-embedding", "embedding", "tts-", "whisper", "dall-e",
-    "moderation", "rerank", "reranker", "clip", "stable-diffusion",
-)
-
-
-def _first_chat_model(models) -> str:
-    """First model that isn't an embedding/tts/etc. — falls back to models[0]."""
-    for m in (models or []):
-        if not any(p in str(m).lower() for p in _NON_CHAT_MODEL):
-            return m
-    return (models[0] if models else "")
-
 
 def _resolve_research_endpoint(sess) -> tuple:
     """Return (endpoint_url, model, headers) for Deep Research, checking admin overrides."""
@@ -386,7 +369,7 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
                         import json as _json
                         models = _json.loads(ep.cached_models) if ep.cached_models else []
                         if models:
-                            ep_model = _first_chat_model(models)
+                            ep_model = _first_chat_model(models) or ""
                     except Exception:
                         pass
             finally:
@@ -423,7 +406,7 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
                                 import json as _json
                                 models = _json.loads(ep.cached_models)
                                 if models:
-                                    ep_model = _first_chat_model(models)
+                                    ep_model = _first_chat_model(models) or ""
                             except Exception:
                                 pass
                 finally:
@@ -594,7 +577,7 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
                         try:
                             models = json.loads(ep.cached_models)
                             if models:
-                                fallback_model = models[0]
+                                fallback_model = _first_chat_model(models) or ""
                         except Exception:
                             pass
                     _merge(fallback_url, fallback_model, fallback_headers)

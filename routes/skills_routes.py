@@ -999,11 +999,15 @@ def _resolve_audit_models(owner=None):
         raise ValueError("No model configured — set a Default or Utility model in Settings.")
     try:
         from src.llm_core import list_model_ids
-        import os as _os
+        from src.model_capabilities import resolve_served_chat_model
         _avail = list_model_ids(url, headers=headers)
         if _avail and model not in _avail:
-            _base = _os.path.basename((model or "").rstrip("/"))
-            model = next((a for a in _avail if _os.path.basename(a.rstrip("/")) == _base), None) or _avail[0]
+            resolved_model = resolve_served_chat_model(model, _avail)
+            if not resolved_model:
+                raise ValueError("No chat-capable model served by endpoint.")
+            model = resolved_model
+    except ValueError:
+        raise
     except Exception:
         pass
 
@@ -1301,12 +1305,15 @@ def setup_skills_routes(skills_manager: SkillsManager) -> APIRouter:
         # Normalize against the endpoint's served models (avoids 404 model drift).
         try:
             from src.llm_core import list_model_ids
+            from src.model_capabilities import resolve_served_chat_model
             _avail = list_model_ids(url, headers=headers)
             if _avail and model not in _avail:
-                import os as _os
-                _base = _os.path.basename((model or "").rstrip("/"))
-                _match = next((a for a in _avail if _os.path.basename(a.rstrip("/")) == _base), None)
-                model = _match or _avail[0]
+                resolved_model = resolve_served_chat_model(model, _avail)
+                if not resolved_model:
+                    raise HTTPException(400, "No chat-capable model served by endpoint.")
+                model = resolved_model
+        except HTTPException:
+            raise
         except Exception as _e:
             logger.warning(f"Skill-test model resolve failed: {_e}")
 

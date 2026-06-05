@@ -227,7 +227,10 @@ def try_fallback_endpoint(sess, session_id: str) -> dict | None:
             if not models:
                 continue
             # Found a working endpoint — update session
-            new_model = models[0]
+            from src.model_capabilities import first_chat_model
+            new_model = first_chat_model(models)
+            if not new_model:
+                continue
             chat_url = build_chat_url(base)
             new_headers = build_headers(ep.api_key, base)
 

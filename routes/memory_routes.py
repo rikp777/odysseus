@@ -281,7 +281,8 @@ def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionM
                         try:
                             models = _json.loads(ep.models) if isinstance(ep.models, str) else ep.models
                             if models:
-                                model = models[0]
+                                from src.model_capabilities import first_chat_model
+                                model = first_chat_model(models) or ""
                         except Exception:
                             pass
                     if ep.api_key:

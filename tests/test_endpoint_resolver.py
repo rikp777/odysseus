@@ -3,21 +3,10 @@ import json
 import re
 from urllib.parse import urlparse
 
+from src.model_capabilities import first_chat_model as _first_chat_model
 
-# Copy the pure functions to test them without importing the full module.
+# Copy endpoint-resolver pure functions to test them without importing the full module.
 # This avoids module cache conflicts with other test files that mock dependencies.
-
-_NON_CHAT_MODEL = (
-    "text-embedding", "embedding", "tts-", "whisper", "dall-e",
-    "moderation", "rerank", "reranker", "clip", "stable-diffusion",
-)
-
-
-def _first_chat_model(models):
-    for m in (models or []):
-        if not any(p in str(m).lower() for p in _NON_CHAT_MODEL):
-            return m
-    return (models[0] if models else None)
 
 
 def _endpoint_cached_models(ep) -> list:
@@ -191,8 +180,11 @@ class TestFirstChatModel:
         models = ["text-embedding-ada-002", "whisper-large-v3", "gpt-4o"]
         assert _first_chat_model(models) == "gpt-4o"
 
-    def test_falls_back_to_first_when_all_non_chat(self):
-        assert _first_chat_model(["whisper-large-v3"]) == "whisper-large-v3"
+    def test_returns_none_when_all_non_chat(self):
+        assert _first_chat_model(["whisper-large-v3", "qwen3-embedding-0.6b"]) is None
+
+    def test_digitalocean_completions_only_model_is_not_chat(self):
+        assert _first_chat_model(["openai-gpt-5.4-pro", "deepseek-4-flash"]) == "deepseek-4-flash"
 
     def test_empty(self):
         assert _first_chat_model([]) is None
