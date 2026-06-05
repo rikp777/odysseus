@@ -10,6 +10,9 @@ Daily Logbook. Custom work is allowed, but it should not quietly replace,
 weaken, or fork upstream behavior unless that is an explicit personal-product
 decision documented here.
 
+For the practical file ownership map and day-to-day workflow, see
+[`working-guide.md`](./working-guide.md).
+
 ## Current Health Snapshot
 
 The fork is healthy and currently synced with upstream.
@@ -17,6 +20,9 @@ The fork is healthy and currently synced with upstream.
 - `git rev-list --left-right --count upstream/main...HEAD` was last observed as
   `0 63`: no upstream commits missing, with custom commits layered on top.
 - Custom backend route wiring is centralized in `custom/bootstrap.py`.
+- Custom frontend asset registration is centralized in
+  `custom/frontend_assets.py`; `static/index.html` keeps only placeholders for
+  custom CSS/scripts.
 - Custom Billing/Logbook CSS is extracted from `static/style.css` into
   feature-owned files under `static/css/`.
 - Custom Logbook/Billing index markup is generated from
@@ -27,7 +33,7 @@ The fork is healthy and currently synced with upstream.
 - Custom Logbook route title/favicon metadata is handled by
   `static/js/custom/route-metadata.js` instead of hard-coded entries in the
   shared route-icon map in `static/index.html`.
-- The latest focused custom verification passed: `76 passed`, plus
+- The latest focused custom verification passed: `81 passed`, plus
   `node --check` for the custom frontend modules.
 - Full test comparison in the same Windows/Python UTF-8 environment:
   - custom: `2240 passed`, `61 failed`, `3 skipped`
@@ -64,6 +70,7 @@ Lower-risk custom-owned areas:
 - `static/js/billing/*`
 - `static/js/logbook*`
 - `static/js/custom/*`
+- `custom/frontend_assets.py`
 - `docs/daily-logbook.md`
 - `custom/*`
 
@@ -162,7 +169,8 @@ These are not blockers, but they will make future upstream merges safer.
    Prefer feature-prefixed selectors for billing and logbook. Keep broad layout
    and theme changes small because `static/style.css`, `static/index.html`, and
    `static/app.js` are major merge-conflict magnets. Existing custom CSS and
-   frontend wiring now live in custom-owned files; keep future work there.
+   frontend wiring now live in custom-owned files and are registered through
+   `custom/frontend_assets.py`; keep future work there.
 
 3. Keep model-cost behavior behind small helpers.
 

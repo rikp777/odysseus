@@ -732,6 +732,8 @@ def _serve_html_with_nonce(request: Request, file_path: str) -> HTMLResponse:
     """Read an HTML file and inject the CSP nonce into inline <script> tags."""
     with open(file_path, "r", encoding="utf-8") as f:
         html = f.read()
+    from custom.frontend_assets import inject_custom_frontend_assets
+    html = inject_custom_frontend_assets(html)
     nonce = getattr(request.state, "csp_nonce", "")
     html = html.replace("{{CSP_NONCE}}", nonce)
     return HTMLResponse(html)

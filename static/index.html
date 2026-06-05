@@ -93,7 +93,7 @@
     } catch(e){}
   })();
   </script>
-  <script src="/static/js/custom/route-metadata.js"></script>
+{{CUSTOM_HEAD_ASSETS}}
   <!-- Per-route favicon. Bookmarking /calendar shows a calendar icon,
        /notes a notes icon, etc. Each shape is rendered in the current
        theme accent color. Falls back to the boat logo on the root path. -->
@@ -228,9 +228,7 @@
     })();
   </script>
   <link rel="stylesheet" href="/static/style.css">
-  <link rel="stylesheet" href="/static/css/billing.css">
-  <link rel="stylesheet" href="/static/css/model-picker-custom.css">
-  <link rel="stylesheet" href="/static/css/logbook.css">
+{{CUSTOM_STYLESHEETS}}
   <link rel="modulepreload" href="/static/app.js">
   <link rel="modulepreload" href="/static/js/chat.js">
   <link rel="modulepreload" href="/static/js/ui.js">
@@ -2308,8 +2306,7 @@
 <script type="module" src="/static/js/settings.js"></script>
 <script type="module" src="/static/js/admin.js"></script>
 <script type="module" src="/static/js/assistant.js"></script>
-<script type="module" src="/static/js/custom/index-ui.js"></script>
-<script type="module" src="/static/js/custom/app-wiring.js"></script>
+{{CUSTOM_BODY_MODULES}}
 <script type="module" src="/static/app.js"></script>  <!-- app.js must be LAST -->
 <script type="module" src="/static/js/init.js"></script>
 <script type="module" src="/static/js/a11y.js"></script>

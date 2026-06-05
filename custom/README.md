@@ -40,6 +40,9 @@ documented here.
 For the upstream sync strategy and fork health checklist, see
 [`upstream-maintenance-plan.md`](./upstream-maintenance-plan.md).
 
+For day-to-day rules on where custom code lives and how to add new custom work,
+see [`working-guide.md`](./working-guide.md).
+
 ### Cloud Spend And Model Pricing
 
 Odysseus has a custom Cloud Spend area in Settings. It can show current AI model
@@ -149,7 +152,9 @@ Why:
 
 Custom code should still follow the main project style:
 
+- use `custom/` as the control plane for custom registration and docs;
 - prefer small provider/service modules over large route-file blobs;
+- register custom frontend assets through `custom/frontend_assets.py`;
 - keep billing provider logic behind adapters/factories;
 - keep UI modules split where the upstream already has a split-module pattern;
 - add tests around repository and billing behavior when data rules change;

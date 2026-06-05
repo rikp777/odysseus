@@ -1,11 +1,14 @@
 from pathlib import Path
 
+from custom.frontend_assets import CUSTOM_STYLESHEETS, inject_custom_frontend_assets
+
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_custom_css_files_load_after_base_stylesheet():
-    html = (ROOT / "static" / "index.html").read_text(encoding="utf-8")
+    raw_html = (ROOT / "static" / "index.html").read_text(encoding="utf-8")
+    html = inject_custom_frontend_assets(raw_html)
 
     base = html.index('/static/style.css')
     billing = html.index('/static/css/billing.css')
@@ -13,6 +16,13 @@ def test_custom_css_files_load_after_base_stylesheet():
     logbook = html.index('/static/css/logbook.css')
 
     assert base < billing < model_picker < logbook
+    assert CUSTOM_STYLESHEETS == (
+        "/static/css/billing.css",
+        "/static/css/model-picker-custom.css",
+        "/static/css/logbook.css",
+    )
+    for href in CUSTOM_STYLESHEETS:
+        assert href not in raw_html
 
 
 def test_custom_css_blocks_stay_extracted_from_base_stylesheet():

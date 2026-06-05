@@ -1,11 +1,24 @@
 from pathlib import Path
 
+from custom.frontend_assets import (
+    CUSTOM_BODY_MODULES,
+    CUSTOM_HEAD_SCRIPTS,
+    inject_custom_frontend_assets,
+)
+
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_custom_index_ui_bootstrap_loads_before_app():
+def _index_html(render_custom_assets: bool = False) -> str:
     html = (ROOT / "static" / "index.html").read_text(encoding="utf-8")
+    if render_custom_assets:
+        return inject_custom_frontend_assets(html)
+    return html
+
+
+def test_custom_index_ui_bootstrap_loads_before_app():
+    html = _index_html(render_custom_assets=True)
 
     route_metadata = html.index('<script src="/static/js/custom/route-metadata.js"></script>')
     route_metadata_hook = html.index("window.__odysseusCustomRouteMetadata")
@@ -18,7 +31,7 @@ def test_custom_index_ui_bootstrap_loads_before_app():
 
 
 def test_custom_index_ui_markup_stays_out_of_upstream_index():
-    html = (ROOT / "static" / "index.html").read_text(encoding="utf-8")
+    html = _index_html()
     custom_ui = (ROOT / "static" / "js" / "custom" / "index-ui.js").read_text(encoding="utf-8")
 
     custom_markers = [
@@ -61,7 +74,7 @@ def test_custom_app_wiring_stays_out_of_upstream_app_entrypoint():
 
 
 def test_custom_route_metadata_stays_out_of_upstream_index():
-    html = (ROOT / "static" / "index.html").read_text(encoding="utf-8")
+    html = _index_html()
     metadata = (ROOT / "static" / "js" / "custom" / "route-metadata.js").read_text(encoding="utf-8")
 
     custom_markers = [
@@ -77,3 +90,20 @@ def test_custom_route_metadata_stays_out_of_upstream_index():
 
     assert "__odysseusCustomRouteMetadata" in html
     assert "__odysseusCustomRouteMetadata" in metadata
+
+
+def test_custom_frontend_assets_are_registered_from_custom_folder():
+    html = _index_html()
+    rendered = _index_html(render_custom_assets=True)
+
+    assert "{{CUSTOM_HEAD_ASSETS}}" in html
+    assert "{{CUSTOM_STYLESHEETS}}" in html
+    assert "{{CUSTOM_BODY_MODULES}}" in html
+
+    for src in CUSTOM_HEAD_SCRIPTS:
+        assert src not in html
+        assert src in rendered
+
+    for src in CUSTOM_BODY_MODULES:
+        assert src not in html
+        assert src in rendered
