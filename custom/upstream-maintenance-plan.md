@@ -24,8 +24,11 @@ The fork is healthy and currently synced with upstream.
   `static/index.html`.
 - Custom Logbook/Billing frontend wiring is handled by
   `static/js/custom/app-wiring.js` instead of `static/app.js`.
-- The latest focused custom verification passed: `75 passed`, plus
-  `node --check` for both custom frontend modules.
+- Custom Logbook route title/favicon metadata is handled by
+  `static/js/custom/route-metadata.js` instead of hard-coded entries in the
+  shared route-icon map in `static/index.html`.
+- The latest focused custom verification passed: `76 passed`, plus
+  `node --check` for the custom frontend modules.
 - Full test comparison in the same Windows/Python UTF-8 environment:
   - custom: `2240 passed`, `61 failed`, `3 skipped`
   - upstream: `2125 passed`, `62 failed`, `3 skipped`
