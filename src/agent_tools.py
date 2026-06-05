@@ -25,7 +25,6 @@ from src.tool_types import (
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
 # MCP Manager (kept here — used by execution and agent_loop)
 # ---------------------------------------------------------------------------
 _mcp_manager = None

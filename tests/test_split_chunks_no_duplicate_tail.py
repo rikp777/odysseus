@@ -14,7 +14,10 @@ def test_no_duplicate_tail_chunk():
 
 
 def test_no_chunk_is_contained_in_another():
-    text = "".join(f"{k:04d}|" for k in range(500))
+    text = "\n".join(
+        f"unique-line-{k:04d}-square-{k * k:08d}-cube-{k * k * k:012d}"
+        for k in range(300)
+    )
     chunks = split_chunks(text, size=1000, overlap=200)
     # The buggy version produced a final 200-char chunk fully inside the prior one.
     for a in range(len(chunks)):

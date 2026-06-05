@@ -17,6 +17,7 @@ from fastapi.responses import StreamingResponse
 from core.database import SessionLocal, ModelEndpoint, Session as DbSession
 from core.middleware import require_admin
 from src.llm_core import _detect_provider, _host_match, ANTHROPIC_MODELS
+from src.tls_overrides import llm_verify
 from src.settings import load_settings as _load_settings, save_settings as _save_settings
 from src.endpoint_resolver import (
     normalize_base as _normalize_base,
@@ -626,7 +627,7 @@ def _probe_endpoint(base_url: str, api_key: str = None, timeout: int = 5) -> Lis
         if api_key:
             headers["x-api-key"] = api_key
         try:
-            r = httpx.get(url, headers=headers, timeout=timeout)
+            r = httpx.get(url, headers=headers, timeout=timeout, verify=llm_verify())
             r.raise_for_status()
             data = r.json()
             models = [m.get("id") for m in (data.get("data") or []) if m.get("id")]
@@ -647,7 +648,7 @@ def _probe_endpoint(base_url: str, api_key: str = None, timeout: int = 5) -> Lis
     url = build_models_url(base)
     headers = build_headers(api_key, base)
     try:
-        r = httpx.get(url, headers=headers, timeout=timeout)
+        r = httpx.get(url, headers=headers, timeout=timeout, verify=llm_verify())
         r.raise_for_status()
         data = r.json()
         # OpenAI format: {"data": [{"id": "model-name"}]}
@@ -682,7 +683,7 @@ def _probe_endpoint(base_url: str, api_key: str = None, timeout: int = 5) -> Lis
         parsed = urlparse(base)
         if parsed.port == 11434 or "ollama" in (parsed.hostname or "").lower():
             root = base[:-3].rstrip("/") if base.endswith("/v1") else base
-            r = httpx.get(root + "/api/tags", timeout=timeout)
+            r = httpx.get(root + "/api/tags", timeout=timeout, verify=llm_verify())
             r.raise_for_status()
             data = r.json()
             models = [m.get("name") or m.get("model") for m in (data.get("models") or []) if m.get("name") or m.get("model")]
@@ -743,7 +744,7 @@ def _ping_endpoint(base_url: str, api_key: str = None, timeout: float = 1.5) -> 
                     break
             for path in ("/api/version", "/api/tags"):
                 try:
-                    r = httpx.get(root + path, timeout=timeout)
+                    r = httpx.get(root + path, timeout=timeout, verify=llm_verify())
                     result = _result_from_response(r)
                     if result["reachable"]:
                         return result
@@ -754,7 +755,7 @@ def _ping_endpoint(base_url: str, api_key: str = None, timeout: float = 1.5) -> 
         pass
 
     try:
-        r = httpx.get(base, headers=headers, timeout=timeout)
+        r = httpx.get(base, headers=headers, timeout=timeout, verify=llm_verify())
         return _result_from_response(r)
     except Exception as e:
         last_error = str(e)[:120]
@@ -995,8 +996,8 @@ def setup_model_routes(model_discovery):
                     db.close()
                 if changed:
                     _invalidate_models_cache()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning('Background endpoint refresh failed: %s', e)
             finally:
                 for st in _refresh_state.values():
                     st["inflight"] = False
@@ -1030,12 +1031,13 @@ def setup_model_routes(model_discovery):
         for ep in endpoints:
             base = _normalize_base(ep.base_url)
             provider = _detect_provider(base)
-            # Use cached models — background refresh keeps them updated
-            model_ids = _cached_model_ids(ep)
+            # Merge cached + pinned models, then filter out hidden ones
             ep_model_type = getattr(ep, "model_type", None) or "llm"
-            # Filter out hidden (probe-failed) models
-            hidden = _hidden_model_ids(ep)
-            model_ids = [m for m in model_ids if m not in hidden]
+            model_ids = _visible_models(
+                _cached_model_ids(ep),
+                ep.hidden_models,
+                getattr(ep, "pinned_models", None),
+            )
             # Build correct URL based on provider
             chat_url = build_chat_url(base)
             kind = _effective_endpoint_kind(ep, base)
@@ -1045,6 +1047,13 @@ def setup_model_routes(model_discovery):
                 curated_key = _match_provider_curated(base, None)
                 curated, extra = _curate_models(model_ids, curated_key)
                 model_pricing = _model_pricing_map(base, model_ids)
+                # Pinned models are admin-selected — they always belong in the
+                # primary curated list, not buried in extras.
+                pinned = _normalize_model_ids(getattr(ep, "pinned_models", None))
+                for m in pinned:
+                    if m not in curated:
+                        curated.append(m)
+                extra = [m for m in extra if m not in pinned]
                 items.append({
                     "host": "custom",
                     "port": 0,
@@ -1897,9 +1906,10 @@ def setup_model_routes(model_discovery):
             if body:
                 if "supports_tools" in body:
                     v = body["supports_tools"]
-                    ep.supports_tools = bool(v) if v in (True, False, "true", "false", 1, 0) else None
+                    ep.supports_tools = {True: True, False: False, 'true': True, 'false': False, 1: True, 0: False}.get(v)
                 if "is_enabled" in body:
-                    ep.is_enabled = bool(body["is_enabled"])
+                    v_ie = body['is_enabled']
+                    ep.is_enabled = v_ie.lower() in ('true', '1', 'yes') if isinstance(v_ie, str) else bool(v_ie)
                 if "name" in body and isinstance(body["name"], str):
                     ep.name = body["name"].strip() or ep.name
                 if "model_type" in body and isinstance(body["model_type"], str):

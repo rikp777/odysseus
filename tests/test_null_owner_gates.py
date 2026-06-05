@@ -157,8 +157,7 @@ def test_gallery_owner_filter_allows_single_user_mode():
     from routes.gallery_routes import _owner_filter
     fake_q = MagicMock()
     out = _owner_filter(fake_q, user=None)
-    # Gallery uses None for auth-disabled single-user mode, so the helper must
-    # match the main gallery list and leave the query unfiltered.
+    # user=None means single-user/auth-disabled mode: return q unchanged, no filter.
     fake_q.filter.assert_not_called()
     assert out is fake_q
 
