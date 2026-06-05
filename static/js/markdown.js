@@ -123,7 +123,7 @@ function _billingChartDateLabel(value) {
   if (!value) return '';
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return '';
-  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
 function _billingChartMonthLabel(chart) {
@@ -133,7 +133,7 @@ function _billingChartMonthLabel(chart) {
   if (/^\d{4}-\d{2}$/.test(month)) {
     const date = new Date(`${month}-01T12:00:00Z`);
     if (!Number.isNaN(date.getTime())) {
-      return date.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+      return date.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
     }
   }
   return '';

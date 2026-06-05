@@ -114,6 +114,14 @@ function _getModelPricing(modelId, url, endpointId) {
   return looseMatch;
 }
 
+function _middleTrim(text, max = 38) {
+  const value = String(text || '').trim();
+  if (value.length <= max) return value;
+  const keepEnd = Math.min(14, Math.max(8, Math.floor(max * 0.35)));
+  const keepStart = Math.max(10, max - keepEnd - 1);
+  return `${value.slice(0, keepStart)}…${value.slice(-keepEnd)}`;
+}
+
 /**
  * Initialize the model picker dropdown.
  * @param {Object} deps
@@ -332,55 +340,64 @@ function _initModelPickerDropdown() {
     function _addRow(m) {
       const row = document.createElement('div');
       row.className = 'model-switch-item';
+      row.title = [m.mid, m.epName].filter(Boolean).join(' · ');
       if (m.stale) {
         row.classList.add('model-switch-stale');
         row.style.opacity = '0.45';
         row.title = `Local server appears offline: ${m.staleReason}. Click to try anyway, or relaunch in Cookbook.`;
       }
       const _mlogo = providerLogo(m.mid);
-      if (_mlogo) {
-        const logoSpan = document.createElement('span');
-        logoSpan.className = 'provider-logo';
-        logoSpan.style.opacity = '0.6';
-        logoSpan.innerHTML = _mlogo;
-        row.appendChild(logoSpan);
-      }
+      const logoSpan = document.createElement('span');
+      logoSpan.className = 'provider-logo mp-model-logo';
+      if (_mlogo) logoSpan.innerHTML = _mlogo;
+      row.appendChild(logoSpan);
+      const main = document.createElement('span');
+      main.className = 'mp-model-main';
+
       const nameSpan = document.createElement('span');
       nameSpan.className = 'mp-model-name model-switch-name';
-      nameSpan.textContent = m.display;
-      row.appendChild(nameSpan);
+      nameSpan.textContent = _middleTrim(m.display || m.mid);
+      nameSpan.title = m.mid || m.display || '';
+      main.appendChild(nameSpan);
+
+      const subLine = document.createElement('span');
+      subLine.className = 'mp-model-subline';
+      const _epDisplay = m.epName && !m.display.toLowerCase().includes(m.epName.toLowerCase().split('/').pop()) ? m.epName : '';
+      if (_epDisplay) {
+        const epSpan = document.createElement('span');
+        epSpan.className = 'model-switch-ep';
+        epSpan.textContent = _epDisplay;
+        subLine.appendChild(epSpan);
+      }
       if (m.stale) {
         const badge = document.createElement('span');
         badge.className = 'model-switch-stale-badge';
         badge.textContent = 'offline';
-        badge.style.cssText = 'font-size:10px;opacity:0.7;padding:1px 6px;border:1px solid var(--border);border-radius:8px;margin-left:6px;';
-        row.appendChild(badge);
+        subLine.appendChild(badge);
       }
-      const metaSpan = document.createElement('span');
-      metaSpan.className = 'model-switch-meta';
+      if (subLine.children.length) main.appendChild(subLine);
+      row.appendChild(main);
+
       const priceInfo = _formatModelPrice(m.pricing);
       if (priceInfo) {
         const priceSpan = document.createElement('span');
         priceSpan.className = 'model-switch-price';
-        priceSpan.textContent = priceInfo.compact;
+        priceSpan.textContent = priceInfo.compact.replace(/\s*·\s*/g, '\n');
         priceSpan.title = priceInfo.detail + (m.pricing.note ? ` (${m.pricing.note})` : '');
-        metaSpan.appendChild(priceSpan);
+        row.appendChild(priceSpan);
+      } else {
+        const spacer = document.createElement('span');
+        spacer.className = 'model-switch-price model-switch-price-empty';
+        row.appendChild(spacer);
       }
-      const epSpan = document.createElement('span');
-      epSpan.className = 'model-switch-ep';
-      // Don't show endpoint name if it matches the model name (local self-hosted)
-      const _epDisplay = m.epName && !m.display.toLowerCase().includes(m.epName.toLowerCase().split('/').pop()) ? m.epName : '';
-      epSpan.textContent = _epDisplay;
-      if (_epDisplay) metaSpan.appendChild(epSpan);
-      if (metaSpan.children.length) row.appendChild(metaSpan);
 
-      // Inline favorite dot — toggles favorite, never picks the model.
+      // Inline favorite star: toggles favorite, never picks the model.
       const favDot = document.createElement('button');
       favDot.type = 'button';
-      favDot.className = 'mp-fav-dot' + (favs.includes(m.mid) ? ' active' : '');
-      favDot.textContent = '●';
+      favDot.className = 'mp-fav-star' + (favs.includes(m.mid) ? ' active' : '');
       const _setFavState = (on) => {
         favDot.classList.toggle('active', on);
+        favDot.textContent = on ? '★' : '☆';
         favDot.title = on ? 'Remove from favorites' : 'Add to favorites';
         favDot.setAttribute('aria-label', on ? 'Remove from favorites' : 'Add to favorites');
         favDot.setAttribute('aria-pressed', on ? 'true' : 'false');
@@ -775,7 +792,8 @@ export function updateModelPicker() {
   }
   const nameSpan = document.createElement('span');
   nameSpan.className = 'model-picker-name';
-  nameSpan.textContent = displayName;
+  nameSpan.textContent = _middleTrim(displayName, 26);
+  nameSpan.title = modelId || displayName;
   label.appendChild(nameSpan);
   if (priceInfo && _costDisplayEnabled()) {
     const priceSpan = document.createElement('span');
