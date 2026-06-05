@@ -37,6 +37,9 @@ documented here.
 
 ## Current Custom Changes
 
+For the upstream sync strategy and fork health checklist, see
+[`upstream-maintenance-plan.md`](./upstream-maintenance-plan.md).
+
 ### Cloud Spend And Model Pricing
 
 Odysseus has a custom Cloud Spend area in Settings. It can show current AI model
