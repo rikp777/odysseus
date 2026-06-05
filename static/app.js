@@ -25,12 +25,9 @@ import galleryModule from './js/gallery.js';
 import tasksModule from './js/tasks.js';
 import calendarModule from './js/calendar.js';
 import notesModule from './js/notes.js';
-import logbookModule from './js/logbook.js';
-import logbookAtlasModule from './js/logbookAtlas.js';
 import adminModule from './js/admin.js';
 import settingsModule from './js/settings.js';
 
-import { initBillingSpend } from './js/billing.js';
 // Eagerly bind unified minimize/restore behavior across all tool modals.
 import './js/modalManager.js';
 // Desktop window tiling — drag a modal near an edge/corner to snap.
@@ -927,25 +924,6 @@ function initializeEventListeners() {
     setInterval(() => notesModule.refreshDueBadge(), 5 * 60 * 1000);
   }
 
-  // Logbook tool button
-  const toolLogbookBtn = el('tool-logbook-btn');
-  if (toolLogbookBtn) {
-    toolLogbookBtn.addEventListener('click', () => {
-      if (logbookModule) {
-        logbookModule.toggleLogbook();
-      }
-    });
-  }
-
-  const toolLogbookAtlasBtn = el('tool-logbook-atlas-btn');
-  if (toolLogbookAtlasBtn) {
-    toolLogbookAtlasBtn.addEventListener('click', () => {
-      if (logbookAtlasModule) {
-        logbookAtlasModule.toggleAtlas();
-      }
-    });
-  }
-
   // URL-based panel routing — bookmark /calendar, /notes, /cookbook etc
   // and the matching tool opens automatically on page load.
   const urlPath = window.location.pathname;
@@ -1009,8 +987,6 @@ function initializeEventListeners() {
     }
   }
   const _routeOpen = {
-    '/logbook/atlas': () => logbookAtlasModule && logbookAtlasModule.openAtlas(),
-    '/logbook': () => logbookModule && logbookModule.openLogbook(),
     '/notes':    () => {
       if (!notesModule) return;
       _collapseSidebarToRail();
@@ -1159,10 +1135,6 @@ function initializeEventListeners() {
     .then(r => r.json())
     .then(d => {
       window._isAdmin = !!d.is_admin;
-      initBillingSpend({
-        isAdmin: !!d.is_admin,
-        openSettings: (tab) => settingsModule.open(tab || 'services'),
-      });
       if (d.is_admin && userBarAdmin) userBarAdmin.style.display = '';
       const userBarName = el('user-bar-name');
       const userBarAvatar = el('user-bar-avatar');
@@ -2426,8 +2398,6 @@ function initializeEventListeners() {
     'tool-gallery':        '#tool-gallery-btn',
     'tool-library':        '#tool-library-btn',
     'tool-memory':         '#tool-memory-btn',
-    'tool-logbook':        '#tool-logbook-btn',
-    'tool-logbook-atlas':  '#tool-logbook-atlas-btn',
     'tool-notes':          '#tool-notes-btn',
     'tool-tasks':          '#tool-tasks-btn',
     'tool-theme':          '#tool-theme-btn',
@@ -3445,8 +3415,6 @@ function startOdysseusApp() {
     'rail-gallery':   'tool-gallery-btn',
     'rail-tasks':     'tool-tasks-btn',
     'rail-calendar':  'tool-calendar-btn',
-    'rail-logbook':   'tool-logbook-btn',
-    'rail-logbook-atlas': 'tool-logbook-atlas-btn',
     'rail-notes':     'tool-notes-btn',
     'rail-memory':    'tool-memory-btn',
     'rail-theme':     'tool-theme-btn',

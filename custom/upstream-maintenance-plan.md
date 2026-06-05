@@ -12,15 +12,20 @@ decision documented here.
 
 ## Current Health Snapshot
 
-The fork is mostly healthy, but there are real maintenance risks.
+The fork is healthy and currently synced with upstream.
 
-- `custom` is ahead of `upstream/main` by custom work, but it is currently
-  missing one upstream commit.
-- Missing upstream commit: `e0e250d`, `Calendar: cross-session delete sync - 404
-  = success, refetch on tab focus`, committed on 2026-06-05.
-- The missing commit affects `static/js/calendar.js` and should be integrated
-  while preserving the custom `mapSearchUrl` helper.
-- The focused custom test set passed: `291 passed`.
+- `git rev-list --left-right --count upstream/main...HEAD` was last observed as
+  `0 63`: no upstream commits missing, with custom commits layered on top.
+- Custom backend route wiring is centralized in `custom/bootstrap.py`.
+- Custom Billing/Logbook CSS is extracted from `static/style.css` into
+  feature-owned files under `static/css/`.
+- Custom Logbook/Billing index markup is generated from
+  `static/js/custom/index-ui.js` instead of living directly in
+  `static/index.html`.
+- Custom Logbook/Billing frontend wiring is handled by
+  `static/js/custom/app-wiring.js` instead of `static/app.js`.
+- The latest focused custom verification passed: `75 passed`, plus
+  `node --check` for both custom frontend modules.
 - Full test comparison in the same Windows/Python UTF-8 environment:
   - custom: `2240 passed`, `61 failed`, `3 skipped`
   - upstream: `2125 passed`, `62 failed`, `3 skipped`
@@ -55,41 +60,27 @@ Lower-risk custom-owned areas:
 - `src/logbook_context.py`
 - `static/js/billing/*`
 - `static/js/logbook*`
+- `static/js/custom/*`
 - `docs/daily-logbook.md`
 - `custom/*`
 
 ## Immediate Plan
 
-1. Get the branch fully caught up with upstream.
-
-   - Run `git fetch upstream --prune`.
-   - Merge `upstream/main` into `custom`, or cherry-pick `e0e250d` if that is
-     the only missing upstream commit.
-   - In `static/js/calendar.js`, preserve the custom `mapSearchUrl` integration
-     and also apply upstream's delete/refetch behavior:
-     - treat calendar delete `404` as success;
-     - clear/refetch calendar ranges on tab visibility/focus.
-
-2. Commit the current model-capability cleanup separately.
-
-   The current uncommitted work centralizes chat-capable model filtering in
-   `src/model_capabilities.py`. This is good directionally because it removes
-   duplicated route-local heuristics. Keep it as its own commit so it can be
-   reviewed and reverted independently if needed.
-
-   Verify with:
+1. Keep upstream caught up before adding more custom behavior.
 
    ```powershell
-   py -3.12 -m pytest tests/test_model_routes.py tests/test_endpoint_resolver.py tests/test_provider_endpoints.py tests/test_session_model_capabilities.py
+   git fetch upstream --prune
+   git rev-list --left-right --count upstream/main...HEAD
+   git merge upstream/main
    ```
 
-3. Run targeted custom verification after the upstream catch-up.
+2. Run targeted custom verification after upstream merges or custom changes.
 
    ```powershell
    py -3.12 -m pytest tests/test_billing_events.py tests/test_billing_routes.py tests/test_billing_usage.py tests/test_llm_usage_accounting.py tests/test_logbook_helpers.py tests/test_logbook_repository.py tests/test_model_pricing.py tests/test_model_routes.py tests/test_endpoint_resolver.py tests/test_provider_endpoints.py tests/test_session_model_capabilities.py
    ```
 
-4. Run a full-suite comparison when behavior looks risky.
+3. Run a full-suite comparison when behavior looks risky.
 
    On Windows, use UTF-8 mode so collection and frontend-helper tests are closer
    to the upstream comparison baseline:
@@ -103,11 +94,10 @@ Lower-risk custom-owned areas:
    failures in this environment. What matters is whether the fork introduces new
    failures outside the known baseline.
 
-5. Push `custom` after clean logical commits.
+4. Push `custom` after clean logical commits.
 
-   The branch was observed as `custom...origin/custom [ahead 103]`. That is too
-   much unpushed work for a personal production branch. Push after the upstream
-   catch-up and after committing the model-capability cleanup.
+   Avoid keeping large local-only commit stacks. A pushed `custom` branch makes
+   upstream comparisons and recovery simpler.
 
 ## Ongoing Merge Discipline
 
@@ -164,11 +154,12 @@ These are not blockers, but they will make future upstream merges safer.
    requires. Put custom query behavior in `src/billing/*` and `src/logbook/*`
    repositories/services instead of adding more broad database helpers.
 
-2. Avoid more global CSS churn.
+2. Avoid more global CSS/frontend churn.
 
    Prefer feature-prefixed selectors for billing and logbook. Keep broad layout
-   and theme changes small because `static/style.css` is a major merge-conflict
-   magnet.
+   and theme changes small because `static/style.css`, `static/index.html`, and
+   `static/app.js` are major merge-conflict magnets. Existing custom CSS and
+   frontend wiring now live in custom-owned files; keep future work there.
 
 3. Keep model-cost behavior behind small helpers.
 
@@ -199,4 +190,3 @@ The custom fork is healthy when:
 - custom commits are small enough to review by feature;
 - upstream conflict resolutions preserve upstream behavior by default;
 - private deployment details stay out of Git.
-
