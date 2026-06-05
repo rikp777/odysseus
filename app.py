@@ -574,10 +574,6 @@ app.include_router(setup_preset_routes(preset_manager))
 from routes.diagnostics_routes import setup_diagnostics_routes
 app.include_router(setup_diagnostics_routes(rag_manager, rag_available, research_handler))
 
-# Billing
-from routes.billing_routes import setup_billing_routes
-app.include_router(setup_billing_routes())
-
 # Cleanup
 from routes.cleanup_routes import setup_cleanup_routes
 app.include_router(setup_cleanup_routes(session_manager))
@@ -701,10 +697,6 @@ logger.info("Webhook & API token routes initialized")
 from routes.note_routes import setup_note_routes
 app.include_router(setup_note_routes(task_scheduler))
 
-# Daily Logbook
-from routes.logbook_routes import setup_logbook_routes
-app.include_router(setup_logbook_routes())
-
 # Email
 from routes.email_routes import setup_email_routes
 email_router = setup_email_routes()
@@ -758,13 +750,10 @@ async def serve_index(request: Request):
 async def serve_notes(request: Request):
     return await serve_index(request)
 
-@app.get("/logbook")
-async def serve_logbook(request: Request):
-    return await serve_index(request)
+# Custom branch features.
+from custom.bootstrap import register_custom_features
+register_custom_features(app, serve_index)
 
-@app.get("/logbook/atlas")
-async def serve_logbook_atlas(request: Request):
-    return await serve_index(request)
 
 @app.get("/calendar")
 async def serve_calendar(request: Request):
