@@ -398,6 +398,22 @@ def find_location(
     return None
 
 
+def find_location_duplicate(
+    db,
+    owner: str,
+    names: List[str],
+    *,
+    exclude_id: Optional[str] = None,
+) -> Optional[LogbookLocation]:
+    """Find an existing location that conflicts with any display name or alias."""
+    candidates = db.query(LogbookLocation).filter(LogbookLocation.owner == owner).all()
+    for name in names or []:
+        location = find_location(db, owner, name, candidates, include_hidden=True)
+        if location and location.id != exclude_id:
+            return location
+    return None
+
+
 def merge_location_aliases(location: LogbookLocation, names: List[str]) -> None:
     existing = aliases(location)
     seen = {canonical_name(location.display_name), *[canonical_name(a) for a in existing]}

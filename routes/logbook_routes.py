@@ -940,7 +940,11 @@ def setup_logbook_routes() -> APIRouter:
         owner = _owner(request)
         db = SessionLocal()
         try:
-            existing = logbook_repo.find_location(db, owner, body.display_name, include_hidden=True)
+            existing = logbook_repo.find_location_duplicate(
+                db,
+                owner,
+                [body.display_name, *(body.aliases or [])],
+            )
             if existing:
                 return {"ok": True, "duplicate": True, "location": logbook_serializers.location_to_dict(existing)}
             location = logbook_repo.get_or_create_location(db, owner, body.display_name, body.aliases, body.notes)
@@ -996,16 +1000,22 @@ def setup_logbook_routes() -> APIRouter:
         try:
             location = logbook_repo.load_location_or_404(db, owner, location_id)
             fields_set = getattr(body, "__fields_set__", getattr(body, "model_fields_set", set()))
+            candidate_names = [
+                body.display_name if body.display_name is not None else location.display_name,
+                *(body.aliases if body.aliases is not None else logbook_utils.aliases(location)),
+            ]
+            duplicate = logbook_repo.find_location_duplicate(
+                db,
+                owner,
+                candidate_names,
+                exclude_id=location.id,
+            )
+            if duplicate:
+                raise HTTPException(409, "A location with that name or alias already exists")
             if body.display_name is not None:
                 canonical = logbook_utils.canonical_name(body.display_name)
                 if not canonical:
                     raise HTTPException(400, "display_name is required")
-                duplicate = logbook_repo.location_query(db, owner, include_hidden=True).filter(
-                    LogbookLocation.canonical_name == canonical,
-                    LogbookLocation.id != location.id,
-                ).first()
-                if duplicate:
-                    raise HTTPException(409, "A location with that name already exists")
                 location.display_name = body.display_name.strip()
                 location.canonical_name = canonical
             if body.aliases is not None:

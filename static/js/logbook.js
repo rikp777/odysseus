@@ -24,6 +24,19 @@ import {
   updateConnection,
 } from './logbook/api.js';
 import { MODAL_ID, MOODS, QUICK_DATA, SAVE_DELAY } from './logbook/constants.js';
+import {
+  LOGBOOK_LINK_RE,
+  currentEntitiesFromContent as _currentEntitiesFromContentForLists,
+  entityListSignature as _entityListSignature,
+  linkKind as _linkKind,
+  locationForLink as _locationForLinkIn,
+  locationMarkdown as _locationMarkdown,
+  mentionMarkdown as _mentionMarkdown,
+  personForLink as _personForLinkIn,
+  selectionLinkParts as _selectionLinkParts,
+  selectionLinkTarget as _selectionLinkTargetForLists,
+  slugName as _slugName,
+} from './logbook/entities.js';
 import { iconBook as _iconBook, logbookIcon as _logbookIcon } from './logbook/icons.js';
 import {
   cleanKey as _cleanKey,
@@ -32,10 +45,6 @@ import {
   escapeHtml as _e,
   today as _today,
 } from './logbook/utils.js';
-
-const LOGBOOK_LINK_RE = /\[([^\]\n]{1,160})\]\((person:[A-Za-z0-9_-]{2,100}|place:[A-Za-z0-9_-]{2,100}|location:[A-Za-z0-9_-]{2,100}|data:[A-Za-z0-9_-]{2,80}|food:[A-Za-z0-9_-]{2,100}|[a-z][a-z0-9]*(?:_[a-z0-9]+)+)\)/g;
-const LOGBOOK_PERSON_RE = /(^|[^\w.])@(?:\[([^\]\n]{1,80})\]|"([^"\n]{1,80})"|([A-Za-z0-9À-ÖØ-öø-ÿ][A-Za-z0-9À-ÖØ-öø-ÿ_-]*(?:\s+(?:[A-ZÀ-ÖØ-Þ][A-Za-z0-9À-ÖØ-öø-ÿ0-9_-]*|van|de|der|den|ten|ter|von|da|del|di|la|le|du)){0,3}))/g;
-const LOGBOOK_LOCATION_RE = /(^|[^\w#])#(?:\[([^\]\n]{1,80})\]|"([^"\n]{1,80})"|([A-Za-zÀ-ÖØ-öø-ÿ][A-Za-z0-9À-ÖØ-öø-ÿ_-]*(?:\s+(?:[A-ZÀ-ÖØ-Þ][A-Za-z0-9À-ÖØ-öø-ÿ0-9_-]*|van|de|der|den|ten|ter|von|da|del|di|la|le|du)){0,3}))/g;
 
 let _open = false;
 let _date = _today();
@@ -244,108 +253,16 @@ async function _loadDate(date) {
   _render();
 }
 
-function _slugName(value) {
-  return String(value || '')
-    .normalize('NFKD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/^(person|place|location|data|food):/i, '')
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '_')
-    .replace(/^_+|_+$/g, '');
-}
-
-function _linkKind(target) {
-  const value = String(target || '').toLowerCase();
-  if (value.startsWith('place:') || value.startsWith('location:')) return 'location';
-  if (value.startsWith('data:') || value.startsWith('food:')) return 'data';
-  return 'person';
-}
-
 function _personForLink(target, label = '') {
-  const targetSlug = _slugName(target);
-  const labelSlug = _slugName(label);
-  return (_people || []).find(person => {
-    const slugs = [
-      person.canonical_name,
-      person.display_name,
-      ...(person.aliases || []),
-    ].map(_slugName).filter(Boolean);
-    return slugs.includes(targetSlug) || Boolean(labelSlug && slugs.includes(labelSlug));
-  }) || null;
+  return _personForLinkIn(_people, target, label);
 }
 
 function _locationForLink(target, label = '', { includeHidden = false } = {}) {
-  const targetSlug = _slugName(target);
-  const labelSlug = _slugName(label);
-  return (_locations || []).find(location => {
-    if (location.hidden && !includeHidden) return false;
-    const slugs = [
-      location.canonical_name,
-      location.display_name,
-      ...(location.aliases || []),
-    ].map(_slugName).filter(Boolean);
-    return slugs.includes(targetSlug) || Boolean(labelSlug && slugs.includes(labelSlug));
-  }) || null;
-}
-
-function _displayNameFromSlug(value) {
-  const particles = new Set(['van', 'de', 'der', 'den', 'ten', 'ter', 'von', 'da', 'del', 'di', 'la', 'le', 'du']);
-  return _slugName(value)
-    .split('_')
-    .filter(Boolean)
-    .map((part, index) => (index > 0 && particles.has(part)) ? part : part.charAt(0).toUpperCase() + part.slice(1))
-    .join(' ');
-}
-
-function _entityKey(item) {
-  return item?.id || _slugName(item?.canonical_name || item?.display_name || '');
-}
-
-function _addEntity(list, item) {
-  const key = _entityKey(item);
-  if (!key || list.some(existing => _entityKey(existing) === key)) return;
-  list.push(item);
-}
-
-function _entityFromLabel(kind, label, target = '') {
-  if (kind === 'location') {
-    const existing = _locationForLink(target, label, { includeHidden: true });
-    if (existing?.hidden) return null;
-    if (existing) return existing;
-  }
-  const existing = kind === 'location' ? null : _personForLink(target, label);
-  if (existing) return existing;
-  const displayName = label || _displayNameFromSlug(target);
-  return displayName ? { id: '', display_name: displayName, canonical_name: _slugName(target || label) } : null;
+  return _locationForLinkIn(_locations, target, label, { includeHidden });
 }
 
 function _currentEntitiesFromContent(content) {
-  const text = String(content || '');
-  const people = [];
-  const locations = [];
-  LOGBOOK_LINK_RE.lastIndex = 0;
-  for (const match of text.matchAll(LOGBOOK_LINK_RE)) {
-    const kind = _linkKind(match[2]);
-    if (kind === 'location') _addEntity(locations, _entityFromLabel('location', match[1], match[2]));
-    else if (kind !== 'data') _addEntity(people, _entityFromLabel('person', match[1], match[2]));
-  }
-  LOGBOOK_PERSON_RE.lastIndex = 0;
-  for (const match of text.matchAll(LOGBOOK_PERSON_RE)) {
-    const label = (match[2] || match[3] || match[4] || '').replace(/\s+/g, ' ').trim();
-    if (label) _addEntity(people, _entityFromLabel('person', label));
-  }
-  LOGBOOK_LOCATION_RE.lastIndex = 0;
-  for (const match of text.matchAll(LOGBOOK_LOCATION_RE)) {
-    const label = (match[2] || match[3] || match[4] || '').replace(/\s+/g, ' ').trim();
-    if (label) _addEntity(locations, _entityFromLabel('location', label));
-  }
-  return { people, locations };
-}
-
-function _entityListSignature(people = [], locations = []) {
-  const personKeys = people.map(_entityKey).filter(Boolean).sort().join(',');
-  const locationKeys = locations.map(_entityKey).filter(Boolean).sort().join(',');
-  return `${personKeys}|${locationKeys}`;
+  return _currentEntitiesFromContentForLists(content, { people: _people, locations: _locations });
 }
 
 function _syncCurrentEntryEntitiesFromContent() {
@@ -1954,38 +1871,15 @@ function _hideMentionMenu() {
 }
 
 function _mentionText(name) {
-  const person = _personForLink('', name);
-  const target = `person:${_slugName(person?.canonical_name || person?.display_name || name)}`;
-  return `[${name}](${target})`;
+  return _mentionMarkdown(name, _people);
 }
 
 function _locationText(name) {
-  const location = _locationForLink('', name);
-  const target = `place:${_slugName(location?.canonical_name || location?.display_name || name)}`;
-  return `[${name}](${target})`;
-}
-
-function _selectionLinkParts(text) {
-  const value = String(text || '');
-  const leading = value.match(/^\s*/)?.[0] || '';
-  const trailing = value.match(/\s*$/)?.[0] || '';
-  const label = value
-    .slice(leading.length, value.length - trailing.length)
-    .replace(/[\[\]\r\n]+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .slice(0, 160);
-  return label ? { leading, label, trailing } : null;
+  return _locationMarkdown(name, _locations);
 }
 
 function _selectionLinkTarget(kind, label) {
-  if (kind === 'food') return 'data:food';
-  if (kind === 'location') {
-    const location = _locationForLink('', label);
-    return `place:${_slugName(location?.canonical_name || location?.display_name || label)}`;
-  }
-  const person = _personForLink('', label);
-  return `person:${_slugName(person?.canonical_name || person?.display_name || label)}`;
+  return _selectionLinkTargetForLists(kind, label, { people: _people, locations: _locations });
 }
 
 function _replaceRawSelectionWithLink(kind) {

@@ -21,6 +21,7 @@ from src.logbook.repository import (
     create_entry_revision,
     entry_will_change,
     find_location,
+    find_location_duplicate,
     get_or_create_location,
     get_or_create_person,
     link_person_suggestion,
@@ -96,6 +97,24 @@ def test_hidden_location_is_not_linked_or_duplicated():
 
     assert db.query(LogbookLocation).count() == 1
     assert db.query(LogbookLocationMention).count() == 0
+
+
+def test_location_duplicate_check_includes_aliases_and_hidden_places():
+    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
+    Base.metadata.create_all(bind=engine)
+    db = sessionmaker(bind=engine)()
+    owner = "owner-1"
+
+    gym = get_or_create_location(db, owner, "Gym", aliases_=["Training Place"])
+    hidden = get_or_create_location(db, owner, "Old Office", aliases_=["Archive"])
+    hidden.hidden = True
+    office = get_or_create_location(db, owner, "Office")
+    db.flush()
+
+    assert find_location_duplicate(db, owner, ["Training Place"]).id == gym.id
+    assert find_location_duplicate(db, owner, ["Archive"]).id == hidden.id
+    assert find_location_duplicate(db, owner, ["Office"], exclude_id=office.id) is None
+    assert find_location_duplicate(db, owner, ["Gym"], exclude_id=office.id).id == gym.id
 
 
 def test_entry_revision_snapshots_and_restores_entry_fields_and_datapoints():
