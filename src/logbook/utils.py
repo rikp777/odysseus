@@ -138,9 +138,12 @@ def clamp_score(value: Optional[int], *, low: int = 1, high: int = 5) -> Optiona
 
 def clamp_confidence(value: Any, default: int = 0) -> int:
     try:
-        n = int(value)
+        n_float = float(value)
     except (TypeError, ValueError):
-        n = default
+        n_float = float(default)
+    if 0 < n_float <= 1:
+        n_float *= 100
+    n = round(n_float)
     return max(0, min(100, n))
 
 

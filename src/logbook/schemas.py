@@ -11,6 +11,7 @@ ALLOWED_CONNECTION_TYPES = {"co_mentioned", "family", "friend", "work", "trainin
 ALLOWED_CONNECTION_STATUS = {"suggested", "accepted", "hidden"}
 ALLOWED_PERSON_FACT_TYPES = {"workplace", "relationship", "role", "location", "preference", "note", "unknown"}
 ALLOWED_PERSON_FACT_STATUS = {"active", "archived", "rejected"}
+ConfidenceInput = int | float
 AI_MODES = {
     "clean_spelling",
     "structure_day",
@@ -136,7 +137,7 @@ class LogbookPersonFactSuggestion(BaseModel):
     label: Optional[str] = None
     value_text: Optional[str] = None
     value_json: Optional[Any] = None
-    confidence: Optional[int] = None
+    confidence: Optional[ConfidenceInput] = None
     reason: Optional[str] = None
 
 
@@ -157,7 +158,7 @@ class LogbookEntitySuggestion(BaseModel):
     relationship_label: Optional[str] = None
     llm_context: Optional[str] = None
     facts: Optional[List[LogbookPersonFactSuggestion]] = None
-    confidence: Optional[int] = None
+    confidence: Optional[ConfidenceInput] = None
     reason: Optional[str] = None
 
 

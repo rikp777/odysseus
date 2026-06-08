@@ -7,7 +7,7 @@ import src.logbook.utils as logbook_utils
 from fastapi import HTTPException
 
 from src.logbook.ai import estimate_ai_usage, local_ai_fallback_payload, normalize_ai_payload, run_ai_assist
-from src.logbook.schemas import LogbookAIAssist
+from src.logbook.schemas import LogbookAIAssist, LogbookApplySuggestions
 from src.logbook.serializers import entry_to_dict
 from src.logbook.utils import (
     canonical_name,
@@ -37,6 +37,35 @@ def test_logbook_canonical_name_normalizes_aliases():
     assert canonical_name("@Ján_Peter!") == "jan peter"
     assert canonical_name("person:jeanine_peeters") == "jeanine peeters"
     assert canonical_name("place:ouderlijk_huis") == "ouderlijk huis"
+
+
+def test_logbook_apply_suggestions_accepts_normalized_confidence():
+    payload = LogbookApplySuggestions.model_validate({
+        "people_suggestions": [{
+            "display_name": "Jan",
+            "confidence": 0.9,
+            "facts": [{
+                "fact_type": "relationship",
+                "label": "Relationship",
+                "value_text": "Father",
+                "confidence": 0.8,
+            }],
+        }],
+        "location_suggestions": [{
+            "display_name": "Meerstad",
+            "confidence": 0.75,
+        }],
+    })
+
+    assert payload.people_suggestions[0].confidence == 0.9
+    assert payload.people_suggestions[0].facts[0].confidence == 0.8
+    assert payload.location_suggestions[0].confidence == 0.75
+
+
+def test_logbook_clamp_confidence_supports_decimal_and_percent_inputs():
+    assert logbook_utils.clamp_confidence(0.9, default=70) == 90
+    assert logbook_utils.clamp_confidence("0.75", default=70) == 75
+    assert logbook_utils.clamp_confidence(90, default=70) == 90
 
 
 def test_logbook_person_link_parser_supports_custom_markdown():
