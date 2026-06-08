@@ -1215,6 +1215,16 @@ def setup_logbook_routes() -> APIRouter:
         owner = _owner(request)
         return logbook_ai.ai_status(owner)
 
+    @router.post("/ai/estimate")
+    def ai_estimate(request: Request, body: LogbookAIAssist):
+        owner = _owner(request)
+        return logbook_ai.estimate_ai_usage(owner, body)
+
+    @router.get("/ai/usage-summary")
+    def ai_usage_summary(request: Request):
+        owner = _owner(request)
+        return logbook_ai.ai_usage_summary(owner)
+
     @router.post("/ai/assist")
     async def ai_assist(request: Request, body: LogbookAIAssist):
         owner = _owner(request)

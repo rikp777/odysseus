@@ -6,7 +6,7 @@
 }
 
 .logbook-modal-content {
-  width: min(1320px, calc(100vw - 28px));
+  width: min(1560px, calc(100vw - 28px));
   height: min(880px, calc(100vh - 28px));
   max-height: calc(100vh - 28px);
   display: flex;
@@ -93,7 +93,7 @@
 
 .logbook-body {
   display: grid;
-  grid-template-columns: minmax(210px, 260px) minmax(420px, 1fr) minmax(300px, 360px);
+  grid-template-columns: minmax(210px, 250px) minmax(390px, 1fr) minmax(360px, 430px);
   gap: 10px;
   padding: 10px;
   min-height: 0;
@@ -124,13 +124,33 @@
 
 .logbook-side {
   display: grid;
-  grid-template-rows: minmax(0, .9fr) minmax(0, 1fr) minmax(0, .9fr);
+  grid-template-rows: minmax(460px, 1.6fr) minmax(0, .85fr) minmax(0, .7fr);
   gap: 10px;
 }
 
 .logbook-panel {
   min-height: 0;
   overflow: auto;
+}
+
+@media (min-width: 1480px) {
+  .logbook-body {
+    grid-template-columns: minmax(210px, 250px) minmax(430px, 1fr) minmax(680px, 760px);
+  }
+
+  .logbook-side {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-rows: minmax(500px, 1.65fr) minmax(0, 1fr);
+    overflow: hidden;
+  }
+
+  .logbook-side > .logbook-panel {
+    min-width: 0;
+  }
+
+  .logbook-side > [data-mobile-section="ai"] {
+    grid-column: 1 / -1;
+  }
 }
 
 .logbook-nav-actions,
@@ -321,6 +341,24 @@
   color: color-mix(in srgb, var(--fg) 72%, transparent);
 }
 
+.logbook-link-toolbar .logbook-format-button {
+  width: 30px;
+  min-width: 30px;
+  justify-content: center;
+  padding: 0;
+}
+
+.logbook-link-toolbar .logbook-format-text {
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.logbook-toolbar-sep {
+  width: 1px;
+  height: 20px;
+  background: color-mix(in srgb, var(--border) 80%, transparent);
+}
+
 .logbook-link-toolbar button span {
   font-weight: 700;
 }
@@ -476,6 +514,281 @@
   pointer-events: none;
 }
 
+.logbook-rich-content strong {
+  font-weight: 750;
+}
+
+.logbook-rich-content em {
+  font-style: italic;
+}
+
+.logbook-rich-content del,
+.logbook-rich-content s,
+.logbook-rich-content strike {
+  text-decoration-thickness: 1.5px;
+}
+
+.logbook-rich-content h1,
+.logbook-rich-content h2,
+.logbook-rich-content h3,
+.logbook-rich-content h4,
+.logbook-rich-content h5,
+.logbook-rich-content h6 {
+  margin: 0.45em 0 0.25em;
+  line-height: 1.2;
+}
+
+.logbook-rich-content h1 { font-size: 1.45em; }
+.logbook-rich-content h2 { font-size: 1.25em; }
+.logbook-rich-content h3 { font-size: 1.1em; }
+
+.logbook-rich-content ul,
+.logbook-rich-content ol {
+  margin: 0.35em 0;
+  padding-left: 1.4em;
+}
+
+.logbook-rich-content blockquote {
+  margin: 0.45em 0;
+  padding: 0.2em 0 0.2em 0.8em;
+  border-left: 3px solid color-mix(in srgb, var(--accent, var(--red)) 55%, transparent);
+  color: color-mix(in srgb, var(--fg) 78%, transparent);
+}
+
+.logbook-rich-content code {
+  padding: 0.08em 0.28em;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.92em;
+}
+
+.logbook-rich-content pre {
+  margin: 0.45em 0;
+  padding: 0.65em;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+  overflow: auto;
+  white-space: pre;
+}
+
+.logbook-rich-content pre code {
+  padding: 0;
+  background: transparent;
+}
+
+.logbook-rich-content hr {
+  border: 0;
+  border-top: 1px solid var(--border);
+  margin: 0.7em 0;
+}
+
+.logbook-selection-menu {
+  position: fixed;
+  z-index: 10050;
+  min-width: 220px;
+  max-width: min(340px, calc(100vw - 16px));
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel, var(--bg));
+  color: var(--fg);
+  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.28);
+  display: grid;
+  gap: 5px;
+}
+
+.logbook-selection-menu-group {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+  padding-bottom: 5px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+}
+
+.logbook-selection-menu-group:last-child {
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+
+.logbook-context-item {
+  min-height: 30px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.logbook-context-item:hover,
+.logbook-context-item:focus {
+  background: color-mix(in srgb, var(--accent, var(--red)) 13%, transparent);
+  outline: none;
+}
+
+.logbook-context-item span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.logbook-context-text-icon {
+  width: 13px;
+  flex: 0 0 13px;
+  font-size: 10px;
+  font-weight: 800;
+  text-align: center;
+}
+
+.logbook-entity-chooser {
+  position: fixed;
+  z-index: 10060;
+  width: min(360px, calc(100vw - 16px));
+  max-height: min(430px, calc(100vh - 16px));
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel, var(--bg));
+  color: var(--fg);
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.3);
+}
+
+.logbook-entity-chooser-head,
+.logbook-entity-choice,
+.logbook-entity-selected {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.logbook-entity-chooser-head {
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.logbook-entity-chooser-head strong {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.logbook-entity-search {
+  width: 100%;
+  min-height: 32px;
+  margin: 0;
+  box-sizing: border-box;
+}
+
+.logbook-entity-selected {
+  gap: 7px;
+  min-height: 28px;
+  padding: 0 8px;
+  border: 1px solid color-mix(in srgb, var(--border) 78%, transparent);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--fg) 4%, transparent);
+  font-size: 12px;
+}
+
+.logbook-entity-selected span {
+  opacity: 0.66;
+}
+
+.logbook-entity-selected strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.logbook-entity-choice-list {
+  display: grid;
+  gap: 4px;
+  min-height: 0;
+  overflow: auto;
+}
+
+.logbook-entity-choice {
+  gap: 8px;
+  width: 100%;
+  min-height: 42px;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.logbook-entity-choice:hover,
+.logbook-entity-choice:focus {
+  background: color-mix(in srgb, var(--accent, var(--red)) 12%, transparent);
+  outline: none;
+}
+
+.logbook-entity-choice.primary {
+  background: color-mix(in srgb, var(--accent, var(--red)) 9%, transparent);
+}
+
+.logbook-entity-choice-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 24px;
+  width: 24px;
+  height: 24px;
+  border: 1px solid color-mix(in srgb, currentColor 22%, transparent);
+  border-radius: 50%;
+}
+
+.logbook-entity-choice-main {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.logbook-entity-choice-main strong,
+.logbook-entity-choice-main span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.logbook-entity-choice-main span,
+.logbook-entity-empty {
+  font-size: 11px;
+  opacity: 0.66;
+}
+
+.logbook-entity-empty {
+  padding: 8px;
+}
+
+.logbook-editor-link,
+.logbook-markdown-link {
+  color: var(--accent, var(--red));
+  text-decoration: underline;
+  text-underline-offset: 0.18em;
+}
+
+.logbook-editor-link-invalid,
+.logbook-markdown-link-invalid {
+  color: color-mix(in srgb, var(--fg) 72%, transparent);
+  text-decoration-style: dotted;
+}
+
 .logbook-content:focus,
 .logbook-rich-content:focus,
 .logbook-datapoint input:focus,
@@ -507,15 +820,18 @@
   align-items: center;
 }
 
-.logbook-editor-token[data-open-person],
-.logbook-editor-token[data-open-location] {
+.logbook-editor-token {
   cursor: pointer;
 }
 
-.logbook-editor-token[data-open-person]:focus,
-.logbook-editor-token[data-open-location]:focus {
-  outline: 1px solid currentColor;
+.logbook-editor-token:focus,
+.logbook-editor-token.is-selected {
+  outline: 2px solid currentColor;
   outline-offset: 2px;
+}
+
+.logbook-editor-token.is-selected {
+  box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 14%, transparent);
 }
 
 .logbook-editor-token-person {
@@ -674,6 +990,303 @@
   border-color: var(--red);
 }
 
+.logbook-ai-head {
+  align-items: flex-start;
+}
+
+.logbook-ai-model {
+  max-width: 190px;
+  min-height: 22px;
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid color-mix(in srgb, var(--accent, var(--red)) 32%, var(--border));
+  border-radius: 999px;
+  padding: 0 8px;
+  background: color-mix(in srgb, var(--accent, var(--red)) 8%, transparent);
+  color: color-mix(in srgb, var(--fg) 84%, transparent);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.logbook-ai-actions {
+  display: grid;
+  gap: 10px;
+  margin: 10px 0;
+}
+
+.logbook-ai-control-box {
+  display: grid;
+  gap: 10px;
+  margin-top: 8px;
+  padding: 9px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--fg) 3%, transparent);
+}
+
+.logbook-ai-command-group {
+  display: grid;
+  gap: 6px;
+}
+
+.logbook-ai-command-title {
+  font-size: 11px;
+  color: color-mix(in srgb, var(--fg) 64%, transparent);
+}
+
+.logbook-ai-command-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.logbook-ai-command {
+  min-width: 0;
+  min-height: 48px;
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  gap: 7px;
+  align-items: center;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--fg) 4%, transparent);
+  color: var(--fg);
+  padding: 7px;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.logbook-ai-command:hover,
+.logbook-ai-command:focus {
+  border-color: color-mix(in srgb, var(--accent, var(--red)) 58%, var(--border));
+  background: color-mix(in srgb, var(--accent, var(--red)) 10%, transparent);
+  outline: none;
+}
+
+.logbook-ai-command.active,
+.logbook-ai-command.primary.active {
+  border-color: var(--accent, var(--red));
+  background: color-mix(in srgb, var(--accent, var(--red)) 14%, transparent);
+}
+
+.logbook-ai-command.primary {
+  border-color: color-mix(in srgb, var(--accent, var(--red)) 42%, var(--border));
+}
+
+.logbook-ai-command:disabled {
+  opacity: 0.48;
+  cursor: not-allowed;
+}
+
+.logbook-ai-command-icon {
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid color-mix(in srgb, currentColor 20%, transparent);
+  border-radius: 6px;
+  color: color-mix(in srgb, var(--accent, var(--red)) 75%, var(--fg));
+}
+
+.logbook-ai-command-copy {
+  min-width: 0;
+  display: grid;
+  gap: 1px;
+}
+
+.logbook-ai-command-copy strong,
+.logbook-ai-command-copy em {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.logbook-ai-command-copy strong {
+  font-size: 12px;
+}
+
+.logbook-ai-command-copy em {
+  font-style: normal;
+  font-size: 11px;
+  color: color-mix(in srgb, var(--fg) 62%, transparent);
+}
+
+.logbook-ai-meter {
+  display: grid;
+  gap: 8px;
+  padding: 9px;
+  border: 1px solid color-mix(in srgb, var(--accent, var(--red)) 28%, var(--border));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--fg) 4%, transparent);
+}
+
+.logbook-ai-runbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  margin: 8px 0;
+  padding: 9px;
+  border: 1px solid color-mix(in srgb, var(--accent, var(--red)) 34%, var(--border));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent, var(--red)) 7%, transparent);
+}
+
+.logbook-ai-runbar-copy {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.logbook-ai-runbar-copy span,
+.logbook-ai-runbar-copy em {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  color: color-mix(in srgb, var(--fg) 64%, transparent);
+}
+
+.logbook-ai-runbar-copy strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+}
+
+.logbook-ai-run-btn {
+  min-width: 116px;
+  white-space: nowrap;
+}
+
+.logbook-ai-results {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+  padding: 9px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--bg) 42%, transparent);
+}
+
+.logbook-ai-meter-head,
+.logbook-ai-ledger,
+.logbook-ai-receipt {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.logbook-ai-meter-head span {
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.logbook-ai-meter-head strong {
+  min-height: 22px;
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0 8px;
+  background: color-mix(in srgb, var(--fg) 5%, transparent);
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.logbook-ai-meter-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.logbook-ai-metric {
+  min-width: 0;
+  min-height: 58px;
+  display: grid;
+  align-content: center;
+  gap: 2px;
+  border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+  border-radius: 7px;
+  padding: 7px;
+  background: color-mix(in srgb, var(--bg) 46%, transparent);
+}
+
+.logbook-ai-metric span,
+.logbook-ai-metric em,
+.logbook-ai-ledger,
+.logbook-ai-receipt span {
+  font-size: 11px;
+  color: color-mix(in srgb, var(--fg) 64%, transparent);
+}
+
+.logbook-ai-metric strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 15px;
+  line-height: 1.2;
+}
+
+.logbook-ai-metric em {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-style: normal;
+}
+
+.logbook-ai-ledger {
+  flex-wrap: wrap;
+  padding-top: 2px;
+}
+
+.logbook-ai-ledger span {
+  min-width: 0;
+  display: inline-flex;
+  gap: 5px;
+  align-items: center;
+}
+
+.logbook-ai-ledger strong {
+  color: color-mix(in srgb, var(--fg) 84%, transparent);
+}
+
+.logbook-ai-receipt {
+  margin: 6px 0;
+  padding: 8px;
+  border: 1px solid color-mix(in srgb, var(--color-success) 38%, var(--border));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--color-success) 8%, transparent);
+}
+
+.logbook-ai-receipt > div {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.logbook-ai-receipt > div:last-child {
+  text-align: right;
+}
+
+.logbook-ai-receipt strong,
+.logbook-ai-receipt span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .logbook-ai-buttons {
   margin: 8px 0;
 }
@@ -789,8 +1402,56 @@
 .logbook-person-link:focus .logbook-person-card,
 .logbook-editor-token:hover .logbook-person-card,
 .logbook-editor-token:focus .logbook-person-card {
+  display: none;
+}
+
+.logbook-floating-entity-card.logbook-person-card {
+  position: fixed;
+  left: 0;
+  top: 0;
+  bottom: auto;
+  z-index: 10080;
   display: grid;
-  gap: 7px;
+  gap: 8px;
+  width: min(360px, calc(100vw - 16px));
+  max-height: min(480px, calc(100vh - 16px));
+  overflow: auto;
+  pointer-events: auto;
+}
+
+.logbook-floating-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding-top: 7px;
+  border-top: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+}
+
+.logbook-floating-card-btn {
+  min-height: 30px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--fg) 5%, transparent);
+  color: var(--fg);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.logbook-floating-card-btn:hover,
+.logbook-floating-card-btn:focus {
+  border-color: var(--accent, var(--red));
+  background: color-mix(in srgb, var(--accent, var(--red)) 12%, transparent);
+  outline: none;
+}
+
+.logbook-floating-card-btn.danger {
+  color: color-mix(in srgb, #ef4444 82%, var(--fg));
 }
 
 .logbook-person-card-head {
@@ -836,6 +1497,145 @@
   opacity: 0.72;
   font-style: normal;
   line-height: 1.35;
+}
+
+.logbook-person-card-note strong {
+  font-weight: 700;
+  opacity: 0.9;
+}
+
+.logbook-person-card-stats {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 6px;
+}
+
+.logbook-person-card-stat {
+  min-width: 0;
+  min-height: 30px;
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr);
+  gap: 6px;
+  align-items: center;
+  padding: 5px 6px;
+  border: 1px solid color-mix(in srgb, var(--border) 78%, transparent);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--fg) 4%, transparent);
+}
+
+.logbook-person-card-stat svg {
+  color: color-mix(in srgb, var(--accent, var(--red)) 78%, var(--fg));
+}
+
+.logbook-person-card-stat span,
+.logbook-person-card-stat em,
+.logbook-person-card-stat strong {
+  min-width: 0;
+}
+
+.logbook-person-card-stat span {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+}
+
+.logbook-person-card-stat em {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: color-mix(in srgb, var(--fg) 58%, transparent);
+  font-size: 10px;
+  font-style: normal;
+}
+
+.logbook-person-card-stat strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.logbook-person-card-section {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  padding-top: 7px;
+  border-top: 1px solid color-mix(in srgb, var(--border) 75%, transparent);
+}
+
+.logbook-person-card-section-title {
+  display: block;
+  color: color-mix(in srgb, var(--fg) 54%, transparent);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.logbook-person-card-aliases,
+.logbook-person-card-info,
+.logbook-person-card-detail-list {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.logbook-person-card-aliases {
+  display: flex;
+  flex-wrap: wrap;
+}
+
+.logbook-person-card-aliases span {
+  min-height: 22px;
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  max-width: 100%;
+  padding: 0 7px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--fg) 5%, transparent);
+  color: color-mix(in srgb, var(--fg) 78%, transparent);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.logbook-person-card-detail-list > span,
+.logbook-person-card-info-row {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.logbook-person-card-detail-list strong,
+.logbook-person-card-info-row span {
+  color: color-mix(in srgb, var(--fg) 58%, transparent);
+  font-size: 10px;
+  font-weight: 750;
+  text-transform: uppercase;
+}
+
+.logbook-person-card-detail-list em,
+.logbook-person-card-info-row strong {
+  min-width: 0;
+  color: color-mix(in srgb, var(--fg) 84%, transparent);
+  font-size: 12px;
+  font-style: normal;
+  line-height: 1.35;
+}
+
+.logbook-person-card-info-row strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.logbook-person-card .logbook-person-facts-preview,
+.logbook-person-card .logbook-person-connections {
+  margin-top: 0;
 }
 
 .logbook-person-connections {
@@ -1123,6 +1923,28 @@
   gap: 6px;
 }
 
+.logbook-person-image-link {
+  min-width: 0;
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.logbook-person-image-link img {
+  width: 42px;
+  height: 42px;
+  flex: 0 0 42px;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  object-fit: cover;
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
+}
+
+.logbook-person-image-link .logbook-empty {
+  margin: 0;
+}
+
 .logbook-person-fact-form {
   display: grid;
   gap: 8px;
@@ -1206,6 +2028,109 @@
   .logbook-person-fact em {
     justify-self: start;
   }
+}
+
+.logbook-graph-editor {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(180px, 230px);
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.logbook-graph-stage {
+  min-width: 0;
+  min-height: 250px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--fg) 3%, transparent);
+  overflow: hidden;
+}
+
+.logbook-graph-stage svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  min-height: 250px;
+}
+
+.logbook-graph-edge {
+  cursor: pointer;
+}
+
+.logbook-graph-edge line {
+  stroke: color-mix(in srgb, var(--fg) 24%, transparent);
+  stroke-width: 2.4;
+}
+
+.logbook-graph-edge.accepted line {
+  stroke: color-mix(in srgb, var(--color-success) 58%, var(--fg));
+}
+
+.logbook-graph-edge.suggested line {
+  stroke: color-mix(in srgb, var(--color-warning) 58%, var(--fg));
+  stroke-dasharray: 6 5;
+}
+
+.logbook-graph-edge text {
+  fill: color-mix(in srgb, var(--fg) 68%, transparent);
+  font-size: 11px;
+  paint-order: stroke;
+  pointer-events: none;
+  stroke: var(--bg);
+  stroke-linejoin: round;
+  stroke-width: 5;
+  text-anchor: middle;
+}
+
+.logbook-graph-node {
+  cursor: pointer;
+}
+
+.logbook-graph-node circle {
+  fill: color-mix(in srgb, var(--bg) 82%, var(--panel, var(--bg)));
+  stroke: color-mix(in srgb, var(--accent, var(--red)) 34%, var(--border));
+  stroke-width: 2;
+}
+
+.logbook-graph-node text {
+  fill: var(--fg);
+  font-size: 12px;
+  font-weight: 700;
+  pointer-events: none;
+  text-anchor: middle;
+}
+
+.logbook-graph-node:hover circle,
+.logbook-graph-node:focus circle,
+.logbook-graph-node.selected circle {
+  fill: color-mix(in srgb, var(--accent, var(--red)) 13%, var(--bg));
+  stroke: var(--accent, var(--red));
+}
+
+.logbook-graph-node:focus {
+  outline: none;
+}
+
+.logbook-graph-side {
+  min-width: 0;
+  display: grid;
+  align-content: start;
+  gap: 7px;
+  padding: 9px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--fg) 3%, transparent);
+}
+
+.logbook-graph-side strong,
+.logbook-graph-side span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.logbook-graph-side span {
+  color: color-mix(in srgb, var(--fg) 68%, transparent);
+  font-size: 12px;
 }
 
 .logbook-connection-form {
@@ -1476,8 +2401,33 @@ button.logbook-connection-person:hover {
     grid-column: span 1;
   }
 
+  .logbook-graph-editor,
   .logbook-connection-form-grid {
     grid-template-columns: 1fr;
+  }
+
+  .logbook-ai-command-grid,
+  .logbook-ai-meter-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .logbook-ai-meter-head,
+  .logbook-ai-runbar,
+  .logbook-ai-receipt {
+    align-items: stretch;
+  }
+
+  .logbook-ai-meter-head,
+  .logbook-ai-receipt {
+    flex-direction: column;
+  }
+
+  .logbook-ai-runbar {
+    grid-template-columns: 1fr;
+  }
+
+  .logbook-ai-receipt > div:last-child {
+    text-align: left;
   }
 }
 

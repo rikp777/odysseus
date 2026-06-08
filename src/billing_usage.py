@@ -166,7 +166,7 @@ def record_model_usage_from_metrics(
 ) -> Optional[str]:
     if not metrics:
         return None
-    source = str(metrics.get("usage_source") or "unknown")
+    source = str(metrics.get("ledger_source") or metrics.get("usage_source") or "unknown")
     return record_model_usage(
         owner=owner,
         session_id=session_id,
@@ -302,6 +302,7 @@ def get_usage_summary(
     *,
     period: str = "month",
     owner: Optional[str] = None,
+    source_prefix: Optional[str] = None,
     now: Optional[datetime] = None,
 ) -> Dict[str, Any]:
     start, end, normalized_period = _period_range(period, now=now)
@@ -315,6 +316,8 @@ def get_usage_summary(
         )
         if owner:
             q = q.filter(ModelUsageEvent.owner == owner)
+        if source_prefix:
+            q = q.filter(ModelUsageEvent.source.like(f"{source_prefix}%"))
         rows = q.order_by(ModelUsageEvent.created_at.asc()).all()
     finally:
         db.close()

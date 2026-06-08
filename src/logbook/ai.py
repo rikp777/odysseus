@@ -6,7 +6,7 @@ import itertools
 import json
 import re
 import uuid
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from fastapi import HTTPException
 from fastapi.responses import JSONResponse
@@ -33,6 +33,8 @@ from src.logbook.utils import (
 
 
 FALLBACK_AI_MODES = {"structure_day", "extract_people", "extract_locations", "extract_all"}
+LOGBOOK_AI_MAX_OUTPUT_TOKENS = 1600
+LOGBOOK_AI_SOURCE_PREFIX = "logbook_ai"
 NAME_WORD = r"[A-Z][A-Za-z'_-]{1,40}"
 NAME_PARTICLE = r"(?:van|de|der|den|ten|ter|von|da|del|di|la|le|du)"
 FULL_NAME_RE = re.compile(rf"(?<![\w@#])(?P<name>{NAME_WORD}(?:\s+(?:{NAME_PARTICLE}|{NAME_WORD})){{1,4}})(?![\w-])")
@@ -116,6 +118,201 @@ RELATION_LABELS = {
     "vader": ("family", "Father"),
     "father": ("family", "Father"),
 }
+
+
+def _safe_int(value: Any) -> int:
+    try:
+        return max(int(value or 0), 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _billing_state() -> Dict[str, Any]:
+    try:
+        from src.settings import load_settings
+        settings = load_settings()
+    except Exception:
+        settings = {}
+    return {
+        "enabled": bool(settings.get("cloud_billing_enabled", False)),
+        "usage_ledger_enabled": settings.get("cloud_billing_usage_ledger_enabled") is not False,
+    }
+
+
+def _money_display(value: Any) -> str:
+    try:
+        from src.billing.common import decimal_or_none, display_money
+        amount = decimal_or_none(value)
+        return display_money(amount) if amount is not None else ""
+    except Exception:
+        return ""
+
+
+def _public_cost_payload(endpoint_url: str, model: str, input_tokens: int, output_tokens: int) -> Dict[str, Any]:
+    if not endpoint_url or not model:
+        return {
+            "known": False,
+            "provider": "",
+            "currency": "USD",
+            "input": "",
+            "output": "",
+            "total": "",
+            "input_display": "",
+            "output_display": "",
+            "display": "",
+            "pricing_available": False,
+        }
+    try:
+        from src.billing_usage import estimate_usage_cost
+        cost = estimate_usage_cost(endpoint_url, model, input_tokens, output_tokens)
+    except Exception:
+        cost = {}
+    return {
+        "known": bool(cost.get("known_cost")),
+        "provider": str(cost.get("provider") or ""),
+        "currency": str(cost.get("currency") or "USD"),
+        "input": cost.get("input_cost_usd") or "",
+        "output": cost.get("output_cost_usd") or "",
+        "total": cost.get("total_cost_usd") or "",
+        "input_display": _money_display(cost.get("input_cost_usd")),
+        "output_display": _money_display(cost.get("output_cost_usd")),
+        "display": _money_display(cost.get("total_cost_usd")),
+        "pricing_available": bool(cost.get("pricing")),
+    }
+
+
+def _public_usage_summary(summary: Dict[str, Any]) -> Dict[str, Any]:
+    data = dict(summary or {})
+    data.pop("amount_decimal", None)
+    data.pop("projected_decimal", None)
+    return data
+
+
+def _usage_summaries(owner: str) -> Dict[str, Any]:
+    from src.billing_usage import get_usage_summary
+    return {
+        "day": _public_usage_summary(get_usage_summary(period="day", owner=owner, source_prefix=LOGBOOK_AI_SOURCE_PREFIX)),
+        "month": _public_usage_summary(get_usage_summary(period="month", owner=owner, source_prefix=LOGBOOK_AI_SOURCE_PREFIX)),
+    }
+
+
+def _safe_usage_summaries(owner: str) -> Dict[str, Any]:
+    try:
+        return _usage_summaries(owner)
+    except Exception:
+        return {"day": None, "month": None}
+
+
+def _resolve_ai_endpoint(owner: str) -> tuple[str, str, Dict[str, Any], Optional[str]]:
+    try:
+        from src.endpoint_resolver import resolve_endpoint
+    except Exception:
+        return "", "", {}, None
+
+    url, model, headers = resolve_endpoint("utility", owner=owner)
+    source = "utility"
+    if not url or not model:
+        url, model, headers = resolve_endpoint("default", owner=owner)
+        source = "default"
+    if not url or not model:
+        return "", "", {}, None
+    return str(url or ""), str(model or ""), headers or {}, source
+
+
+def _ai_messages(mode: str, entry_date: str, locale: str, content: str, current_entry: Dict[str, Any]) -> List[Dict[str, Any]]:
+    return [
+        {"role": "system", "content": ai_system_prompt(mode, locale)},
+        {
+            "role": "user",
+            "content": json.dumps({
+                "entry_date": entry_date,
+                "mode": mode,
+                "content": content or "",
+                "current_entry": current_entry or {},
+            }, ensure_ascii=False),
+        },
+    ]
+
+
+def _prepare_ai_request(owner: str, payload: LogbookAIAssist) -> Dict[str, Any]:
+    mode = (payload.mode or "").strip()
+    if mode not in AI_MODES:
+        raise HTTPException(400, "Unknown AI assist mode")
+    entry_date = validate_date(payload.entry_date)
+    locale = payload.locale if payload.locale in {"en", "nl"} else "en"
+    url, model, headers, source = _resolve_ai_endpoint(owner)
+    messages = _ai_messages(mode, entry_date, locale, payload.content or "", payload.current_entry or {})
+    return {
+        "mode": mode,
+        "entry_date": entry_date,
+        "locale": locale,
+        "url": url,
+        "model": model,
+        "headers": headers,
+        "source": source,
+        "messages": messages,
+    }
+
+
+def _estimate_from_request(owner: str, request: Dict[str, Any], payload: LogbookAIAssist) -> Dict[str, Any]:
+    try:
+        from src.model_context import estimate_tokens
+        input_tokens = estimate_tokens(request.get("messages") or [])
+        content_tokens = estimate_tokens([{"role": "user", "content": payload.content or ""}]) if payload.content else 0
+    except Exception:
+        input_tokens = max(1, round(len(payload.content or "") * 0.3)) if payload.content else 0
+        content_tokens = input_tokens
+    output_tokens = LOGBOOK_AI_MAX_OUTPUT_TOKENS
+    url = str(request.get("url") or "")
+    model = str(request.get("model") or "")
+    return {
+        "input_tokens": input_tokens,
+        "content_tokens": content_tokens,
+        "max_output_tokens": output_tokens,
+        "total_tokens": input_tokens + output_tokens,
+        "cost": _public_cost_payload(url, model, input_tokens, output_tokens),
+    }
+
+
+def _call_usage_payload(
+    owner: str,
+    request: Dict[str, Any],
+    payload: LogbookAIAssist,
+    call_result: Any,
+    *,
+    fallback: bool = False,
+) -> Dict[str, Any]:
+    estimate = _estimate_from_request(owner, request, payload)
+    metrics = call_result.get("usage") if isinstance(call_result, dict) else {}
+    endpoint_url = str((call_result or {}).get("endpoint_url") if isinstance(call_result, dict) else request.get("url") or "")
+    model = str((call_result or {}).get("model") if isinstance(call_result, dict) else request.get("model") or "")
+    provider = str((call_result or {}).get("provider") if isinstance(call_result, dict) else estimate.get("cost", {}).get("provider") or "")
+    cached = bool(isinstance(call_result, dict) and call_result.get("cached"))
+    input_tokens = 0 if fallback else _safe_int((metrics or {}).get("input_tokens"))
+    output_tokens = 0 if fallback else _safe_int((metrics or {}).get("output_tokens"))
+    recorded = bool(isinstance(call_result, dict) and call_result.get("recorded") and not cached and not fallback)
+    actual_cost = _public_cost_payload(endpoint_url, model, input_tokens, output_tokens) if input_tokens or output_tokens else _public_cost_payload(endpoint_url, model, 0, 0)
+    summaries = _safe_usage_summaries(owner)
+    return {
+        "mode": request.get("mode"),
+        "model": model or request.get("model") or None,
+        "source": request.get("source"),
+        "provider": provider,
+        "billing": _billing_state(),
+        "estimate": estimate,
+        "actual": {
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "total_tokens": input_tokens + output_tokens,
+            "usage_source": str((metrics or {}).get("usage_source") or ("fallback" if fallback else "")),
+            "cost": actual_cost,
+        },
+        "day": summaries.get("day"),
+        "month": summaries.get("month"),
+        "fallback": fallback,
+        "cached": cached,
+        "recorded": recorded,
+    }
 
 
 def _overlaps(start: int, end: int, ranges: List[tuple[int, int]]) -> bool:
@@ -601,7 +798,14 @@ def _fallback_preview_content(content: str, suggestions: Dict[str, Any]) -> str 
     return preview
 
 
-def local_ai_fallback_payload(mode: str, content: str, *, owner: str = "", warning: str | None = None) -> Dict[str, Any]:
+def local_ai_fallback_payload(
+    mode: str,
+    content: str,
+    *,
+    owner: str = "",
+    warning: str | None = None,
+    usage: Dict[str, Any] | None = None,
+) -> Dict[str, Any]:
     suggestions = prose_fallback_suggestions(content, owner=owner)
     raw: Dict[str, Any] = {
         **suggestions,
@@ -610,7 +814,10 @@ def local_ai_fallback_payload(mode: str, content: str, *, owner: str = "", warni
     }
     if mode in {"structure_day", "extract_all"}:
         raw["preview_content"] = _fallback_preview_content(content or "", suggestions)
-    return normalize_ai_payload(mode, raw, content or "", owner=owner)
+    result = normalize_ai_payload(mode, raw, content or "", owner=owner)
+    if usage:
+        result["usage"] = usage
+    return result
 
 
 def deterministic_ai_suggestions(content: str) -> Dict[str, Any]:
@@ -848,19 +1055,7 @@ def ai_system_prompt(mode: str, locale: str) -> str:
 
 
 def ai_status(owner: str) -> Dict[str, Any]:
-    try:
-        from src.endpoint_resolver import resolve_endpoint
-    except Exception:
-        return {
-            "ok": True,
-            "available": False,
-            "reason": "AI helpers are unavailable",
-        }
-
-    url, model, _headers = resolve_endpoint("utility", owner=owner)
-    source = "utility/default"
-    if not url or not model:
-        url, model, _headers = resolve_endpoint("default", owner=owner)
+    url, model, _headers, source = _resolve_ai_endpoint(owner)
     available = bool(url and model)
     return {
         "ok": True,
@@ -871,70 +1066,94 @@ def ai_status(owner: str) -> Dict[str, Any]:
     }
 
 
+def estimate_ai_usage(owner: str, payload: LogbookAIAssist) -> Dict[str, Any]:
+    request = _prepare_ai_request(owner, payload)
+    available = bool(request.get("url") and request.get("model"))
+    summaries = _safe_usage_summaries(owner)
+    return {
+        "ok": True,
+        "available": available,
+        "mode": request.get("mode"),
+        "model": request.get("model") if available else None,
+        "source": request.get("source") if available else None,
+        "billing": _billing_state(),
+        "estimate": _estimate_from_request(owner, request, payload),
+        "day": summaries.get("day"),
+        "month": summaries.get("month"),
+        "reason": None if available else "No utility or default LLM provider/model is configured",
+    }
+
+
+def ai_usage_summary(owner: str) -> Dict[str, Any]:
+    summaries = _safe_usage_summaries(owner)
+    return {
+        "ok": True,
+        "billing": _billing_state(),
+        "day": summaries.get("day"),
+        "month": summaries.get("month"),
+    }
+
+
 async def run_ai_assist(owner: str, payload: LogbookAIAssist) -> JSONResponse | Dict[str, Any]:
-    mode = (payload.mode or "").strip()
-    if mode not in AI_MODES:
-        raise HTTPException(400, "Unknown AI assist mode")
-    entry_date = validate_date(payload.entry_date)
-    locale = payload.locale if payload.locale in {"en", "nl"} else "en"
+    request = _prepare_ai_request(owner, payload)
+    mode = str(request["mode"])
+    entry_date = str(request["entry_date"])
     try:
-        from src.endpoint_resolver import resolve_endpoint
         from src.llm_core import llm_call_async
         from src.text_helpers import strip_think
     except Exception:
         return JSONResponse(status_code=503, content={"ok": False, "error": "AI helpers are unavailable"})
 
-    url, model, headers = resolve_endpoint("utility", owner=owner)
-    if not url or not model:
-        url, model, headers = resolve_endpoint("default", owner=owner)
+    url = str(request.get("url") or "")
+    model = str(request.get("model") or "")
     if not url or not model:
         return JSONResponse(status_code=503, content={"ok": False, "error": "No utility or default model is configured"})
 
-    messages = [
-        {"role": "system", "content": ai_system_prompt(mode, locale)},
-        {
-            "role": "user",
-            "content": json.dumps({
-                "entry_date": entry_date,
-                "mode": mode,
-                "content": payload.content or "",
-                "current_entry": payload.current_entry or {},
-            }, ensure_ascii=False),
-        },
-    ]
     try:
-        raw = await llm_call_async(
+        call_result = await llm_call_async(
             url=url,
             model=model,
-            messages=messages,
+            messages=request["messages"],
             temperature=0.2 if mode in {"extract_people", "extract_all", "summarize"} else 0.4,
-            max_tokens=1600,
-            headers=headers,
+            max_tokens=LOGBOOK_AI_MAX_OUTPUT_TOKENS,
+            headers=request.get("headers") or {},
             timeout=25,
             max_retries=2,
             owner=owner,
+            billing_context={
+                "source": f"{LOGBOOK_AI_SOURCE_PREFIX}:{mode}",
+                "message_id": f"logbook:{entry_date}:{mode}:{uuid.uuid4().hex[:10]}",
+            },
+            return_usage=True,
         )
     except HTTPException as exc:
         if mode in FALLBACK_AI_MODES:
             status_code = int(getattr(exc, "status_code", 500) or 500)
+            fallback_usage = _call_usage_payload(owner, request, payload, {}, fallback=True)
             return local_ai_fallback_payload(
                 mode,
                 payload.content or "",
                 owner=owner,
                 warning=f"AI provider returned {status_code}; showing local suggestions only.",
+                usage=fallback_usage,
             )
         return JSONResponse(status_code=exc.status_code, content={"ok": False, "error": str(exc.detail)})
     except Exception:
         if mode in FALLBACK_AI_MODES:
+            fallback_usage = _call_usage_payload(owner, request, payload, {}, fallback=True)
             return local_ai_fallback_payload(
                 mode,
                 payload.content or "",
                 owner=owner,
                 warning="AI provider failed; showing local suggestions only.",
+                usage=fallback_usage,
             )
         return JSONResponse(status_code=503, content={"ok": False, "error": "AI assist failed. Your entry was not changed."})
+    raw = call_result.get("text") if isinstance(call_result, dict) else str(call_result or "")
     cleaned = strip_think(raw or "", prose=True, prompt_echo=True)
-    return normalize_ai_payload(mode, extract_json_object(cleaned), payload.content or "", owner=owner)
+    result = normalize_ai_payload(mode, extract_json_object(cleaned), payload.content or "", owner=owner)
+    result["usage"] = _call_usage_payload(owner, request, payload, call_result)
+    return result
 
 
 def store_ai_person_suggestion_details(

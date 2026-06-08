@@ -11,9 +11,11 @@ import {
   applyEntrySuggestions,
   assistLogbook,
   createLocation,
+  estimateLogbookAI,
   getAIStatus,
   getEntry,
   getEntryRevision,
+  getLogbookAIUsage,
   listConnections,
   listEntryRevisions,
   listEntries,
@@ -29,31 +31,41 @@ import {
 } from './logbook/autocomplete.js';
 import { MODAL_ID, MOODS, QUICK_DATA, SAVE_DELAY } from './logbook/constants.js';
 import {
-  LOGBOOK_LINK_RE,
   currentEntitiesFromContent as _currentEntitiesFromContentForLists,
   entityListSignature as _entityListSignature,
+  linkTargetForEntity as _linkTargetForEntity,
   linkKind as _linkKind,
   locationForLink as _locationForLinkIn,
   locationMarkdown as _locationMarkdown,
   mentionMarkdown as _mentionMarkdown,
   personForLink as _personForLinkIn,
+  selectionLinkParts as _selectionLinkParts,
   selectionLinkTarget as _selectionLinkTargetForLists,
   slugName as _slugName,
 } from './logbook/entities.js';
 import {
+  escapeRichEditorToken as _escapeRichEditorTokenIn,
   focusRichEditorEnd as _focusRichEditorEnd,
+  insertMarkdownHorizontalRule as _insertMarkdownHorizontalRule,
   linkedSelectionText as _linkedSelectionText,
   renderEditorText as _renderEditorText,
   replaceRichSelectionWithLink as _replaceRichSelectionWithLinkIn,
   richEditorToMarkdown as _richEditorToMarkdown,
   selectionInside as _selectionInside,
+  toggleMarkdownCodeBlock as _toggleMarkdownCodeBlock,
+  toggleMarkdownHeading as _toggleMarkdownHeading,
+  toggleMarkdownLinePrefix as _toggleMarkdownLinePrefix,
+  toggleMarkdownOrderedList as _toggleMarkdownOrderedList,
+  toggleMarkdownSelectionFormat as _toggleMarkdownSelectionFormat,
   unlinkMarkdownSelection as _unlinkMarkdownSelection,
   unlinkRichSelection as _unlinkRichSelectionIn,
+  wrapRichSelection as _wrapRichSelection,
 } from './logbook/editor.js';
 import { iconBook as _iconBook, logbookIcon as _logbookIcon } from './logbook/icons.js';
 import {
   bindDirectoryControls as _bindDirectoryControls,
   bindDirectoryRowActions as _bindDirectoryRowActions,
+  directoryMeta as _directoryMeta,
   renderLocationRowsHtml as _renderLocationRowsHtml,
   renderLocationsPanelHtml as _renderLocationsPanelHtml,
   renderPeoplePanelHtml as _renderPeoplePanelHtml,
@@ -83,6 +95,11 @@ let _aiPreview = null;
 let _aiBusy = false;
 let _aiError = '';
 let _aiStatus = { available: false, reason: 'Checking AI provider...' };
+let _aiEstimate = null;
+let _aiUsageSummary = null;
+let _aiSelectedMode = 'structure_day';
+let _aiEstimateBusy = false;
+let _aiEstimateTimer = null;
 let _search = '';
 let _filterPerson = '';
 let _filterLocation = '';
@@ -101,6 +118,39 @@ let _historyError = '';
 let _revisions = [];
 let _revisionPreview = null;
 let _revisionPreviewBusy = false;
+let _selectionMenu = null;
+let _entityLinkChooser = null;
+
+const AI_MODE_GROUPS = [
+  {
+    label: 'Write',
+    items: [
+      { mode: 'structure_day', label: 'Draft', detail: 'Shape today', icon: 'book', primary: true },
+      { mode: 'clean_spelling', label: 'Spelling', detail: 'Keep voice', icon: 'bold' },
+      { mode: 'ask_questions', label: 'Questions', detail: 'Find gaps', icon: 'quote' },
+    ],
+  },
+  {
+    label: 'Review',
+    items: [
+      { mode: 'summarize', label: 'Summary', detail: 'Short recap', icon: 'list' },
+      { mode: 'reflect', label: 'Reflect', detail: 'Gentle note', icon: 'quote' },
+    ],
+  },
+  {
+    label: 'Extract',
+    items: [
+      { mode: 'extract_people', label: 'People', detail: 'Mentions', icon: 'person' },
+      { mode: 'extract_locations', label: 'Places', detail: 'Locations', icon: 'location' },
+      { mode: 'extract_all', label: 'Detect', detail: 'Links and data', icon: 'link' },
+      { mode: 'extract_facts', label: 'Facts', detail: 'Saved entry', icon: 'food', facts: true },
+    ],
+  },
+];
+let _activeEditorToken = null;
+let _floatingEntityCard = null;
+let _floatingEntityCardSource = null;
+let _floatingEntityCardHideTimer = null;
 
 function _setStatus(text) {
   _saveStatus = text;
@@ -112,6 +162,7 @@ function _markDirty() {
   _dirty = true;
   _setStatus('Unsaved');
   _refreshTokenEstimate();
+  _scheduleAIEstimateRefresh();
   if (_saveTimer) clearTimeout(_saveTimer);
   _saveTimer = setTimeout(() => {
     _saveNow().catch(() => {});
@@ -263,6 +314,62 @@ async function _loadAIStatus() {
   }
 }
 
+function _aiLocale() {
+  return (navigator.language || 'en').toLowerCase().startsWith('nl') ? 'nl' : 'en';
+}
+
+function _aiRequestPayload(mode = _aiSelectedMode) {
+  const requestMode = mode === 'extract_facts' ? 'extract_all' : mode;
+  return {
+    entry_date: _date,
+    content: _entry?.content || '',
+    mode: requestMode,
+    locale: _aiLocale(),
+    current_entry: _entry || {},
+  };
+}
+
+async function _loadAIUsageSummary({ render = false } = {}) {
+  try {
+    _aiUsageSummary = await getLogbookAIUsage();
+    if (_aiPreview?.usage && _aiUsageSummary) {
+      _aiPreview.usage.billing = _aiUsageSummary.billing || _aiPreview.usage.billing;
+      _aiPreview.usage.day = _aiUsageSummary.day || _aiPreview.usage.day;
+      _aiPreview.usage.month = _aiUsageSummary.month || _aiPreview.usage.month;
+    }
+  } catch (_) {
+    _aiUsageSummary = null;
+  }
+  if (render) _renderAIPanel();
+}
+
+async function _loadAIEstimate(mode = _aiSelectedMode, { render = false } = {}) {
+  if (_aiStatus?.available !== true) {
+    _aiEstimate = null;
+    if (render) _renderAIPanel();
+    return;
+  }
+  _aiEstimateBusy = true;
+  if (render) _renderAIPanel();
+  try {
+    _aiEstimate = await estimateLogbookAI(_aiRequestPayload(mode));
+  } catch (_) {
+    _aiEstimate = null;
+  } finally {
+    _aiEstimateBusy = false;
+    if (render) _renderAIPanel();
+  }
+}
+
+function _scheduleAIEstimateRefresh() {
+  if (!_open || _aiStatus?.available !== true) return;
+  if (_aiEstimateTimer) clearTimeout(_aiEstimateTimer);
+  _aiEstimateTimer = setTimeout(() => {
+    _aiEstimateTimer = null;
+    _loadAIEstimate(_aiSelectedMode, { render: true }).catch(() => {});
+  }, 700);
+}
+
 async function _loadDate(date) {
   if (_dirty) {
     try { await _saveNow({ silent: true }); } catch (_) {}
@@ -270,7 +377,9 @@ async function _loadDate(date) {
   _date = date;
   _aiPreview = null;
   _aiError = '';
-  await Promise.all([_loadEntry(_date), _loadPeople(), _loadLocations(), _loadConnections(), _loadEntries(), _loadAIStatus()]);
+  _aiEstimate = null;
+  await Promise.all([_loadEntry(_date), _loadPeople(), _loadLocations(), _loadConnections(), _loadEntries(), _loadAIStatus(), _loadAIUsageSummary()]);
+  await _loadAIEstimate(_aiSelectedMode);
   _render();
 }
 
@@ -316,31 +425,109 @@ function _safePersonImage(src) {
   return '';
 }
 
+function _personCardText(value, maxLength = 150) {
+  const text = String(value || '').replace(/\s+/g, ' ').trim();
+  if (!text || text.length <= maxLength) return text;
+  return `${text.slice(0, Math.max(0, maxLength - 3)).trim()}...`;
+}
+
+function _personCardSectionHtml(title, contentHtml) {
+  if (!contentHtml) return '';
+  return `
+    <span class="logbook-person-card-section">
+      <span class="logbook-person-card-section-title">${_e(title)}</span>
+      ${contentHtml}
+    </span>
+  `;
+}
+
+function _personCardStatHtml(iconHtml, label, value) {
+  if (value === '' || value === null || value === undefined) return '';
+  return `
+    <span class="logbook-person-card-stat">
+      ${iconHtml}
+      <span><em>${_e(label)}</em><strong>${_e(value)}</strong></span>
+    </span>
+  `;
+}
+
+function _personCardStatsHtml(person) {
+  if (!person?.id) return '';
+  const stats = [
+    person.last_mentioned ? _personCardStatHtml(_logbookIcon('quote', 12), 'Last seen', person.last_mentioned) : '',
+  ].filter(Boolean).join('');
+  return stats ? `<span class="logbook-person-card-stats">${stats}</span>` : '';
+}
+
+function _personCardAliasesHtml(person) {
+  const aliases = Array.isArray(person?.aliases)
+    ? person.aliases.map(alias => _personCardText(alias, 44)).filter(Boolean)
+    : [];
+  if (!aliases.length) return '';
+  const shown = aliases.slice(0, 4).map(alias => `<span>${_e(alias)}</span>`).join('');
+  const extra = Math.max(0, aliases.length - 4);
+  return _personCardSectionHtml('Also known as', `
+    <span class="logbook-person-card-aliases">
+      ${shown}${extra ? `<span>+${extra}</span>` : ''}
+    </span>
+  `);
+}
+
+function _personCardContextHtml(person) {
+  const rows = [];
+  const notes = _personCardText(person?.notes, 170);
+  const context = _personCardText(person?.llm_context, 190);
+  if (notes) rows.push(`<span><strong>Notes</strong><em>${_e(notes)}</em></span>`);
+  if (context && context !== notes) rows.push(`<span><strong>Context</strong><em>${_e(context)}</em></span>`);
+  if (!rows.length) return '';
+  return _personCardSectionHtml('Details', `<span class="logbook-person-card-detail-list">${rows.join('')}</span>`);
+}
+
+function _personCardContactHtml(person, snapshot, name) {
+  const emails = Array.isArray(snapshot.emails) ? snapshot.emails : (snapshot.email ? [snapshot.email] : []);
+  const phones = Array.isArray(snapshot.phones) ? snapshot.phones : (snapshot.phone ? [snapshot.phone] : []);
+  const rows = [];
+  const contactName = _personCardText(snapshot.name, 64);
+  if (contactName && contactName !== name) rows.push(['Contact', contactName]);
+  if (emails.length) rows.push(['Email', `${_personCardText(emails[0], 80)}${emails.length > 1 ? ` +${emails.length - 1}` : ''}`]);
+  if (phones.length) rows.push(['Phone', `${_personCardText(phones[0], 36)}${phones.length > 1 ? ` +${phones.length - 1}` : ''}`]);
+  if (person?.contact_source) rows.push(['Source', _personCardText(person.contact_source, 42)]);
+  if (!rows.length) return '';
+  const html = rows.map(([label, value]) => `
+    <span class="logbook-person-card-info-row">
+      <span>${_e(label)}</span>
+      <strong>${_e(value)}</strong>
+    </span>
+  `).join('');
+  return _personCardSectionHtml('Contact', `<span class="logbook-person-card-info">${html}</span>`);
+}
+
 function _personCardHtml(person, label, target) {
   const snapshot = person?.contact_snapshot || {};
   const image = _safePersonImage(snapshot.photo || snapshot.avatar || snapshot.image || snapshot.image_url || snapshot.picture);
   const name = person?.display_name || label || target || 'Person';
+  const surface = String(label || '').trim();
+  const surfaceNote = surface && surface.toLowerCase() !== String(name).toLowerCase()
+    ? `<span class="logbook-person-card-note"><strong>Text in entry:</strong> ${_e(surface)}</span>`
+    : '';
   const relation = person?.relationship_label || '';
-  const notes = person?.notes || person?.llm_context || '';
-  const emails = Array.isArray(snapshot.emails) ? snapshot.emails : (snapshot.email ? [snapshot.email] : []);
-  const phones = Array.isArray(snapshot.phones) ? snapshot.phones : (snapshot.phone ? [snapshot.phone] : []);
-  const contactBits = [
-    snapshot.name,
-    ...emails,
-    ...phones,
-  ].filter(Boolean);
   const initial = String(name).trim().slice(0, 1).toUpperCase() || '?';
   const connections = _personConnectionsPreviewHtml(person, { limit: 3 });
+  const facts = _personFactsPreviewHtml(person, { limit: 3 });
   return `
     <span class="logbook-person-card" role="tooltip">
       <span class="logbook-person-card-head">
         ${image ? `<img src="${_e(image)}" alt="">` : `<span class="logbook-person-initial logbook-card-icon" title="${_e(initial)}">${_logbookIcon('person', 16)}</span>`}
         <span><strong>${_e(name)}</strong>${relation ? `<em>${_e(relation)}</em>` : ''}</span>
       </span>
-      ${notes ? `<span class="logbook-person-card-note">${_e(notes)}</span>` : ''}
-      ${connections}
-      ${contactBits.length ? `<span class="logbook-person-card-note">${_e(contactBits.slice(0, 3).join(' | '))}</span>` : ''}
-      ${person?.id ? '<span class="logbook-person-card-link">Open person</span>' : '<span class="logbook-person-card-link">Apply or save to create this person</span>'}
+      ${surfaceNote}
+      ${_personCardStatsHtml(person)}
+      ${facts ? _personCardSectionHtml('Known facts', facts) : ''}
+      ${connections ? _personCardSectionHtml('Connections', connections) : ''}
+      ${_personCardAliasesHtml(person)}
+      ${_personCardContextHtml(person)}
+      ${_personCardContactHtml(person, snapshot, name)}
+      ${person?.id ? '<span class="logbook-person-card-link">Linked person</span>' : '<span class="logbook-person-card-link">Apply or save to create this person</span>'}
     </span>
   `;
 }
@@ -353,6 +540,10 @@ function _renderPersonLink(label, target) {
 
 function _locationCardHtml(location, label, target) {
   const name = location?.display_name || label || target || 'Place';
+  const surface = String(label || '').trim();
+  const surfaceNote = surface && surface !== name
+    ? `<span class="logbook-person-card-note"><strong>Text in entry:</strong> ${_e(surface)}</span>`
+    : '';
   const kind = location?.location_type || '';
   const address = location?.address || '';
   const notes = location?.notes || location?.llm_context || '';
@@ -365,10 +556,11 @@ function _locationCardHtml(location, label, target) {
         <span class="logbook-person-initial logbook-card-icon">${_logbookIcon('location', 16)}</span>
         <span><strong>${_e(name)}</strong>${kind ? `<em>${_e(kind)}</em>` : ''}</span>
       </span>
+      ${surfaceNote}
       ${address ? `<span class="logbook-person-card-note">${_e(address)}</span>` : ''}
       ${coords ? `<span class="logbook-person-card-note">${_e(coords)}</span>` : ''}
       ${notes ? `<span class="logbook-person-card-note">${_e(notes)}</span>` : ''}
-      ${location?.id ? '<span class="logbook-person-card-link">Open place</span>' : '<span class="logbook-person-card-link">Save to create this place</span>'}
+      ${location?.id ? '<span class="logbook-person-card-link">Linked place</span>' : '<span class="logbook-person-card-link">Save to create this place</span>'}
     </span>
   `;
 }
@@ -399,6 +591,56 @@ function _renderDataLink(label, target) {
   return `<span class="logbook-person-link logbook-data-link" tabindex="0" role="text"><span class="logbook-link-label">${_logbookIcon('food', 12)}<span>${_e(label)}</span></span>${_dataCardHtml(label, target)}</span>`;
 }
 
+function _isEntityMarkdownTarget(target) {
+  const value = String(target || '').trim();
+  return /^(?:person|place|location|data|food):[A-Za-z0-9_-]{2,100}$/i.test(value)
+    || /^[a-z][a-z0-9]*(?:_[a-z0-9]+)+$/.test(value);
+}
+
+function _normalizeMarkdownUrl(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  if (/^[a-z][a-z0-9+.-]*:/i.test(raw) || raw.startsWith('#')) return raw;
+  if (/^[^\s@/]+\.[^\s@/]{2,}(?:[/?#].*)?$/i.test(raw)) return `https://${raw}`;
+  return raw;
+}
+
+function _safeMarkdownHref(value) {
+  const raw = _normalizeMarkdownUrl(value);
+  if (!raw) return '';
+  if (raw.startsWith('#')) return /^#[A-Za-z0-9_-]*$/.test(raw) ? raw : '';
+  try {
+    const parsed = new URL(raw, window.location.origin);
+    return ['http:', 'https:', 'mailto:'].includes(parsed.protocol) ? parsed.href : '';
+  } catch (_) {
+    return '';
+  }
+}
+
+function _renderMarkdownAnchor(label, target, { editor = false } = {}) {
+  const href = _safeMarkdownHref(target);
+  const cls = editor ? 'logbook-editor-link' : 'logbook-person-link logbook-markdown-link';
+  if (!href) {
+    return `<span class="${editor ? 'logbook-editor-link logbook-editor-link-invalid' : 'logbook-markdown-link logbook-markdown-link-invalid'}" data-logbook-markdown-link="1" data-href="${_e(target)}">${_e(label)}</span>`;
+  }
+  const dataAttrs = editor ? ` data-logbook-markdown-link="1" data-href="${_e(_normalizeMarkdownUrl(target))}"` : '';
+  return `<a class="${cls}" href="${_e(href)}"${dataAttrs} target="_blank" rel="noopener noreferrer">${_e(label)}</a>`;
+}
+
+function _renderEditorMarkdownLink(label, target) {
+  return _isEntityMarkdownTarget(target)
+    ? _editorTokenHtml(label, target)
+    : _renderMarkdownAnchor(label, target, { editor: true });
+}
+
+function _renderDisplayMarkdownLink(label, target) {
+  if (!_isEntityMarkdownTarget(target)) return _renderMarkdownAnchor(label, target);
+  const kind = _linkKind(target);
+  if (kind === 'location') return _renderLocationLink(label, target);
+  if (kind === 'data') return _renderDataLink(label, target);
+  return _renderPersonLink(label, target);
+}
+
 function _editorTokenHtml(label, target) {
   const kind = _linkKind(target);
   const cls = kind === 'location'
@@ -408,7 +650,7 @@ function _editorTokenHtml(label, target) {
   const card = kind === 'location'
     ? _locationCardHtml(_locationForLink(target, label), label, target)
     : kind === 'data' ? _dataCardHtml(label, target) : _personCardHtml(_personForLink(target, label), label, target);
-  let openAttrs = ' role="text"';
+  let openAttrs = ' role="text" tabindex="0"';
   if (kind === 'location') {
     const location = _locationForLink(target, label);
     if (location?.id) {
@@ -424,24 +666,20 @@ function _editorTokenHtml(label, target) {
 }
 
 function _renderLogbookEditorText(content) {
-  return _renderEditorText(content, { escapeHtml: _e, renderToken: _editorTokenHtml });
+  return _renderEditorText(content, { escapeHtml: _e, renderLink: _renderEditorMarkdownLink });
 }
 
 function _renderLogbookText(content) {
-  const text = String(content || '');
-  let html = '';
-  let last = 0;
-  LOGBOOK_LINK_RE.lastIndex = 0;
-  for (const match of text.matchAll(LOGBOOK_LINK_RE)) {
-    html += _e(text.slice(last, match.index));
-    const kind = _linkKind(match[2]);
-    if (kind === 'location') html += _renderLocationLink(match[1], match[2]);
-    else if (kind === 'data') html += _renderDataLink(match[1], match[2]);
-    else html += _renderPersonLink(match[1], match[2]);
-    last = match.index + match[0].length;
-  }
-  html += _e(text.slice(last));
+  const html = _renderEditorText(content, { escapeHtml: _e, renderLink: _renderDisplayMarkdownLink });
   return html || '<span class="logbook-empty">No text yet.</span>';
+}
+
+function _plainLogbookSnippet(content) {
+  return String(content || '')
+    .replace(/\[([^\]\n]{1,300})\]\(([^)\n]{1,700})\)/g, '$1')
+    .replace(/(\*+|_+)([^\n*_]+?)\1/g, '$2')
+    .replace(/~~([^~\n]+?)~~/g, '$1')
+    .replace(/`([^`\n]+?)`/g, '$1');
 }
 
 function _syncEntryFromEditor() {
@@ -463,6 +701,40 @@ function _estimateEntryTokens(content) {
 function _formatTokenCount(count) {
   const value = Number(count || 0);
   return `${value.toLocaleString()} token${value === 1 ? '' : 's'}`;
+}
+
+function _formatCompactTokens(count) {
+  const value = Number(count || 0);
+  if (!Number.isFinite(value) || value <= 0) return '0';
+  if (value >= 1000000) return `${(value / 1000000).toFixed(value >= 10000000 ? 0 : 1)}M`;
+  if (value >= 1000) return `${(value / 1000).toFixed(value >= 10000 ? 0 : 1)}k`;
+  return value.toLocaleString();
+}
+
+function _formatMoneyDisplay(value, fallback = '') {
+  const text = String(value || '').trim();
+  return text || fallback;
+}
+
+function _aiIcon(kind, size = 14) {
+  return kind === 'book' ? _iconBook(size) : _logbookIcon(kind, size);
+}
+
+function _aiEstimateData() {
+  return _aiEstimate?.estimate || _aiPreview?.usage?.estimate || null;
+}
+
+function _aiUsageData() {
+  const usage = _aiPreview?.usage || {};
+  return {
+    billing: usage.billing || _aiUsageSummary?.billing || _aiEstimate?.billing || {},
+    day: usage.day || _aiUsageSummary?.day || _aiEstimate?.day || null,
+    month: usage.month || _aiUsageSummary?.month || _aiEstimate?.month || null,
+  };
+}
+
+function _aiActualUsageData() {
+  return _aiPreview?.usage?.actual || null;
 }
 
 function _refreshTokenEstimate(content = null) {
@@ -658,6 +930,10 @@ function _refreshScoreControls(field) {
 }
 
 function _render() {
+  _closeSelectionMenu();
+  _closeEntityLinkChooser();
+  _closeFloatingEntityCard();
+  _clearActiveEditorToken();
   const modal = _renderShell();
   _captureWindowRect(modal);
   _ensureLogbookContent(modal);
@@ -680,7 +956,7 @@ function _navigatorHtml() {
       <button type="button" class="logbook-day-row ${entry.entry_date === _date ? 'active' : ''}" data-date="${_e(entry.entry_date)}">
         <span class="logbook-day-main">
           <span class="logbook-day-date">${_e(_dateLabel(entry.entry_date))}</span>
-          ${entry.snippet ? `<span class="logbook-day-snippet">${_e(entry.snippet)}</span>` : ''}
+          ${entry.snippet ? `<span class="logbook-day-snippet">${_e(_plainLogbookSnippet(entry.snippet))}</span>` : ''}
           ${meta ? `<span class="logbook-day-meta">${_e(meta)}</span>` : ''}
         </span>
         <span class="logbook-day-state" data-state="${_e(_entryStatus(entry))}">${_e(_entryStatus(entry))}</span>
@@ -746,7 +1022,23 @@ function _editorHtml() {
       </div>
     </div>
     ${_historyOpen ? _historyHtml() : ''}
-    <div class="logbook-link-toolbar" role="toolbar" aria-label="Link selected text">
+    <div class="logbook-link-toolbar" role="toolbar" aria-label="Format selected text">
+      <button type="button" class="logbook-format-button" data-logbook-format="bold" title="Bold" aria-label="Bold">${_logbookIcon('bold', 13)}</button>
+      <button type="button" class="logbook-format-button" data-logbook-format="italic" title="Italic" aria-label="Italic">${_logbookIcon('italic', 13)}</button>
+      <button type="button" class="logbook-format-button" data-logbook-format="strike" title="Strikethrough" aria-label="Strikethrough">${_logbookIcon('strike', 13)}</button>
+      <span class="logbook-toolbar-sep" aria-hidden="true"></span>
+      <button type="button" class="logbook-format-button logbook-format-text" data-logbook-format="h1" title="Heading 1" aria-label="Heading 1">H1</button>
+      <button type="button" class="logbook-format-button logbook-format-text" data-logbook-format="h2" title="Heading 2" aria-label="Heading 2">H2</button>
+      <button type="button" class="logbook-format-button logbook-format-text" data-logbook-format="h3" title="Heading 3" aria-label="Heading 3">H3</button>
+      <button type="button" class="logbook-format-button" data-logbook-format="quote" title="Quote" aria-label="Quote">${_logbookIcon('quote', 13)}</button>
+      <button type="button" class="logbook-format-button" data-logbook-format="ul" title="Bullet list" aria-label="Bullet list">${_logbookIcon('list', 13)}</button>
+      <button type="button" class="logbook-format-button" data-logbook-format="ol" title="Numbered list" aria-label="Numbered list">${_logbookIcon('orderedList', 13)}</button>
+      <span class="logbook-toolbar-sep" aria-hidden="true"></span>
+      <button type="button" class="logbook-format-button" data-logbook-format="code" title="Inline code" aria-label="Inline code">${_logbookIcon('code', 13)}</button>
+      <button type="button" class="logbook-format-button" data-logbook-format="codeblock" title="Code block" aria-label="Code block">${_logbookIcon('codeBlock', 13)}</button>
+      <button type="button" class="logbook-format-button" data-logbook-format="hr" title="Horizontal rule" aria-label="Horizontal rule">${_logbookIcon('hr', 13)}</button>
+      <button type="button" class="logbook-format-button" data-logbook-format="link" title="Link" aria-label="Link">${_logbookIcon('link', 13)}</button>
+      <span class="logbook-toolbar-sep" aria-hidden="true"></span>
       <button type="button" data-logbook-link-selection="person" title="Link selected text as person">${_logbookIcon('person', 13)}<span>Person</span></button>
       <button type="button" data-logbook-link-selection="location" title="Link selected text as place">${_logbookIcon('location', 13)}<span>Place</span></button>
       <button type="button" data-logbook-link-selection="food" title="Link selected text as food">${_logbookIcon('food', 13)}<span>Food</span></button>
@@ -1058,35 +1350,158 @@ function _connectionsHtml() {
   `;
 }
 
+function _aiModeMeta(mode) {
+  for (const group of AI_MODE_GROUPS) {
+    const found = group.items.find(item => item.mode === mode);
+    if (found) return found;
+  }
+  return { mode, label: mode.replace(/_/g, ' '), detail: '', icon: 'person' };
+}
+
+function _aiMetricHtml(label, value, meta = '') {
+  return `
+    <div class="logbook-ai-metric">
+      <span>${_e(label)}</span>
+      <strong>${_e(value)}</strong>
+      ${meta ? `<em>${_e(meta)}</em>` : ''}
+    </div>
+  `;
+}
+
+function _aiUsageMeterHtml() {
+  const estimate = _aiEstimateData();
+  const actual = _aiActualUsageData();
+  const usage = _aiUsageData();
+  const billing = usage.billing || {};
+  const day = usage.day || {};
+  const month = usage.month || {};
+  const estimatedInput = estimate?.input_tokens ?? _estimateEntryTokens(_entry?.content || '');
+  const estimatedOutput = estimate?.max_output_tokens ?? 0;
+  const estimatedTotal = estimate?.total_tokens ?? (estimatedInput + estimatedOutput);
+  const estimateCost = estimate?.cost || {};
+  const runCost = billing.enabled
+    ? _formatMoneyDisplay(estimateCost.display, estimateCost.known ? '$0.00' : 'Unknown')
+    : 'Billing off';
+  const billingLabel = billing.enabled
+    ? (billing.usage_ledger_enabled === false ? 'Billing on, ledger off' : 'Billing on')
+    : 'Billing off';
+  const dayCost = billing.enabled ? _formatMoneyDisplay(day.display, '$0.00') : '';
+  const monthCost = billing.enabled ? _formatMoneyDisplay(month.display, '$0.00') : '';
+  const actualMeta = actual?.total_tokens
+    ? `${_formatCompactTokens(actual.total_tokens)} last run${actual.cost?.display && billing.enabled ? ` | ${actual.cost.display}` : ''}`
+    : (_aiEstimateBusy ? 'Updating...' : 'Ready');
+  return `
+    <div class="logbook-ai-meter">
+      <div class="logbook-ai-meter-head">
+        <span>Usage</span>
+        <strong>${_e(billingLabel)}</strong>
+      </div>
+      <div class="logbook-ai-meter-grid">
+        ${_aiMetricHtml('Prompt', _formatCompactTokens(estimatedInput), 'input')}
+        ${_aiMetricHtml('Output cap', estimatedOutput ? _formatCompactTokens(estimatedOutput) : '0', 'max')}
+        ${_aiMetricHtml('Run total', _formatCompactTokens(estimatedTotal), actualMeta)}
+        ${_aiMetricHtml('Run cost', runCost, estimateCost.known || !billing.enabled ? '' : 'pricing missing')}
+      </div>
+      <div class="logbook-ai-ledger">
+        <span><strong>Today</strong>${_e(_formatCompactTokens(day.total_tokens || 0))} tokens${dayCost ? ` | ${_e(dayCost)}` : ''}</span>
+        <span><strong>Month</strong>${_e(_formatCompactTokens(month.total_tokens || 0))} tokens${monthCost ? ` | ${_e(monthCost)}` : ''}</span>
+      </div>
+    </div>
+  `;
+}
+
+function _aiModeGroupsHtml(disabled, disabledTitle) {
+  return AI_MODE_GROUPS.map(group => `
+    <div class="logbook-ai-command-group">
+      <div class="logbook-ai-command-title">${_e(group.label)}</div>
+      <div class="logbook-ai-command-grid">
+        ${group.items.map(item => {
+          const active = _aiSelectedMode === item.mode;
+          const primary = item.primary ? ' primary' : '';
+          const activeCls = active ? ' active' : '';
+          return `
+            <button type="button" class="logbook-ai-command${primary}${activeCls}" data-ai-mode="${_e(item.mode)}"${disabled}${disabledTitle}>
+              <span class="logbook-ai-command-icon">${_aiIcon(item.icon, 14)}</span>
+              <span class="logbook-ai-command-copy">
+                <strong>${_e(item.label)}</strong>
+                <em>${_e(item.detail)}</em>
+              </span>
+            </button>
+          `;
+        }).join('')}
+      </div>
+    </div>
+  `).join('');
+}
+
+function _aiRunControlsHtml(disabled, disabledTitle) {
+  const selected = _aiModeMeta(_aiSelectedMode);
+  const isFactsMode = _aiSelectedMode === 'extract_facts';
+  const label = isFactsMode ? 'Run fact extraction' : 'Run AI help';
+  const detail = isFactsMode ? 'Uses the saved entry' : `${selected.label} | ${selected.detail}`;
+  return `
+    <div class="logbook-ai-runbar">
+      <div class="logbook-ai-runbar-copy">
+        <span>Selected</span>
+        <strong>${_e(selected.label)}</strong>
+        <em>${_e(detail)}</em>
+      </div>
+      <button type="button" class="cal-btn cal-btn-primary logbook-ai-run-btn" id="logbook-run-ai"${disabled}${disabledTitle}>${_e(label)}</button>
+    </div>
+  `;
+}
+
+function _aiRunReceiptHtml() {
+  const usage = _aiPreview?.usage;
+  if (!usage) return '';
+  const actual = usage.actual || {};
+  const billing = usage.billing || {};
+  const mode = _aiModeMeta(usage.mode || _aiSelectedMode);
+  const state = usage.fallback ? 'Local fallback' : usage.cached ? 'Cached result' : 'Last run';
+  const cost = billing.enabled
+    ? _formatMoneyDisplay(actual.cost?.display, actual.cost?.known ? '$0.00' : 'Unknown cost')
+    : 'Billing off';
+  const source = actual.usage_source ? ` | ${actual.usage_source}` : '';
+  return `
+    <div class="logbook-ai-receipt">
+      <div>
+        <strong>${_e(state)}</strong>
+        <span>${_e(mode.label)}${_e(source)}</span>
+      </div>
+      <div>
+        <strong>${_e(_formatCompactTokens(actual.total_tokens || 0))}</strong>
+        <span>${_e(cost)}</span>
+      </div>
+    </div>
+  `;
+}
+
 function _aiHtml() {
   const aiAvailable = _aiStatus?.available === true;
   const disabled = aiAvailable ? '' : ' disabled aria-disabled="true"';
   const disabledTitle = aiAvailable ? '' : ` title="${_e(_aiStatus?.reason || 'No LLM provider configured')}"`;
-  const extractFactsTitle = aiAvailable
-    ? ' title="Extract person facts from this saved entry"'
-    : disabledTitle;
   const preview = _aiPreview
     ? _aiPreviewHtml()
     : aiAvailable
       ? '<div class="logbook-empty">AI previews appear here.</div>'
       : '<div class="logbook-empty">Manual writing still works. Configure a default or utility LLM provider to enable AI help.</div>';
   return `
-    <div class="logbook-section-head"><h5>AI help</h5></div>
-    ${aiAvailable ? `<div class="logbook-ai-status">Using AI model${_aiStatus.model ? `: ${_e(_aiStatus.model)}` : ''}</div>` : `<div class="logbook-ai-disabled">AI help is off: ${_e(_aiStatus?.reason || 'No LLM provider configured')}.</div>`}
-    <div class="logbook-ai-buttons">
-      <button type="button" class="cal-btn cal-btn-primary" data-ai-mode="structure_day"${disabled}${disabledTitle}>Help me write today</button>
-      <button type="button" class="cal-btn" data-ai-mode="clean_spelling"${disabled}${disabledTitle}>Clean spelling</button>
-      <button type="button" class="cal-btn" data-ai-mode="ask_questions"${disabled}${disabledTitle}>Ask 3 questions</button>
-      <button type="button" class="cal-btn" data-ai-mode="extract_people"${disabled}${disabledTitle}>Extract people</button>
-      <button type="button" class="cal-btn" data-ai-mode="extract_locations"${disabled}${disabledTitle}>Extract places</button>
-      <button type="button" class="cal-btn" data-ai-mode="extract_all"${disabled}${disabledTitle}>Detect text</button>
-      <button type="button" class="cal-btn" data-ai-mode="summarize"${disabled}${disabledTitle}>Summarize</button>
-      <button type="button" class="cal-btn" data-ai-mode="reflect"${disabled}${disabledTitle}>Reflect</button>
-      <button type="button" class="cal-btn" id="logbook-extract-facts"${disabled}${extractFactsTitle}>Extract facts</button>
+    <div class="logbook-section-head logbook-ai-head">
+      <h5>AI help</h5>
+      ${aiAvailable ? `<span class="logbook-ai-model" title="${_e(_aiStatus.model || '')}">${_e(_aiStatus.model || 'AI ready')}</span>` : ''}
     </div>
-    ${_aiBusy ? '<div class="logbook-ai-status">Thinking...</div>' : ''}
-    ${_aiError ? `<div class="logbook-ai-error">${_e(_aiError)}</div>` : ''}
-    <div id="logbook-ai-preview" class="logbook-ai-preview">${preview}</div>
+    <div class="logbook-ai-control-box">
+      ${aiAvailable ? _aiUsageMeterHtml() : `<div class="logbook-ai-disabled">AI help is off: ${_e(_aiStatus?.reason || 'No LLM provider configured')}.</div>`}
+      <div class="logbook-ai-actions">${_aiModeGroupsHtml(disabled, disabledTitle)}</div>
+      ${aiAvailable ? _aiRunControlsHtml(disabled, disabledTitle) : ''}
+      ${_aiBusy ? '<div class="logbook-ai-status">Thinking...</div>' : ''}
+      ${_aiError ? `<div class="logbook-ai-error">${_e(_aiError)}</div>` : ''}
+    </div>
+    <section class="logbook-ai-results" aria-label="AI results">
+      <div class="logbook-section-head"><h5>Results</h5></div>
+      ${_aiRunReceiptHtml()}
+      <div id="logbook-ai-preview" class="logbook-ai-preview">${preview}</div>
+    </section>
   `;
 }
 
@@ -1243,6 +1658,10 @@ function _bindBodyEvents() {
     });
   });
 
+  document.querySelectorAll('[data-logbook-format]').forEach(btn => {
+    btn.addEventListener('mousedown', event => event.preventDefault());
+    btn.addEventListener('click', () => _formatSelectedText(btn.dataset.logbookFormat || '').catch(_showError));
+  });
   document.querySelectorAll('[data-logbook-link-selection]').forEach(btn => {
     btn.addEventListener('mousedown', event => event.preventDefault());
     btn.addEventListener('click', () => _linkSelectedText(btn.dataset.logbookLinkSelection || 'person'));
@@ -1282,21 +1701,49 @@ function _bindBodyEvents() {
     if (e.key === 'Escape') _hideMentionMenu();
   });
   content?.addEventListener('click', _renderMentionMenu);
+  content?.addEventListener('contextmenu', _openSelectionContextMenu);
 
   const rich = document.getElementById('logbook-rich-content');
+  rich?.addEventListener('pointerdown', e => {
+    const token = _editorTokenFromEvent(e, rich);
+    if (token) _selectEditorToken(token, e);
+    else _clearActiveEditorToken();
+  }, true);
+  rich?.addEventListener('mousedown', e => {
+    const token = _editorTokenFromEvent(e, rich);
+    if (token) _selectEditorToken(token, e);
+    else _clearActiveEditorToken();
+  });
   rich?.addEventListener('input', () => {
     _syncEntryFromEditor();
     _refreshEntityPanelsFromContent();
     _markDirty();
   });
   rich?.addEventListener('keydown', e => {
-    if (e.key === 'Escape') rich.blur();
+    if (e.key === 'Escape') {
+      rich.blur();
+      return;
+    }
+    if (e.key === 'Tab') {
+      if (_escapeActiveRichToken({ side: e.shiftKey ? 'before' : 'after', ensureSpace: !e.shiftKey })) {
+        e.preventDefault();
+      }
+      return;
+    }
+    if (e.key === ' ' || e.key === 'Spacebar') {
+      if (_activeEditorToken && rich.contains(_activeEditorToken) && _escapeActiveRichToken({ side: 'after', ensureSpace: true })) {
+        e.preventDefault();
+      }
+    }
   });
-  rich?.addEventListener('blur', () => {
+  rich?.addEventListener('blur', event => {
     _syncEntryFromEditor();
     _refreshEntityPanelsFromContent();
-    _refreshEditorContent();
+    const focusStayedInEditor = event.relatedTarget && rich.contains(event.relatedTarget);
+    const tokenSelected = _activeEditorToken && rich.contains(_activeEditorToken);
+    if (!_entityLinkChooser && !focusStayedInEditor && !tokenSelected) _refreshEditorContent();
   });
+  rich?.addEventListener('contextmenu', _openSelectionContextMenu);
 
   document.querySelectorAll('[data-mood]').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -1387,27 +1834,358 @@ function _bindBodyEvents() {
   _bindLocationRowEvents();
   _bindPeopleDirectoryEvents();
   _bindLocationDirectoryEvents();
-  document.querySelectorAll('[data-ai-mode]').forEach(btn => {
-    btn.addEventListener('click', () => _runAI(btn.dataset.aiMode).catch(_showError));
-  });
-  document.getElementById('logbook-extract-facts')?.addEventListener('click', () => _extractFacts().catch(_showError));
-  document.getElementById('logbook-apply-ai')?.addEventListener('click', () => _applyAIContent());
-  document.getElementById('logbook-copy-ai')?.addEventListener('click', () => _copyAI());
-  document.getElementById('logbook-clear-ai')?.addEventListener('click', () => {
-    _aiPreview = null;
-    _aiError = '';
-    _render();
-  });
-  document.getElementById('logbook-apply-ai-mood')?.addEventListener('click', () => _applyAIMood());
-  document.getElementById('logbook-add-ai-data')?.addEventListener('click', () => _addAIData());
-  _bindAISuggestionEvents();
-  _bindEntityLinkEvents();
+  _bindAIEvents();
   document.querySelectorAll('[data-accept-connection]').forEach(btn => {
     btn.addEventListener('click', () => _connectionAction(btn.dataset.acceptConnection, 'accept').catch(_showError));
   });
   document.querySelectorAll('[data-hide-connection]').forEach(btn => {
     btn.addEventListener('click', () => _connectionAction(btn.dataset.hideConnection, 'hide').catch(_showError));
   });
+}
+
+function _selectedTextInsideLogbookEditor(target) {
+  if (_editorMode === 'raw') {
+    const ta = document.getElementById('logbook-content');
+    if (!ta || target !== ta) return '';
+    const start = ta.selectionStart ?? 0;
+    const end = ta.selectionEnd ?? start;
+    return end > start ? ta.value.slice(start, end).trim() : '';
+  }
+
+  const editor = document.getElementById('logbook-rich-content');
+  const selection = window.getSelection?.();
+  if (!editor || !selection || !selection.rangeCount || !editor.contains(target)) return '';
+  const range = selection.getRangeAt(0);
+  const startsInside = range.startContainer === editor || editor.contains(range.startContainer);
+  const endsInside = range.endContainer === editor || editor.contains(range.endContainer);
+  return !range.collapsed && startsInside && endsInside ? selection.toString().trim() : '';
+}
+
+function _selectionMenuOutsideClick(event) {
+  if (_selectionMenu?.contains(event.target)) return;
+  _closeSelectionMenu();
+}
+
+function _selectionMenuKeydown(event) {
+  if (event.key !== 'Escape') return;
+  event.preventDefault();
+  event.stopPropagation();
+  event.stopImmediatePropagation?.();
+  _closeSelectionMenu();
+}
+
+function _closeSelectionMenu() {
+  if (_selectionMenu?.parentNode) _selectionMenu.remove();
+  _selectionMenu = null;
+  document.removeEventListener('mousedown', _selectionMenuOutsideClick, true);
+  document.removeEventListener('keydown', _selectionMenuKeydown, true);
+  window.removeEventListener('resize', _closeSelectionMenu, true);
+  window.removeEventListener('scroll', _closeSelectionMenu, true);
+}
+
+function _entityKindName(kind) {
+  return kind === 'location' ? 'place' : 'person';
+}
+
+function _entityKindPlural(kind) {
+  return kind === 'location' ? 'places' : 'people';
+}
+
+function _entityChooserList(kind) {
+  return kind === 'location'
+    ? (_locations || []).filter(location => !location.hidden)
+    : (_people || []);
+}
+
+function _entityChooserExact(kind, label, list) {
+  return kind === 'location'
+    ? _locationForLinkIn(list, '', label)
+    : _personForLinkIn(list, '', label);
+}
+
+function _entityChooserMeta(item) {
+  const aliases = (item?.aliases || []).slice(0, 3).join(', ');
+  return _directoryMeta(item, aliases);
+}
+
+function _entityChooserChoiceHtml({ kind, target, title, meta = '', primary = false }) {
+  return `
+    <button type="button" class="logbook-entity-choice ${primary ? 'primary' : ''}" data-logbook-entity-target="${_e(target)}">
+      <span class="logbook-entity-choice-icon">${_logbookIcon(kind === 'location' ? 'location' : 'person', 13)}</span>
+      <span class="logbook-entity-choice-main">
+        <strong>${_e(title)}</strong>
+        ${meta ? `<span>${_e(meta)}</span>` : ''}
+      </span>
+    </button>
+  `;
+}
+
+function _entityChooserRowsHtml(kind, label, query = '') {
+  const list = _entityChooserList(kind);
+  const exact = _entityChooserExact(kind, label, list);
+  const matches = _entityAutocompleteMatches(list, query, { limit: 18 });
+  const seenTargets = new Set();
+  const rows = [];
+
+  if (!exact) {
+    rows.push(_entityChooserChoiceHtml({
+      kind,
+      target: _linkTargetForEntity(kind, null, label),
+      title: `New ${_entityKindName(kind)}`,
+      meta: label,
+      primary: true,
+    }));
+  }
+
+  [exact, ...matches].filter(Boolean).forEach(item => {
+    const target = _linkTargetForEntity(kind, item, label);
+    if (!target || seenTargets.has(target)) return;
+    seenTargets.add(target);
+    rows.push(_entityChooserChoiceHtml({
+      kind,
+      target,
+      title: item.display_name || label,
+      meta: _entityChooserMeta(item),
+    }));
+  });
+
+  if (rows.length) return rows.join('');
+  return `<div class="logbook-entity-empty">No matching ${_entityKindPlural(kind)}.</div>`;
+}
+
+function _entityChooserAnchorRect(snapshot) {
+  if (snapshot?.getBoundingClientRect) {
+    const rect = snapshot.getBoundingClientRect();
+    if (rect.width || rect.height) return rect;
+  }
+  if (snapshot?.range?.getBoundingClientRect) {
+    const rect = snapshot.range.getBoundingClientRect();
+    if (rect.width || rect.height) return rect;
+  }
+  if (snapshot?.ta?.getBoundingClientRect) return snapshot.ta.getBoundingClientRect();
+  return document.getElementById('logbook-rich-content')?.getBoundingClientRect?.()
+    || document.getElementById('logbook-content')?.getBoundingClientRect?.()
+    || null;
+}
+
+function _positionEntityLinkChooser(chooser, snapshot) {
+  const anchor = _entityChooserAnchorRect(snapshot);
+  const rect = chooser.getBoundingClientRect();
+  const anchorLeft = anchor?.left ?? 16;
+  const anchorTop = anchor?.top ?? 80;
+  const anchorBottom = anchor?.bottom ?? anchorTop;
+  let left = Math.max(8, Math.min(anchorLeft, window.innerWidth - rect.width - 8));
+  let top = anchorBottom + 8;
+  if (top + rect.height > window.innerHeight - 8 && anchorTop - rect.height - 8 > 8) {
+    top = anchorTop - rect.height - 8;
+  }
+  top = Math.max(8, Math.min(top, window.innerHeight - rect.height - 8));
+  chooser.style.left = `${left}px`;
+  chooser.style.top = `${top}px`;
+}
+
+function _entityLinkChooserOutsideClick(event) {
+  if (_entityLinkChooser?.contains(event.target)) return;
+  _closeEntityLinkChooser();
+}
+
+function _entityLinkChooserKeydown(event) {
+  if (event.key !== 'Escape') return;
+  event.preventDefault();
+  _closeEntityLinkChooser();
+}
+
+function _closeEntityLinkChooser() {
+  if (_entityLinkChooser?.parentNode) _entityLinkChooser.remove();
+  _entityLinkChooser = null;
+  document.removeEventListener('mousedown', _entityLinkChooserOutsideClick, true);
+  document.removeEventListener('keydown', _entityLinkChooserKeydown, true);
+  window.removeEventListener('resize', _closeEntityLinkChooser, true);
+  window.removeEventListener('scroll', _closeEntityLinkChooser, true);
+}
+
+function _showEntityLinkChooser(kind, snapshot, options = {}) {
+  const parts = options.label
+    ? _selectionLinkParts(options.label)
+    : _selectionLinkParts(snapshot?.text || '');
+  if (!parts) return false;
+  _closeSelectionMenu();
+  _closeEntityLinkChooser();
+
+  const name = _entityKindName(kind);
+  const verb = options.verb || 'Link';
+  const selectedLabel = options.selectedLabel || 'Selected';
+  const anchor = options.anchor || snapshot;
+  const onChoose = options.onChoose
+    || (target => _replaceSelectionSnapshotWithLink(kind, snapshot, target));
+  const chooser = document.createElement('div');
+  chooser.className = 'logbook-entity-chooser';
+  chooser.setAttribute('role', 'dialog');
+  chooser.setAttribute('aria-label', `Choose ${name}`);
+  chooser.innerHTML = `
+    <div class="logbook-entity-chooser-head">
+      <strong>${_logbookIcon(kind === 'location' ? 'location' : 'person', 14)} ${_e(verb)} ${_e(name)}</strong>
+      <button type="button" class="logbook-icon-btn" data-logbook-entity-close aria-label="Close">x</button>
+    </div>
+    <div class="logbook-entity-selected"><span>${_e(selectedLabel)}</span><strong>${_e(parts.label)}</strong></div>
+    <input class="memory-search-input logbook-entity-search" data-logbook-entity-search placeholder="Search ${_e(_entityKindPlural(kind))}">
+    <div class="logbook-entity-choice-list" data-logbook-entity-list></div>
+  `;
+  const input = chooser.querySelector('[data-logbook-entity-search]');
+  const list = chooser.querySelector('[data-logbook-entity-list]');
+  const renderRows = () => {
+    if (list) list.innerHTML = _entityChooserRowsHtml(kind, parts.label, input?.value || '');
+    _positionEntityLinkChooser(chooser, anchor);
+  };
+
+  chooser.addEventListener('mousedown', event => {
+    if (event.target.closest('[data-logbook-entity-target], [data-logbook-entity-close]')) {
+      event.preventDefault();
+    }
+  });
+  chooser.addEventListener('click', event => {
+    const closeBtn = event.target.closest('[data-logbook-entity-close]');
+    const choice = event.target.closest('[data-logbook-entity-target]');
+    if (!closeBtn && !choice) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (closeBtn) {
+      _closeEntityLinkChooser();
+      return;
+    }
+    const target = choice.dataset.logbookEntityTarget || '';
+    _closeEntityLinkChooser();
+    const linked = onChoose(target);
+    if (!linked) _setStatus('Select text first');
+  });
+  input?.addEventListener('input', renderRows);
+
+  document.body.appendChild(chooser);
+  _entityLinkChooser = chooser;
+  renderRows();
+  setTimeout(() => {
+    input?.focus();
+    document.addEventListener('mousedown', _entityLinkChooserOutsideClick, true);
+    document.addEventListener('keydown', _entityLinkChooserKeydown, true);
+    window.addEventListener('resize', _closeEntityLinkChooser, true);
+    window.addEventListener('scroll', _closeEntityLinkChooser, true);
+  }, 0);
+  return true;
+}
+
+function _selectionMenuItems({ tokenOnly = false } = {}) {
+  if (tokenOnly) {
+    return [[{ unlink: true, label: 'Unlink', icon: 'unlink' }]];
+  }
+  return [
+    [
+      { format: 'bold', label: 'Bold', icon: 'bold' },
+      { format: 'italic', label: 'Italic', icon: 'italic' },
+      { format: 'strike', label: 'Strike', icon: 'strike' },
+      { format: 'link', label: 'Link', icon: 'link' },
+    ],
+    [
+      { format: 'h1', label: 'Heading 1', textIcon: 'H1' },
+      { format: 'h2', label: 'Heading 2', textIcon: 'H2' },
+      { format: 'h3', label: 'Heading 3', textIcon: 'H3' },
+      { format: 'quote', label: 'Quote', icon: 'quote' },
+    ],
+    [
+      { format: 'ul', label: 'Bullets', icon: 'list' },
+      { format: 'ol', label: 'Numbers', icon: 'orderedList' },
+      { format: 'code', label: 'Code', icon: 'code' },
+      { format: 'codeblock', label: 'Code block', icon: 'codeBlock' },
+      { format: 'hr', label: 'Rule', icon: 'hr' },
+    ],
+    [
+      { linkKind: 'person', label: 'Person', icon: 'person' },
+      { linkKind: 'location', label: 'Place', icon: 'location' },
+      { linkKind: 'food', label: 'Food', icon: 'food' },
+      { unlink: true, label: 'Unlink', icon: 'unlink' },
+    ],
+  ];
+}
+
+function _selectionMenuButtonHtml(item) {
+  const icon = item.textIcon
+    ? `<span class="logbook-context-text-icon">${_e(item.textIcon)}</span>`
+    : _logbookIcon(item.icon || 'person', 13);
+  const attrs = item.format
+    ? `data-logbook-context-format="${_e(item.format)}"`
+    : item.linkKind
+      ? `data-logbook-context-link="${_e(item.linkKind)}"`
+      : 'data-logbook-context-unlink="1"';
+  return `<button type="button" class="logbook-context-item" ${attrs}>${icon}<span>${_e(item.label)}</span></button>`;
+}
+
+function _showSelectionContextMenu(x, y, options = {}) {
+  _closeSelectionMenu();
+  _closeEntityLinkChooser();
+  const menu = document.createElement('div');
+  menu.className = 'logbook-selection-menu';
+  menu.innerHTML = _selectionMenuItems(options)
+    .map(group => `<div class="logbook-selection-menu-group">${group.map(_selectionMenuButtonHtml).join('')}</div>`)
+    .join('');
+  menu.addEventListener('mousedown', event => event.preventDefault());
+  menu.addEventListener('click', event => {
+    const formatBtn = event.target.closest('[data-logbook-context-format]');
+    const linkBtn = event.target.closest('[data-logbook-context-link]');
+    const unlinkBtn = event.target.closest('[data-logbook-context-unlink]');
+    if (!formatBtn && !linkBtn && !unlinkBtn) return;
+    event.preventDefault();
+    event.stopPropagation();
+
+    if (formatBtn) {
+      const format = formatBtn.dataset.logbookContextFormat || '';
+      const closeAfter = format === 'link';
+      if (!closeAfter) _closeSelectionMenu();
+      _formatSelectedText(format)
+        .catch(_showError)
+        .finally(() => {
+          if (closeAfter) _closeSelectionMenu();
+        });
+      return;
+    }
+
+    _closeSelectionMenu();
+    if (linkBtn) {
+      _linkSelectedText(linkBtn.dataset.logbookContextLink || 'person');
+      return;
+    }
+    _unlinkSelectedText();
+  });
+  document.body.appendChild(menu);
+  _selectionMenu = menu;
+
+  const rect = menu.getBoundingClientRect();
+  const left = Math.max(8, Math.min(x, window.innerWidth - rect.width - 8));
+  const top = Math.max(8, Math.min(y, window.innerHeight - rect.height - 8));
+  menu.style.left = `${left}px`;
+  menu.style.top = `${top}px`;
+
+  setTimeout(() => {
+    document.addEventListener('mousedown', _selectionMenuOutsideClick, true);
+    document.addEventListener('keydown', _selectionMenuKeydown, true);
+    window.addEventListener('resize', _closeSelectionMenu, true);
+    window.addEventListener('scroll', _closeSelectionMenu, true);
+  }, 0);
+}
+
+function _openSelectionContextMenu(event) {
+  if (_editorMode !== 'raw') {
+    const token = event.target.closest?.('[data-logbook-token="1"]');
+    if (_selectEditorToken(token, event)) {
+      _showSelectionContextMenu(event.clientX, event.clientY, { tokenOnly: true });
+      return;
+    }
+  }
+  const selected = _selectedTextInsideLogbookEditor(event.target);
+  if (!selected) {
+    _closeSelectionMenu();
+    return;
+  }
+  event.preventDefault();
+  _showSelectionContextMenu(event.clientX, event.clientY);
 }
 
 function _bindNavigatorEvents() {
@@ -1502,20 +2280,288 @@ function _bindLocationsPanelEvents() {
   _bindLocationDirectoryEvents();
 }
 
-function _bindAISuggestionEvents() {
-  document.querySelectorAll('[data-add-ai-person]').forEach(btn => {
+function _bindAIEvents(root = document) {
+  root.querySelectorAll('[data-ai-mode]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const mode = btn.dataset.aiMode || 'structure_day';
+      _selectAIMode(mode);
+    });
+  });
+  root.querySelector('#logbook-run-ai')?.addEventListener('click', () => {
+    if (_aiSelectedMode === 'extract_facts') _extractFacts().catch(_showError);
+    else _runAI(_aiSelectedMode).catch(_showError);
+  });
+  root.querySelector('#logbook-extract-facts')?.addEventListener('click', () => _extractFacts().catch(_showError));
+  root.querySelector('#logbook-apply-ai')?.addEventListener('click', () => _applyAIContent());
+  root.querySelector('#logbook-copy-ai')?.addEventListener('click', () => _copyAI());
+  root.querySelector('#logbook-clear-ai')?.addEventListener('click', () => {
+    _aiPreview = null;
+    _aiError = '';
+    _renderAIAffectedPanels();
+  });
+  root.querySelector('#logbook-apply-ai-mood')?.addEventListener('click', () => _applyAIMood());
+  root.querySelector('#logbook-add-ai-data')?.addEventListener('click', () => _addAIData());
+  _bindAISuggestionEvents(root);
+  _bindEntityLinkEvents(root);
+}
+
+function _bindAISuggestionEvents(root = document) {
+  root.querySelectorAll('[data-add-ai-person]').forEach(btn => {
     btn.addEventListener('click', () => _addAIEntity('person', Number(btn.dataset.addAiPerson)).catch(_showError));
   });
-  document.querySelectorAll('[data-add-ai-location]').forEach(btn => {
+  root.querySelectorAll('[data-add-ai-location]').forEach(btn => {
     btn.addEventListener('click', () => _addAIEntity('location', Number(btn.dataset.addAiLocation)).catch(_showError));
   });
 }
 
+function _cancelFloatingEntityCardHide() {
+  if (!_floatingEntityCardHideTimer) return;
+  clearTimeout(_floatingEntityCardHideTimer);
+  _floatingEntityCardHideTimer = null;
+}
+
+function _closeFloatingEntityCard() {
+  _cancelFloatingEntityCardHide();
+  if (_floatingEntityCard?.parentNode) _floatingEntityCard.remove();
+  _floatingEntityCard = null;
+  _floatingEntityCardSource = null;
+  window.removeEventListener('resize', _closeFloatingEntityCard, true);
+  window.removeEventListener('scroll', _closeFloatingEntityCard, true);
+}
+
+function _scheduleFloatingEntityCardClose(delay = 140) {
+  _cancelFloatingEntityCardHide();
+  _floatingEntityCardHideTimer = setTimeout(_closeFloatingEntityCard, delay);
+}
+
+function _entityCardSource(source) {
+  return source?.closest?.('[data-logbook-token="1"], .logbook-person-link') || null;
+}
+
+function _positionFloatingEntityCard(card, source) {
+  if (!card || !source?.getBoundingClientRect) return;
+  const sourceRect = source.getBoundingClientRect();
+  const cardRect = card.getBoundingClientRect();
+  const gap = 8;
+  const width = cardRect.width || 280;
+  const height = cardRect.height || 160;
+  let left = sourceRect.left;
+  let top = sourceRect.bottom + gap;
+  if (top + height > window.innerHeight - gap && sourceRect.top - height - gap > gap) {
+    top = sourceRect.top - height - gap;
+  }
+  left = Math.max(gap, Math.min(left, window.innerWidth - width - gap));
+  top = Math.max(gap, Math.min(top, window.innerHeight - height - gap));
+  card.style.left = `${left}px`;
+  card.style.top = `${top}px`;
+}
+
+function _editableFloatingEntityToken(sourceEl) {
+  const editor = document.getElementById('logbook-rich-content');
+  return sourceEl?.dataset?.logbookToken === '1' && editor?.contains(sourceEl) ? sourceEl : null;
+}
+
+function _floatingEntityCardActionsHtml(sourceEl) {
+  const token = _editableFloatingEntityToken(sourceEl);
+  const personId = sourceEl?.dataset?.openPerson || '';
+  const locationId = sourceEl?.dataset?.openLocation || '';
+  const kind = token ? _linkKind(token.dataset.target || '') : '';
+  const actions = [];
+  if (personId) {
+    actions.push(`<button type="button" class="logbook-floating-card-btn" data-logbook-floating-open-person="${_e(personId)}">${_logbookIcon('person', 12)}<span>Open dashboard</span></button>`);
+  } else if (locationId) {
+    actions.push(`<button type="button" class="logbook-floating-card-btn" data-logbook-floating-open-location="${_e(locationId)}">${_logbookIcon('location', 12)}<span>Open place</span></button>`);
+  }
+  if (token && (kind === 'person' || kind === 'location')) {
+    actions.push(`<button type="button" class="logbook-floating-card-btn" data-logbook-floating-change="${_e(kind)}">${_logbookIcon(kind === 'location' ? 'location' : 'person', 12)}<span>Change ${_e(_entityKindName(kind))}</span></button>`);
+  }
+  if (token) {
+    actions.push(`<button type="button" class="logbook-floating-card-btn danger" data-logbook-floating-unlink>${_logbookIcon('unlink', 12)}<span>Unlink</span></button>`);
+  }
+  if (!actions.length) return '';
+  return `
+    <span class="logbook-floating-card-actions">
+      ${actions.join('')}
+    </span>
+  `;
+}
+
+function _replaceEditorTokenTarget(token, target, { select = false } = {}) {
+  const editor = document.getElementById('logbook-rich-content');
+  if (!editor || !token || !target || token.dataset?.logbookToken !== '1' || !editor.contains(token)) return false;
+  const label = token.dataset.label || String(token.textContent || '').trim();
+  if (!label) return false;
+  const template = document.createElement('template');
+  template.innerHTML = _editorTokenHtml(label, target);
+  const next = template.content.firstElementChild;
+  if (!next) return false;
+  if (_activeEditorToken === token) _clearActiveEditorToken();
+  token.replaceWith(next);
+  _bindEntityLinkEvents(editor);
+  if (select) _selectEditorToken(next);
+  const value = _syncEntryFromEditor();
+  const raw = document.getElementById('logbook-content');
+  if (raw && raw.value !== value) raw.value = value;
+  _refreshEntityPanelsFromContent();
+  _markDirty();
+  return true;
+}
+
+function _showEntityTokenChooser(kind, token) {
+  if (kind !== 'person' && kind !== 'location') return false;
+  const label = token?.dataset?.label || String(token?.textContent || '').trim();
+  if (!label) return false;
+  return _showEntityLinkChooser(kind, { text: label }, {
+    anchor: token,
+    label,
+    verb: 'Change',
+    selectedLabel: 'Current',
+    onChoose: target => _replaceEditorTokenTarget(token, target),
+  });
+}
+
+function _handleFloatingEntityCardAction(event) {
+  if (event.type === 'pointerdown' && event.button !== 0) return false;
+  const openPersonBtn = event.target.closest('[data-logbook-floating-open-person]');
+  const openLocationBtn = event.target.closest('[data-logbook-floating-open-location]');
+  const unlinkBtn = event.target.closest('[data-logbook-floating-unlink]');
+  const changeBtn = event.target.closest('[data-logbook-floating-change]');
+  if (!openPersonBtn && !openLocationBtn && !unlinkBtn && !changeBtn) return false;
+
+  event.preventDefault();
+  event.stopPropagation();
+  event.stopImmediatePropagation?.();
+
+  if (openPersonBtn) {
+    const personId = openPersonBtn.dataset.logbookFloatingOpenPerson || '';
+    _closeFloatingEntityCard();
+    _openPerson(personId).catch(_showError);
+    return true;
+  }
+  if (openLocationBtn) {
+    const locationId = openLocationBtn.dataset.logbookFloatingOpenLocation || '';
+    _closeFloatingEntityCard();
+    _openLocation(locationId).catch(_showError);
+    return true;
+  }
+
+  const token = _editableFloatingEntityToken(_floatingEntityCardSource);
+  if (!token) return true;
+  _setActiveEditorToken(token);
+  _closeFloatingEntityCard();
+  if (unlinkBtn) {
+    _unlinkSelectedText();
+    return true;
+  }
+  _showEntityTokenChooser(changeBtn.dataset.logbookFloatingChange || '', token);
+  return true;
+}
+
+function _showFloatingEntityCard(source) {
+  const sourceEl = _entityCardSource(source);
+  const card = sourceEl?.querySelector?.('.logbook-person-card');
+  if (!sourceEl || !card) return false;
+  _cancelFloatingEntityCardHide();
+  if (_floatingEntityCardSource === sourceEl && _floatingEntityCard) {
+    _positionFloatingEntityCard(_floatingEntityCard, sourceEl);
+    return true;
+  }
+
+  _closeFloatingEntityCard();
+  const clone = card.cloneNode(true);
+  clone.classList.add('logbook-floating-entity-card');
+  clone.removeAttribute('style');
+  clone.insertAdjacentHTML('beforeend', _floatingEntityCardActionsHtml(sourceEl));
+  clone.addEventListener('mouseenter', _cancelFloatingEntityCardHide);
+  clone.addEventListener('mouseleave', () => _scheduleFloatingEntityCardClose());
+  clone.addEventListener('pointerdown', _handleFloatingEntityCardAction);
+  clone.addEventListener('click', _handleFloatingEntityCardAction);
+  document.body.appendChild(clone);
+  _floatingEntityCard = clone;
+  _floatingEntityCardSource = sourceEl;
+  _positionFloatingEntityCard(clone, sourceEl);
+  window.addEventListener('resize', _closeFloatingEntityCard, true);
+  window.addEventListener('scroll', _closeFloatingEntityCard, true);
+  return true;
+}
+
+function _bindFloatingEntityCards(root = document) {
+  root.querySelectorAll('.logbook-person-link, [data-logbook-token="1"]').forEach(source => {
+    if (source.dataset.boundFloatingEntityCard === '1') return;
+    source.dataset.boundFloatingEntityCard = '1';
+    source.addEventListener('mouseenter', () => _showFloatingEntityCard(source));
+    source.addEventListener('mouseleave', () => _scheduleFloatingEntityCardClose());
+    source.addEventListener('focus', () => _showFloatingEntityCard(source));
+    source.addEventListener('blur', () => _scheduleFloatingEntityCardClose());
+  });
+}
+
+function _clearActiveEditorToken() {
+  if (_activeEditorToken?.classList) _activeEditorToken.classList.remove('is-selected');
+  _activeEditorToken = null;
+}
+
+function _setActiveEditorToken(token, { focus = false } = {}) {
+  const editor = document.getElementById('logbook-rich-content');
+  if (!editor || !token || token.dataset?.logbookToken !== '1' || !editor.contains(token)) return false;
+  if (_activeEditorToken && _activeEditorToken !== token) {
+    _activeEditorToken.classList?.remove('is-selected');
+  }
+  _activeEditorToken = token;
+  token.classList.add('is-selected');
+  if (focus) token.focus?.();
+  return true;
+}
+
+function _editorTokenFromEvent(event, editor = document.getElementById('logbook-rich-content')) {
+  if (!editor || !event) return null;
+  const direct = event.target?.closest?.('[data-logbook-token="1"]');
+  if (direct && editor.contains(direct)) return direct;
+  const pointed = document.elementFromPoint?.(event.clientX, event.clientY)
+    ?.closest?.('[data-logbook-token="1"]');
+  return pointed && editor.contains(pointed) ? pointed : null;
+}
+
+function _selectEditorToken(token, event = null) {
+  if (!_setActiveEditorToken(token, { focus: true })) return false;
+  _showFloatingEntityCard(token);
+  event?.preventDefault?.();
+  event?.stopPropagation?.();
+  event?.stopImmediatePropagation?.();
+  return true;
+}
+
+function _bindEditorTokenSelection(root = document) {
+  const editor = root.id === 'logbook-rich-content'
+    ? root
+    : root.querySelector?.('#logbook-rich-content');
+  if (!editor) return;
+  editor.querySelectorAll('[data-logbook-token="1"]').forEach(token => {
+    if (token.dataset.boundEditorToken === '1') return;
+    token.dataset.boundEditorToken = '1';
+    token.addEventListener('pointerdown', event => {
+      if (event.button === 0) _selectEditorToken(token, event);
+    });
+    token.addEventListener('mousedown', event => {
+      if (event.button === 0) _selectEditorToken(token, event);
+    });
+    token.addEventListener('click', event => _selectEditorToken(token, event));
+    token.addEventListener('focus', () => _selectEditorToken(token));
+    token.addEventListener('contextmenu', event => {
+      if (!_selectEditorToken(token, event)) return;
+      _showSelectionContextMenu(event.clientX, event.clientY, { tokenOnly: true });
+    });
+  });
+}
+
 function _bindEntityLinkEvents(root = document) {
+  _bindEditorTokenSelection(root);
+  _bindFloatingEntityCards(root);
   root.querySelectorAll('[data-open-person]').forEach(link => {
     if (link.dataset.boundPersonLink === '1') return;
     link.dataset.boundPersonLink = '1';
     link.addEventListener('click', async event => {
+      if (_selectEditorToken(link, event)) return;
       event.preventDefault();
       event.stopPropagation();
       await _openPerson(link.dataset.openPerson);
@@ -1531,6 +2577,7 @@ function _bindEntityLinkEvents(root = document) {
     if (link.dataset.boundLocationLink === '1') return;
     link.dataset.boundLocationLink = '1';
     link.addEventListener('click', async event => {
+      if (_selectEditorToken(link, event)) return;
       event.preventDefault();
       event.stopPropagation();
       await _openLocation(link.dataset.openLocation);
@@ -1630,6 +2677,19 @@ function _renderLocationsPanel() {
   _bindLocationsPanelEvents();
 }
 
+function _renderAIPanel() {
+  const panel = document.querySelector('.logbook-panel[data-mobile-section="ai"]');
+  if (!panel) return;
+  panel.innerHTML = _aiHtml();
+  _bindAIEvents(panel);
+}
+
+function _renderAIAffectedPanels() {
+  _renderAIPanel();
+  _renderPeoplePanel();
+  _renderLocationsPanel();
+}
+
 function _renderNavigator() {
   const nav = document.querySelector('.logbook-nav');
   if (!nav) return;
@@ -1717,27 +2777,355 @@ function _selectionLinkTarget(kind, label) {
   return _selectionLinkTargetForLists(kind, label, { people: _people, locations: _locations });
 }
 
-function _replaceRawSelectionWithLink(kind) {
+function _updateRawContentValue(ta, value, selectionStart = null, selectionEnd = null) {
+  ta.value = value;
+  ta.focus();
+  if (selectionStart !== null && selectionEnd !== null) ta.setSelectionRange(selectionStart, selectionEnd);
+  if (_entry) _entry.content = ta.value;
+  _refreshTokenEstimate(ta.value);
+  _refreshEntityPanelsFromContent();
+  _markDirty();
+}
+
+function _replaceRawRange(start, end, replacement, selectStart = null, selectEnd = null) {
   const ta = document.getElementById('logbook-content');
-  if (!ta || ta.selectionStart === ta.selectionEnd) return false;
+  if (!ta) return false;
+  const next = ta.value.slice(0, start) + replacement + ta.value.slice(end);
+  const cursor = start + replacement.length;
+  _updateRawContentValue(
+    ta,
+    next,
+    selectStart === null ? cursor : selectStart,
+    selectEnd === null ? cursor : selectEnd,
+  );
+  return true;
+}
+
+function _toggleRawSelectionFormat(prefix, suffix, placeholder = 'text', options = {}) {
+  const ta = document.getElementById('logbook-content');
+  if (!ta) return false;
+  const edit = _toggleMarkdownSelectionFormat(
+    ta.value,
+    ta.selectionStart ?? 0,
+    ta.selectionEnd ?? ta.selectionStart ?? 0,
+    prefix,
+    suffix,
+    placeholder,
+    options,
+  );
+  if (!edit) return false;
+  return _replaceRawRange(edit.start, edit.end, edit.text, edit.selectionStart, edit.selectionEnd);
+}
+
+function _applyRawMarkdownEdit(edit) {
+  if (!edit) return false;
+  return _replaceRawRange(edit.start, edit.end, edit.text, edit.selectionStart, edit.selectionEnd);
+}
+
+function _toggleRawHeading(prefix) {
+  const ta = document.getElementById('logbook-content');
+  if (!ta) return false;
+  return _applyRawMarkdownEdit(_toggleMarkdownHeading(ta.value, ta.selectionStart ?? 0, prefix));
+}
+
+function _toggleRawLinePrefix(prefix) {
+  const ta = document.getElementById('logbook-content');
+  if (!ta) return false;
+  return _applyRawMarkdownEdit(_toggleMarkdownLinePrefix(
+    ta.value,
+    ta.selectionStart ?? 0,
+    ta.selectionEnd ?? ta.selectionStart ?? 0,
+    prefix,
+  ));
+}
+
+function _toggleRawOrderedList() {
+  const ta = document.getElementById('logbook-content');
+  if (!ta) return false;
+  return _applyRawMarkdownEdit(_toggleMarkdownOrderedList(
+    ta.value,
+    ta.selectionStart ?? 0,
+    ta.selectionEnd ?? ta.selectionStart ?? 0,
+  ));
+}
+
+function _toggleRawCodeBlock() {
+  const ta = document.getElementById('logbook-content');
+  if (!ta) return false;
+  return _applyRawMarkdownEdit(_toggleMarkdownCodeBlock(
+    ta.value,
+    ta.selectionStart ?? 0,
+    ta.selectionEnd ?? ta.selectionStart ?? 0,
+  ));
+}
+
+function _insertRawHorizontalRule() {
+  const ta = document.getElementById('logbook-content');
+  if (!ta) return false;
+  return _applyRawMarkdownEdit(_insertMarkdownHorizontalRule(
+    ta.value,
+    ta.selectionStart ?? 0,
+    ta.selectionEnd ?? ta.selectionStart ?? 0,
+  ));
+}
+
+function _rawSelectionSnapshot() {
+  const ta = document.getElementById('logbook-content');
+  if (!ta) return null;
   const start = ta.selectionStart ?? 0;
   const end = ta.selectionEnd ?? start;
-  const linked = _linkedSelectionText(ta.value.slice(start, end), kind, _selectionLinkTarget);
-  if (!linked) return false;
-  ta.value = ta.value.slice(0, start) + linked.markdown + ta.value.slice(end);
-  const pos = start + linked.markdown.length;
-  ta.focus();
-  ta.setSelectionRange(pos, pos);
-  if (_entry) _entry.content = ta.value;
+  const text = ta.value.slice(start, end);
+  return { mode: 'raw', ta, start, end, text };
+}
+
+function _richSelectionSnapshot() {
+  const editor = document.getElementById('logbook-rich-content');
+  const selection = window.getSelection?.();
+  if (!editor || !selection || !selection.rangeCount) return null;
+  const range = selection.getRangeAt(0);
+  const startsInside = range.startContainer === editor || editor.contains(range.startContainer);
+  const endsInside = range.endContainer === editor || editor.contains(range.endContainer);
+  const text = selection.toString();
+  if (range.collapsed || !startsInside || !endsInside || !text.trim()) return null;
+  return { mode: 'rich', editor, range: range.cloneRange(), text };
+}
+
+function _restoreRichSelection(snapshot) {
+  if (!snapshot?.editor || !snapshot.range) return false;
+  const selection = window.getSelection?.();
+  if (!selection) return false;
+  selection.removeAllRanges();
+  selection.addRange(snapshot.range);
+  snapshot.editor.focus();
+  return true;
+}
+
+async function _promptMarkdownUrl() {
+  const value = await uiModule.styledPrompt('URL', {
+    title: 'Link',
+    placeholder: 'https://example.com',
+    confirmText: 'Apply',
+    maxLength: 700,
+  });
+  return _normalizeMarkdownUrl(value);
+}
+
+function _labelForMarkdownLink(value) {
+  return String(value || '')
+    .replace(/[\r\n]+/g, ' ')
+    .replace(/\\/g, '\\\\')
+    .replace(/\]/g, '\\]')
+    .trim();
+}
+
+function _rawLinkSelection(snapshot, url) {
+  if (!snapshot?.ta || !snapshot.text.trim() || !_safeMarkdownHref(url)) return false;
+  const label = _labelForMarkdownLink(snapshot.text);
+  const replacement = `[${label}](${_normalizeMarkdownUrl(url).replace(/\)/g, '%29')})`;
+  return _replaceRawRange(snapshot.start, snapshot.end, replacement);
+}
+
+function _wrapRichSelectionWithTag(tagName, attrs = {}, snapshot = null) {
+  const editor = document.getElementById('logbook-rich-content');
+  if (snapshot && !_restoreRichSelection(snapshot)) return false;
+  const wrapped = _wrapRichSelection(editor, tagName, { attrs });
+  if (!wrapped) return false;
+  _syncEntryFromEditor();
+  _bindEntityLinkEvents(editor);
   _refreshEntityPanelsFromContent();
   _markDirty();
   return true;
 }
 
-function _replaceRichSelectionWithLink(kind) {
+function _applyRichEditorCommand(command) {
   const editor = document.getElementById('logbook-rich-content');
+  if (!editor || _editorMode === 'raw') return false;
+  editor.focus();
+  let applied = false;
+  try {
+    applied = document.execCommand(command);
+  } catch (_) {
+    applied = false;
+  }
+  _syncEntryFromEditor();
+  _bindEntityLinkEvents(editor);
+  _refreshEntityPanelsFromContent();
+  _markDirty();
+  return applied;
+}
+
+function _currentRichBlockTag(editor) {
+  const selection = window.getSelection?.();
+  if (!editor || !selection || !selection.rangeCount) return '';
+  let node = selection.getRangeAt(0).startContainer;
+  if (node?.nodeType === 3) node = node.parentNode;
+  while (node && node !== editor) {
+    const tag = String(node.tagName || '').toLowerCase();
+    if (/^(h1|h2|h3|h4|h5|h6|p|div|pre|blockquote|li)$/.test(tag)) return tag;
+    node = node.parentNode;
+  }
+  return '';
+}
+
+function _applyRichBlockCommand(format) {
+  const editor = document.getElementById('logbook-rich-content');
+  if (!editor || _editorMode === 'raw') return false;
+  editor.focus();
+  const current = _currentRichBlockTag(editor);
+  let command = '';
+  let value = null;
+  if (format === 'h1' || format === 'h2' || format === 'h3') {
+    command = 'formatBlock';
+    value = current === format ? 'div' : format;
+  } else if (format === 'quote') {
+    command = 'formatBlock';
+    value = current === 'blockquote' ? 'div' : 'blockquote';
+  } else if (format === 'codeblock') {
+    command = 'formatBlock';
+    value = current === 'pre' ? 'div' : 'pre';
+  } else if (format === 'ul') {
+    command = 'insertUnorderedList';
+  } else if (format === 'ol') {
+    command = 'insertOrderedList';
+  } else if (format === 'hr') {
+    command = 'insertHorizontalRule';
+  }
+  if (!command) return false;
+  let applied = false;
+  try {
+    applied = value === null
+      ? document.execCommand(command)
+      : document.execCommand(command, false, value);
+  } catch (_) {
+    applied = false;
+  }
+  _syncEntryFromEditor();
+  _bindEntityLinkEvents(editor);
+  _refreshEntityPanelsFromContent();
+  _markDirty();
+  return applied;
+}
+
+function _applyRichInlineCode() {
+  const wrapped = _wrapRichSelectionWithTag('code');
+  if (!wrapped) _setStatus('Select text first');
+  return wrapped;
+}
+
+async function _formatSelectedText(format) {
+  if (format === 'bold') {
+    const formatted = _editorMode === 'raw'
+      ? _toggleRawSelectionFormat('**', '**', 'bold')
+      : _applyRichEditorCommand('bold');
+    if (!formatted) _setStatus('Select text first');
+    return;
+  }
+  if (format === 'italic') {
+    const formatted = _editorMode === 'raw'
+      ? _toggleRawSelectionFormat('_', '_', 'italic', { aliases: [['*', '*']] })
+      : _applyRichEditorCommand('italic');
+    if (!formatted) _setStatus('Select text first');
+    return;
+  }
+  if (format === 'strike') {
+    const formatted = _editorMode === 'raw'
+      ? _toggleRawSelectionFormat('~~', '~~', 'strike')
+      : _applyRichEditorCommand('strikeThrough');
+    if (!formatted) _setStatus('Select text first');
+    return;
+  }
+  if (format === 'h1' || format === 'h2' || format === 'h3') {
+    const levels = { h1: '# ', h2: '## ', h3: '### ' };
+    const formatted = _editorMode === 'raw'
+      ? _toggleRawHeading(levels[format])
+      : _applyRichBlockCommand(format);
+    if (!formatted) _setStatus('Place the cursor in a line first');
+    return;
+  }
+  if (format === 'quote') {
+    const formatted = _editorMode === 'raw'
+      ? _toggleRawLinePrefix('> ')
+      : _applyRichBlockCommand(format);
+    if (!formatted) _setStatus('Place the cursor in a line first');
+    return;
+  }
+  if (format === 'ul') {
+    const formatted = _editorMode === 'raw'
+      ? _toggleRawLinePrefix('- ')
+      : _applyRichBlockCommand(format);
+    if (!formatted) _setStatus('Place the cursor in a line first');
+    return;
+  }
+  if (format === 'ol') {
+    const formatted = _editorMode === 'raw'
+      ? _toggleRawOrderedList()
+      : _applyRichBlockCommand(format);
+    if (!formatted) _setStatus('Place the cursor in a line first');
+    return;
+  }
+  if (format === 'code') {
+    const formatted = _editorMode === 'raw'
+      ? _toggleRawSelectionFormat('`', '`', 'code')
+      : _applyRichInlineCode();
+    if (!formatted) _setStatus('Select text first');
+    return;
+  }
+  if (format === 'codeblock') {
+    const formatted = _editorMode === 'raw'
+      ? _toggleRawCodeBlock()
+      : _applyRichBlockCommand(format);
+    if (!formatted) _setStatus('Place the cursor in a line first');
+    return;
+  }
+  if (format === 'hr') {
+    const formatted = _editorMode === 'raw'
+      ? _insertRawHorizontalRule()
+      : _applyRichBlockCommand(format);
+    if (!formatted) _setStatus('Place the cursor first');
+    return;
+  }
+  if (format !== 'link') return;
+
+  const snapshot = _editorMode === 'raw' ? _rawSelectionSnapshot() : _richSelectionSnapshot();
+  if (!snapshot?.text?.trim()) {
+    _setStatus('Select text first');
+    return;
+  }
+  const url = await _promptMarkdownUrl();
+  if (!url) return;
+  if (!_safeMarkdownHref(url)) {
+    _setStatus('Enter an http, https, mailto, or anchor link');
+    return;
+  }
+  const linked = _editorMode === 'raw'
+    ? _rawLinkSelection(snapshot, url)
+    : _wrapRichSelectionWithTag('a', {
+      href: _safeMarkdownHref(url),
+      'data-logbook-markdown-link': '1',
+      'data-href': _normalizeMarkdownUrl(url),
+      target: '_blank',
+      rel: 'noopener noreferrer',
+      class: 'logbook-editor-link',
+    }, snapshot);
+  if (!linked) _setStatus('Select text first');
+}
+
+function _replaceRawSelectionWithLink(kind, snapshot = _rawSelectionSnapshot(), target = '') {
+  if (!snapshot?.text?.trim()) return false;
+  const linked = _linkedSelectionText(
+    snapshot.text,
+    kind,
+    target ? () => target : _selectionLinkTarget,
+  );
+  if (!linked) return false;
+  return _replaceRawRange(snapshot.start, snapshot.end, linked.markdown);
+}
+
+function _replaceRichSelectionWithLink(kind, snapshot = null, target = '') {
+  const editor = document.getElementById('logbook-rich-content');
+  if (snapshot && !_restoreRichSelection(snapshot)) return false;
   const linked = _replaceRichSelectionWithLinkIn(editor, kind, {
-    resolveTarget: _selectionLinkTarget,
+    resolveTarget: target ? () => target : _selectionLinkTarget,
     renderToken: _editorTokenHtml,
     escapeHtml: _e,
   });
@@ -1747,6 +3135,12 @@ function _replaceRichSelectionWithLink(kind) {
   _refreshEntityPanelsFromContent();
   _markDirty();
   return true;
+}
+
+function _replaceSelectionSnapshotWithLink(kind, snapshot, target = '') {
+  if (snapshot?.mode === 'raw') return _replaceRawSelectionWithLink(kind, snapshot, target);
+  if (snapshot?.mode === 'rich') return _replaceRichSelectionWithLink(kind, snapshot, target);
+  return false;
 }
 
 function _replaceRawSelectionWithText(start, end, text) {
@@ -1774,18 +3168,50 @@ function _unlinkRawSelection() {
 
 function _unlinkRichSelection() {
   const editor = document.getElementById('logbook-rich-content');
-  const unlinked = _unlinkRichSelectionIn(editor);
+  const activeElement = _activeEditorToken && editor?.contains(_activeEditorToken)
+    ? _activeEditorToken
+    : document.activeElement;
+  const unlinked = _unlinkRichSelectionIn(editor, { activeElement });
   if (!unlinked) return false;
+  _clearActiveEditorToken();
   _syncEntryFromEditor();
   _refreshEntityPanelsFromContent();
   _markDirty();
   return true;
 }
 
+function _escapeActiveRichToken({ side = 'after', ensureSpace = true } = {}) {
+  const editor = document.getElementById('logbook-rich-content');
+  if (!editor || _editorMode === 'raw') return false;
+  const token = _activeEditorToken && editor.contains(_activeEditorToken) ? _activeEditorToken : null;
+  const escaped = _escapeRichEditorTokenIn(editor, {
+    token,
+    side,
+    ensureSpace,
+    activeElement: token || document.activeElement,
+  });
+  if (!escaped) return false;
+  _clearActiveEditorToken();
+  _closeFloatingEntityCard();
+  if (escaped.changed) {
+    _syncEntryFromEditor();
+    _refreshEntityPanelsFromContent();
+    _markDirty();
+  }
+  return true;
+}
+
 function _linkSelectedText(kind) {
-  const linked = _editorMode === 'raw'
-    ? _replaceRawSelectionWithLink(kind)
-    : _replaceRichSelectionWithLink(kind);
+  const snapshot = _editorMode === 'raw' ? _rawSelectionSnapshot() : _richSelectionSnapshot();
+  if (!snapshot?.text?.trim()) {
+    _setStatus('Select text first');
+    return;
+  }
+  if (kind === 'person' || kind === 'location') {
+    if (!_showEntityLinkChooser(kind, snapshot)) _setStatus('Select text first');
+    return;
+  }
+  const linked = _replaceSelectionSnapshotWithLink(kind, snapshot);
   if (!linked) _setStatus('Select text first');
 }
 
@@ -1905,10 +3331,23 @@ async function _createLocation() {
   _renderNavigator();
 }
 
+function _selectAIMode(mode) {
+  const nextMode = mode || 'structure_day';
+  if (_aiSelectedMode === nextMode) {
+    _renderAIPanel();
+    return;
+  }
+  _aiSelectedMode = nextMode;
+  _aiError = '';
+  _renderAIPanel();
+  _loadAIEstimate(_aiSelectedMode, { render: true }).catch(() => {});
+}
+
 async function _runAI(mode) {
+  _aiSelectedMode = mode || 'structure_day';
   if (_aiStatus?.available !== true) {
     _aiError = _aiStatus?.reason || 'No LLM provider configured.';
-    _render();
+    _renderAIPanel();
     return;
   }
   if (_aiBusy) return;
@@ -1916,29 +3355,52 @@ async function _runAI(mode) {
   _aiError = '';
   _aiPreview = null;
   _syncEntryFromEditor();
-  _render();
+  _renderAIAffectedPanels();
   const content = _entry?.content || '';
   try {
     const result = await assistLogbook({
       entry_date: _date,
       content,
-      mode,
-      locale: (navigator.language || 'en').toLowerCase().startsWith('nl') ? 'nl' : 'en',
+      mode: _aiSelectedMode,
+      locale: _aiLocale(),
       current_entry: _entry || {},
     });
     _aiPreview = result;
+    if (result?.usage?.estimate) {
+      _aiEstimate = {
+        ok: true,
+        available: true,
+        mode: _aiSelectedMode,
+        model: result.usage.model,
+        source: result.usage.source,
+        billing: result.usage.billing,
+        estimate: result.usage.estimate,
+        day: result.usage.day,
+        month: result.usage.month,
+      };
+    }
+    if (result?.usage) {
+      _aiUsageSummary = {
+        ok: true,
+        billing: result.usage.billing,
+        day: result.usage.day,
+        month: result.usage.month,
+      };
+    }
+    await _loadAIUsageSummary();
   } catch (err) {
     _aiError = err.message || 'AI help failed. Your entry was not changed.';
   } finally {
     _aiBusy = false;
-    _render();
+    _renderAIAffectedPanels();
   }
 }
 
 async function _extractFacts() {
+  _aiSelectedMode = 'extract_facts';
   if (_aiStatus?.available !== true) {
     _aiError = _aiStatus?.reason || 'No LLM provider configured.';
-    _render();
+    _renderAIPanel();
     return;
   }
   if (!_entry?.id || _dirty) {
@@ -1947,11 +3409,31 @@ async function _extractFacts() {
   if (!_entry?.id) return;
   _aiBusy = true;
   _aiError = '';
-  _render();
+  _renderAIPanel();
   try {
     const result = await analyzeEntry(_entry.id);
     _aiPreview = result;
+    if (result?.usage) {
+      _aiEstimate = {
+        ok: true,
+        available: true,
+        mode: 'extract_facts',
+        model: result.usage.model,
+        source: result.usage.source,
+        billing: result.usage.billing,
+        estimate: result.usage.estimate,
+        day: result.usage.day,
+        month: result.usage.month,
+      };
+      _aiUsageSummary = {
+        ok: true,
+        billing: result.usage.billing,
+        day: result.usage.day,
+        month: result.usage.month,
+      };
+    }
     await Promise.all([_loadPeople(), _loadConnections(), _loadEntries()]);
+    await _loadAIUsageSummary();
   } catch (err) {
     _aiError = err.message || 'Extract facts failed.';
   } finally {
@@ -2065,6 +3547,9 @@ export async function openLogbookDate(date) {
 
 export function closeLogbook() {
   _open = false;
+  _closeSelectionMenu();
+  _closeEntityLinkChooser();
+  _closeFloatingEntityCard();
   if (_saveTimer) {
     clearTimeout(_saveTimer);
     _saveTimer = null;

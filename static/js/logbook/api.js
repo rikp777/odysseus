@@ -172,6 +172,17 @@ export function getAIStatus() {
   return jsonFetch(`${API_BASE}/api/logbook/ai/status`);
 }
 
+export function estimateLogbookAI(payload) {
+  return jsonFetch(`${API_BASE}/api/logbook/ai/estimate`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function getLogbookAIUsage() {
+  return jsonFetch(`${API_BASE}/api/logbook/ai/usage-summary`);
+}
+
 export function assistLogbook(payload) {
   return jsonFetch(`${API_BASE}/api/logbook/ai/assist`, {
     method: 'POST',

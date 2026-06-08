@@ -84,13 +84,16 @@ def record_llm_usage_safely(
         return
     try:
         from src.billing_usage import record_model_usage_from_metrics
+        event_metrics = dict(metrics)
+        if ctx.get("source"):
+            event_metrics["ledger_source"] = str(ctx.get("source") or "")
         record_model_usage_from_metrics(
             owner=ctx.get("owner"),
             session_id=ctx.get("session_id", session_id),
             message_id=ctx.get("message_id", message_id),
             endpoint_url=endpoint_url,
-            model=str(metrics.get("model") or model or ""),
-            metrics=metrics,
+            model=str(event_metrics.get("model") or model or ""),
+            metrics=event_metrics,
         )
     except Exception as exc:
         logger.warning("Failed to record model usage for billing ledger: %s", exc)
@@ -1271,7 +1274,8 @@ async def llm_call_async(
     prompt_type: Optional[str] = None,
     owner: Optional[str] = None,
     billing_context: Optional[Dict[str, Any]] = None,
-) -> str:
+    return_usage: bool = False,
+) -> Any:
     """Asynchronous LLM call using httpx with connection pooling, timeout, retry logic, and performance logging."""
     provider = _detect_provider(url)
     messages_copy = _sanitize_llm_messages(messages)
@@ -1293,6 +1297,23 @@ async def llm_call_async(
     cached_response = _get_cached_response(cache_key)
     if cached_response:
         logger.debug(f"Returning cached response for key: {cache_key}")
+        if return_usage:
+            cached_target_url = (
+                _normalize_anthropic_url(url) if provider == "anthropic"
+                else _normalize_ollama_url(url) if provider == "ollama"
+                else url
+            )
+            metrics = _estimated_usage_metrics(messages_copy, cached_response, model)
+            metrics["usage_source"] = "cached"
+            return {
+                "text": cached_response,
+                "usage": metrics,
+                "endpoint_url": cached_target_url,
+                "model": str(metrics.get("model") or model or ""),
+                "provider": provider,
+                "cached": True,
+                "recorded": False,
+            }
         return cached_response
 
     if provider == "anthropic":
@@ -1365,13 +1386,24 @@ async def llm_call_async(
                     msg = data["choices"][0]["message"]
                     response = msg.get("content") or msg.get("reasoning_content") or ""
                 _set_cached_response(cache_key, response)
+                metrics = _response_usage_metrics(provider, data, messages_copy, response, model)
                 record_llm_usage_safely(
                     endpoint_url=target_url,
                     model=model,
-                    metrics=_response_usage_metrics(provider, data, messages_copy, response, model),
+                    metrics=metrics,
                     owner=owner,
                     billing_context=billing_context,
                 )
+                if return_usage:
+                    return {
+                        "text": response,
+                        "usage": metrics,
+                        "endpoint_url": target_url,
+                        "model": str(metrics.get("model") or model or ""),
+                        "provider": provider,
+                        "cached": False,
+                        "recorded": True,
+                    }
                 return response
             except Exception:
                 raise HTTPException(502, f"Unexpected schema from {target_url}: {str(data)[:400]}")

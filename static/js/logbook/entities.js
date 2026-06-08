@@ -28,31 +28,39 @@ export function displayNameFromSlug(value) {
     .join(' ');
 }
 
+function entitySlugGroups(item) {
+  return {
+    primary: [item?.canonical_name, item?.display_name].map(slugName).filter(Boolean),
+    aliases: (item?.aliases || []).map(slugName).filter(Boolean),
+  };
+}
+
+function findEntityBySlug(items = [], slug, { includeHidden = true, aliases = true } = {}) {
+  if (!slug) return null;
+  return (items || []).find(item => {
+    if (item?.hidden && !includeHidden) return false;
+    const slugs = entitySlugGroups(item);
+    return slugs.primary.includes(slug) || Boolean(aliases && slugs.aliases.includes(slug));
+  }) || null;
+}
+
 export function personForLink(people = [], target, label = '') {
   const targetSlug = slugName(target);
   const labelSlug = slugName(label);
-  return (people || []).find(person => {
-    const slugs = [
-      person.canonical_name,
-      person.display_name,
-      ...(person.aliases || []),
-    ].map(slugName).filter(Boolean);
-    return slugs.includes(targetSlug) || Boolean(labelSlug && slugs.includes(labelSlug));
-  }) || null;
+  return findEntityBySlug(people, targetSlug, { aliases: false })
+    || findEntityBySlug(people, targetSlug, { aliases: true })
+    || findEntityBySlug(people, labelSlug, { aliases: false })
+    || findEntityBySlug(people, labelSlug, { aliases: true });
 }
 
 export function locationForLink(locations = [], target, label = '', { includeHidden = false } = {}) {
   const targetSlug = slugName(target);
   const labelSlug = slugName(label);
-  return (locations || []).find(location => {
-    if (location.hidden && !includeHidden) return false;
-    const slugs = [
-      location.canonical_name,
-      location.display_name,
-      ...(location.aliases || []),
-    ].map(slugName).filter(Boolean);
-    return slugs.includes(targetSlug) || Boolean(labelSlug && slugs.includes(labelSlug));
-  }) || null;
+  const options = { includeHidden };
+  return findEntityBySlug(locations, targetSlug, { ...options, aliases: false })
+    || findEntityBySlug(locations, targetSlug, { ...options, aliases: true })
+    || findEntityBySlug(locations, labelSlug, { ...options, aliases: false })
+    || findEntityBySlug(locations, labelSlug, { ...options, aliases: true });
 }
 
 export function entityKey(item) {
@@ -122,24 +130,30 @@ export function selectionLinkParts(text) {
   return label ? { leading, label, trailing } : null;
 }
 
-export function selectionLinkTarget(kind, label, { people = [], locations = [] } = {}) {
+export function linkTargetForEntity(kind, item = null, label = '') {
   if (kind === 'food') return 'data:food';
+  const name = item?.canonical_name || item?.display_name || label;
+  const prefix = kind === 'location' ? 'place' : 'person';
+  return `${prefix}:${slugName(name)}`;
+}
+
+export function selectionLinkTarget(kind, label, { people = [], locations = [] } = {}) {
   if (kind === 'location') {
     const location = locationForLink(locations, '', label);
-    return `place:${slugName(location?.canonical_name || location?.display_name || label)}`;
+    return linkTargetForEntity('location', location, label);
   }
   const person = personForLink(people, '', label);
-  return `person:${slugName(person?.canonical_name || person?.display_name || label)}`;
+  return linkTargetForEntity(kind, person, label);
 }
 
 export function mentionMarkdown(name, people = []) {
   const person = personForLink(people, '', name);
-  const target = `person:${slugName(person?.canonical_name || person?.display_name || name)}`;
+  const target = linkTargetForEntity('person', person, name);
   return `[${name}](${target})`;
 }
 
 export function locationMarkdown(name, locations = []) {
   const location = locationForLink(locations, '', name);
-  const target = `place:${slugName(location?.canonical_name || location?.display_name || name)}`;
+  const target = linkTargetForEntity('location', location, name);
   return `[${name}](${target})`;
 }

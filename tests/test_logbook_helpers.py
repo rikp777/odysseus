@@ -6,7 +6,7 @@ import pytest
 import src.logbook.utils as logbook_utils
 from fastapi import HTTPException
 
-from src.logbook.ai import local_ai_fallback_payload, normalize_ai_payload, run_ai_assist
+from src.logbook.ai import estimate_ai_usage, local_ai_fallback_payload, normalize_ai_payload, run_ai_assist
 from src.logbook.schemas import LogbookAIAssist
 from src.logbook.serializers import entry_to_dict
 from src.logbook.utils import (
@@ -298,9 +298,128 @@ async def test_logbook_ai_assist_returns_local_fallback_on_provider_error(monkey
     assert str(status_code) in result["warning"]
     assert call_kwargs["timeout"] == 25
     assert call_kwargs["max_retries"] == 2
+    assert call_kwargs["return_usage"] is True
+    assert call_kwargs["billing_context"]["source"] == "logbook_ai:extract_all"
+    assert result["usage"]["fallback"] is True
+    assert result["usage"]["actual"]["total_tokens"] == 0
+    assert result["usage"]["estimate"]["input_tokens"] > 0
     assert result["people_suggestions"][0]["display_name"] == "Milan de Vries"
     assert result["location_suggestions"][0]["display_name"] == "Meerstad"
     assert "[Milan de Vries](person:milan_de_vries)" in result["preview_content"]
+
+
+def test_logbook_ai_estimate_includes_cost_and_scoped_summaries(monkeypatch):
+    import src.endpoint_resolver as endpoint_resolver
+    from src import billing_usage
+
+    seen = []
+    monkeypatch.setattr(endpoint_resolver, "resolve_endpoint", lambda *_args, **_kwargs: ("https://api.openai.com/v1/chat/completions", "gpt-4o-mini", {}))
+
+    def fake_usage_summary(*, period="month", owner=None, source_prefix=None, now=None):
+        seen.append((period, owner, source_prefix))
+        return {
+            "enabled": True,
+            "period": period,
+            "amount_decimal": "0.01",
+            "projected_decimal": "0.02",
+            "amount": "0.010000",
+            "display": "$0.01",
+            "events": 1,
+            "input_tokens": 10,
+            "output_tokens": 5,
+            "total_tokens": 15,
+            "providers": [],
+            "models": [],
+        }
+
+    monkeypatch.setattr(billing_usage, "get_usage_summary", fake_usage_summary)
+
+    result = estimate_ai_usage(
+        "alex",
+        LogbookAIAssist(
+            entry_date="2099-01-02",
+            mode="summarize",
+            locale="en",
+            content="A short day with notes.",
+        ),
+    )
+
+    assert result["available"] is True
+    assert result["model"] == "gpt-4o-mini"
+    assert result["estimate"]["input_tokens"] > 0
+    assert result["estimate"]["max_output_tokens"] == 1600
+    assert result["estimate"]["cost"]["known"] is True
+    assert "amount_decimal" not in result["day"]
+    assert seen == [
+        ("day", "alex", "logbook_ai"),
+        ("month", "alex", "logbook_ai"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_logbook_ai_assist_returns_actual_usage_metadata(monkeypatch):
+    import src.endpoint_resolver as endpoint_resolver
+    import src.llm_core as llm_core
+    from src import billing_usage
+
+    call_kwargs = {}
+
+    async def usage_call(**kwargs):
+        call_kwargs.update(kwargs)
+        return {
+            "text": '{"ok": true, "summary": "Done."}',
+            "usage": {
+                "input_tokens": 42,
+                "output_tokens": 9,
+                "model": "gpt-4o-mini",
+                "usage_source": "real",
+            },
+            "endpoint_url": "https://api.openai.com/v1/chat/completions",
+            "model": "gpt-4o-mini",
+            "provider": "openai",
+            "cached": False,
+            "recorded": True,
+        }
+
+    monkeypatch.setattr(endpoint_resolver, "resolve_endpoint", lambda *_args, **_kwargs: ("https://api.openai.com/v1/chat/completions", "gpt-4o-mini", {}))
+    monkeypatch.setattr(llm_core, "llm_call_async", usage_call)
+    monkeypatch.setattr(
+        billing_usage,
+        "get_usage_summary",
+        lambda *, period="month", owner=None, source_prefix=None, now=None: {
+            "enabled": True,
+            "period": period,
+            "amount": "0.001000",
+            "display": "$0.0010",
+            "events": 1,
+            "input_tokens": 42,
+            "output_tokens": 9,
+            "total_tokens": 51,
+            "providers": [],
+            "models": [],
+        },
+    )
+
+    result = await run_ai_assist(
+        "alex",
+        LogbookAIAssist(
+            entry_date="2099-01-02",
+            mode="summarize",
+            locale="en",
+            content="Alex wrote enough to summarize.",
+        ),
+    )
+
+    assert result["summary"] == "Done."
+    assert call_kwargs["return_usage"] is True
+    assert call_kwargs["billing_context"]["source"] == "logbook_ai:summarize"
+    assert result["usage"]["fallback"] is False
+    assert result["usage"]["recorded"] is True
+    assert result["usage"]["actual"]["input_tokens"] == 42
+    assert result["usage"]["actual"]["output_tokens"] == 9
+    assert result["usage"]["actual"]["total_tokens"] == 51
+    assert result["usage"]["actual"]["cost"]["known"] is True
+    assert result["usage"]["day"]["total_tokens"] == 51
 
 
 def test_logbook_entry_serializer_counts_unique_people_and_locations():

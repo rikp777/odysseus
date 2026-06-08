@@ -58,6 +58,7 @@ let _windowRect = null;
 let _editingConnectionId = '';
 let _connectionDraft = null;
 let _showConnectionForm = false;
+let _graphSelectedPeople = [];
 let _locationGeocodeResults = [];
 let _locationGeocodeQuery = '';
 let _mapConfig = { tiles_enabled: false, provider: 'local', tile_url: '', attribution: '', max_zoom: 18 };
@@ -161,6 +162,41 @@ function _factTypeLabel(type) {
   return labels[value] || value.replace(/_/g, ' ').replace(/\b\w/g, ch => ch.toUpperCase());
 }
 
+function _safePersonImageLink(src) {
+  const value = String(src || '').trim();
+  if (!value) return '';
+  if (/^https?:\/\//i.test(value) || value.startsWith('/')) return value;
+  if (/^data:image\/(?:png|jpe?g|gif|webp);base64,/i.test(value)) return value;
+  return '';
+}
+
+function _personImageLink(person) {
+  const snapshot = person?.contact_snapshot || {};
+  return String(snapshot.image_url || snapshot.photo || snapshot.avatar || snapshot.image || snapshot.picture || '').trim();
+}
+
+function _personSnapshotWithImage(person, imageUrl) {
+  const snapshot = { ...(person?.contact_snapshot || {}) };
+  ['image_url', 'photo', 'avatar', 'image', 'picture'].forEach(key => { delete snapshot[key]; });
+  if (imageUrl) snapshot.image_url = imageUrl;
+  const hasData = Object.values(snapshot).some(value => {
+    if (Array.isArray(value)) return value.length > 0;
+    if (value === null || value === undefined) return false;
+    return String(value).trim() !== '';
+  });
+  return hasData ? snapshot : null;
+}
+
+function _hasLinkedContact(person, snapshot) {
+  return Boolean(
+    person?.contact_uid ||
+    snapshot?.uid ||
+    snapshot?.source === 'contacts' ||
+    (Array.isArray(snapshot?.emails) && snapshot.emails.length) ||
+    (Array.isArray(snapshot?.phones) && snapshot.phones.length)
+  );
+}
+
 function _personRelationOptionsHtml() {
   return `
     <datalist id="atlas-person-relation-types">
@@ -224,15 +260,15 @@ function _connectionById(connectionId) {
 
 function _defaultConnectionDraft() {
   const people = _atlas.people || [];
-  const first = _selectedPersonId || people[0]?.id || '';
-  const second = people.find(person => person.id !== first)?.id || '';
+  const first = _graphSelectedPeople[0] || _selectedPersonId || people[0]?.id || '';
+  const second = _graphSelectedPeople[1] || people.find(person => person.id !== first)?.id || '';
   return {
     person_a_id: first,
     person_b_id: second,
-    connection_type: 'friend',
+    connection_type: _graphSelectedPeople.length === 2 ? 'family' : 'friend',
     status: 'accepted',
-    strength: 2,
-    confidence: 80,
+    strength: _graphSelectedPeople.length === 2 ? 3 : 2,
+    confidence: _graphSelectedPeople.length === 2 ? 100 : 80,
     description: '',
   };
 }
@@ -255,6 +291,126 @@ function _personSelectOptions(selectedId, excludeId = '') {
     const selected = person.id === selectedId ? ' selected' : '';
     return `<option value="${_e(person.id)}"${selected}${disabled}>${_e(person.display_name || 'Person')}</option>`;
   }).join('');
+}
+
+function _personById(personId) {
+  return (_atlas.people || []).find(person => person.id === personId) || null;
+}
+
+function _connectionBetween(personAId, personBId, { includeHidden = false } = {}) {
+  if (!personAId || !personBId || personAId === personBId) return null;
+  return (_atlas.connections || []).find(conn => {
+    if (!includeHidden && conn.status === 'hidden') return false;
+    return (conn.person_a_id === personAId && conn.person_b_id === personBId) ||
+      (conn.person_a_id === personBId && conn.person_b_id === personAId);
+  }) || null;
+}
+
+function _graphPersonLabel(person) {
+  const name = String(person?.display_name || 'Person').trim();
+  return name.length > 18 ? `${name.slice(0, 17).trim()}...` : name;
+}
+
+function _graphMentionCount(person) {
+  return Math.max(0, Number(person?.mention_count || 0) || 0);
+}
+
+function _graphNodeRadius(person, maxMentions) {
+  const minRadius = 25;
+  const maxRadius = 47;
+  const mentions = _graphMentionCount(person);
+  if (!mentions || !maxMentions) return minRadius;
+  const scaleMax = Math.max(maxMentions, 9);
+  return minRadius + Math.sqrt(mentions / scaleMax) * (maxRadius - minRadius);
+}
+
+function _graphLayout(people) {
+  const width = 640;
+  const height = 340;
+  const centerX = width / 2;
+  const centerY = height / 2;
+  const rx = 245;
+  const ry = 125;
+  const count = people.length;
+  const points = new Map();
+  people.forEach((person, index) => {
+    let x = centerX;
+    let y = centerY;
+    if (count === 2) {
+      x = index === 0 ? centerX - 160 : centerX + 160;
+    } else if (count > 2) {
+      const angle = (Math.PI * -0.5) + (Math.PI * 2 * index / count);
+      x = centerX + Math.cos(angle) * rx;
+      y = centerY + Math.sin(angle) * ry;
+    }
+    points.set(person.id, { x, y });
+  });
+  return { width, height, points };
+}
+
+function _connectionGraphHtml() {
+  const people = _atlas.people || [];
+  if (people.length < 2) {
+    return '<div class="logbook-empty">Add at least two people before editing relationships.</div>';
+  }
+  const visibleConnections = (_atlas.connections || []).filter(conn => conn.status !== 'hidden');
+  const maxMentions = Math.max(0, ...people.map(_graphMentionCount));
+  const layout = _graphLayout(people);
+  const selected = new Set(_graphSelectedPeople);
+  const edges = visibleConnections.map(conn => {
+    const a = layout.points.get(conn.person_a_id);
+    const b = layout.points.get(conn.person_b_id);
+    if (!a || !b) return '';
+    const midX = (a.x + b.x) / 2;
+    const midY = (a.y + b.y) / 2;
+    const status = conn.status === 'accepted' ? 'accepted' : 'suggested';
+    return `
+      <g class="logbook-graph-edge ${status}" data-graph-connection="${_e(conn.id)}" role="button" tabindex="0">
+        <line x1="${a.x.toFixed(1)}" y1="${a.y.toFixed(1)}" x2="${b.x.toFixed(1)}" y2="${b.y.toFixed(1)}"></line>
+        <text x="${midX.toFixed(1)}" y="${(midY - 6).toFixed(1)}">${_e(_connectionTypeLabel(conn.connection_type))}</text>
+      </g>
+    `;
+  }).join('');
+  const nodes = people.map(person => {
+    const point = layout.points.get(person.id) || { x: 0, y: 0 };
+    const mentions = _graphMentionCount(person);
+    const radius = _graphNodeRadius(person, maxMentions);
+    const active = selected.has(person.id) ? ' selected' : '';
+    const title = mentions === 1 ? '1 mention' : `${mentions} mentions`;
+    return `
+      <g class="logbook-graph-node${active}" data-graph-person="${_e(person.id)}" role="button" tabindex="0" aria-label="${_e(`${person.display_name || 'Person'} - ${title}`)}" transform="translate(${point.x.toFixed(1)} ${point.y.toFixed(1)})">
+        <title>${_e(title)}</title>
+        <circle r="${radius.toFixed(1)}"></circle>
+        <text y="4">${_e(_graphPersonLabel(person))}</text>
+      </g>
+    `;
+  }).join('');
+  const selectedPeople = _graphSelectedPeople.map(_personById).filter(Boolean);
+  const selectedText = selectedPeople.length
+    ? selectedPeople.map(person => person.display_name || 'Person').join(' + ')
+    : 'Select people';
+  const existing = selectedPeople.length === 2
+    ? _connectionBetween(selectedPeople[0].id, selectedPeople[1].id)
+    : null;
+  return `
+    <div class="logbook-graph-editor">
+      <div class="logbook-graph-stage">
+        <svg viewBox="0 0 ${layout.width} ${layout.height}" role="img" aria-label="People relationship graph">
+          <g class="logbook-graph-edges">${edges}</g>
+          <g class="logbook-graph-nodes">${nodes}</g>
+        </svg>
+      </div>
+      <aside class="logbook-graph-side">
+        <div class="logbook-subtitle">Selected</div>
+        <strong>${_e(selectedText)}</strong>
+        ${existing ? `<span>${_e(_connectionTypeLabel(existing.connection_type))} · ${_e(existing.status || 'suggested')}</span>` : selectedPeople.length === 2 ? '<span>New relationship</span>' : '<span>Choose two people</span>'}
+        <div class="logbook-atlas-actions">
+          ${existing ? `<button type="button" class="cal-btn" data-graph-edit-connection="${_e(existing.id)}">Edit</button>` : ''}
+          ${_graphSelectedPeople.length ? '<button type="button" class="cal-btn" id="atlas-graph-clear">Clear</button>' : ''}
+        </div>
+      </aside>
+    </div>
+  `;
 }
 
 function _connectionFormHtml() {
@@ -624,6 +780,9 @@ function _personDetailHtml() {
   if (!detail) return '<div class="logbook-empty">Select a person.</div>';
   const aliases = (detail.aliases || []).join(', ');
   const snapshot = detail.contact_snapshot || null;
+  const imageLink = _personImageLink(detail);
+  const safeImageLink = _safePersonImageLink(imageLink);
+  const hasLinkedContact = _hasLinkedContact(detail, snapshot);
   const entries = (_personDetail?.entries || []).map(entry => `
     <button type="button" class="logbook-atlas-entry" data-entry-date="${_e(entry.entry_date)}">
       <strong>${_e(entry.entry_date)}</strong>
@@ -643,6 +802,10 @@ function _personDetailHtml() {
       <label>Name<input id="atlas-person-name" class="memory-search-input" value="${_e(detail.display_name || '')}"></label>
       <label>Aliases<input id="atlas-person-aliases" class="memory-search-input" value="${_e(aliases)}" placeholder="Jan, JP"></label>
       <label>Relation<input id="atlas-person-relation" class="memory-search-input" list="atlas-person-relation-types" value="${_e(detail.relationship_label || '')}" placeholder="Choose or type relation">${_personRelationOptionsHtml()}</label>
+      <label>Image link<input id="atlas-person-image-link" class="memory-search-input" value="${_e(imageLink)}" placeholder="/uploads/people/jan.png or https://..."></label>
+      <div class="logbook-person-image-link">
+        ${safeImageLink ? `<img src="${_e(safeImageLink)}" alt=""><a class="cal-btn" href="${_e(safeImageLink)}" target="_blank" rel="noopener noreferrer">Open image</a>` : imageLink ? '<div class="logbook-empty">Use an http, https, data image, or app-relative / path.</div>' : '<div class="logbook-empty">No image link set.</div>'}
+      </div>
       <label>Notes<textarea id="atlas-person-notes" class="logbook-atlas-text">${_e(detail.notes || '')}</textarea></label>
       <label>LLM context<textarea id="atlas-person-context" class="logbook-atlas-text" placeholder="Context the assistant may use about this person.">${_e(detail.llm_context || '')}</textarea></label>
       <div class="logbook-subtitle">Facts</div>
@@ -653,7 +816,7 @@ function _personDetailHtml() {
       <div class="logbook-atlas-person-connections">${_personConnectionsDetailHtml(detail)}</div>
       <div class="logbook-atlas-contact">
         <div class="logbook-subtitle">Linked contact</div>
-        ${_creatingPerson ? '<div class="logbook-empty">Save this person before linking a contact.</div>' : snapshot ? `<div class="logbook-contact-linked"><strong>${_e(snapshot.name || detail.display_name)}</strong><span>${_e((snapshot.emails || []).join(', '))}</span><button type="button" class="cal-btn" id="atlas-unlink-contact">Unlink</button></div>` : '<div class="logbook-empty">No linked contact.</div>'}
+        ${_creatingPerson ? '<div class="logbook-empty">Save this person before linking a contact.</div>' : hasLinkedContact ? `<div class="logbook-contact-linked"><strong>${_e(snapshot?.name || detail.display_name)}</strong><span>${_e((snapshot?.emails || []).join(', '))}</span><button type="button" class="cal-btn" id="atlas-unlink-contact">Unlink</button></div>` : '<div class="logbook-empty">No linked contact.</div>'}
         ${!_creatingPerson && _atlas.contacts_available ? `<div class="logbook-directory-tools"><input id="atlas-contact-search" class="memory-search-input" placeholder="Find contact" value="${_e(_contactQuery)}"><button type="button" class="cal-btn" id="atlas-contact-search-btn">Search</button></div>${candidates}` : !_creatingPerson ? '<div class="logbook-empty">Contacts unavailable for this user.</div>' : ''}
       </div>
       <div class="logbook-subtitle">Recent entries</div>
@@ -843,6 +1006,7 @@ function _connectionsTabHtml() {
           ${canCreate && !_showConnectionForm && !_editingConnectionId ? '<button type="button" class="cal-btn" id="atlas-new-connection">New connection</button>' : ''}
         </div>
       </div>
+      ${_connectionGraphHtml()}
       ${form}
       ${rows || '<div class="logbook-empty">No connection suggestions.</div>'}
     </section>
@@ -959,8 +1123,88 @@ function _bindMap() {
   _bindMapActions(document);
 }
 
+function _editConnection(conn) {
+  if (!conn) return;
+  _tab = 'connections';
+  _editingConnectionId = conn.id;
+  _connectionDraft = _draftFromConnection(conn);
+  _showConnectionForm = true;
+  _graphSelectedPeople = [conn.person_a_id, conn.person_b_id].filter(Boolean);
+  _render();
+}
+
+function _selectGraphPerson(personId) {
+  if (!personId) return;
+  if (_graphSelectedPeople.length >= 2 || !_graphSelectedPeople.length) {
+    _graphSelectedPeople = [personId];
+    _editingConnectionId = '';
+    _connectionDraft = null;
+    _showConnectionForm = false;
+    _render();
+    return;
+  }
+  const first = _graphSelectedPeople[0];
+  if (first === personId) {
+    _graphSelectedPeople = [];
+    _editingConnectionId = '';
+    _connectionDraft = null;
+    _showConnectionForm = false;
+    _render();
+    return;
+  }
+  const existing = _connectionBetween(first, personId);
+  if (existing) {
+    _editConnection(existing);
+    return;
+  }
+  _graphSelectedPeople = [first, personId];
+  _editingConnectionId = '';
+  _connectionDraft = {
+    ..._defaultConnectionDraft(),
+    person_a_id: first,
+    person_b_id: personId,
+    connection_type: 'family',
+    status: 'accepted',
+    strength: 3,
+    confidence: 100,
+    description: '',
+  };
+  _showConnectionForm = true;
+  _render();
+}
+
+function _bindConnectionGraph() {
+  document.querySelectorAll('[data-graph-person]').forEach(node => {
+    const run = () => _selectGraphPerson(node.dataset.graphPerson);
+    node.addEventListener('click', run);
+    node.addEventListener('keydown', event => {
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      event.preventDefault();
+      run();
+    });
+  });
+  document.querySelectorAll('[data-graph-connection], [data-graph-edit-connection]').forEach(edge => {
+    const run = () => _editConnection(_connectionById(edge.dataset.graphConnection || edge.dataset.graphEditConnection));
+    edge.addEventListener('click', run);
+    edge.addEventListener('keydown', event => {
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      event.preventDefault();
+      run();
+    });
+  });
+  document.getElementById('atlas-graph-clear')?.addEventListener('click', () => {
+    _graphSelectedPeople = [];
+    _editingConnectionId = '';
+    _connectionDraft = null;
+    _showConnectionForm = false;
+    _render();
+  });
+}
+
 function _bindConnections() {
+  _bindConnectionGraph();
   document.getElementById('atlas-new-connection')?.addEventListener('click', () => {
+    _graphSelectedPeople = [];
     _editingConnectionId = '';
     _connectionDraft = _defaultConnectionDraft();
     _showConnectionForm = true;
@@ -975,13 +1219,7 @@ function _bindConnections() {
   document.getElementById('atlas-save-connection')?.addEventListener('click', () => _saveConnection().catch(_setError));
   document.querySelectorAll('[data-edit-connection]').forEach(btn => {
     btn.addEventListener('click', () => {
-      const conn = _connectionById(btn.dataset.editConnection);
-      if (!conn) return;
-      _tab = 'connections';
-      _editingConnectionId = conn.id;
-      _connectionDraft = _draftFromConnection(conn);
-      _showConnectionForm = true;
-      _render();
+      _editConnection(_connectionById(btn.dataset.editConnection));
     });
   });
   document.querySelectorAll('[data-connection-person]').forEach(btn => {
@@ -1004,6 +1242,14 @@ function _aliases(value) {
 
 async function _savePerson() {
   if (!_selectedPersonId && !_creatingPerson) return;
+  const detail = _creatingPerson
+    ? null
+    : _personDetail?.person || (_atlas.people || []).find(p => p.id === _selectedPersonId) || null;
+  const imageLink = String(document.getElementById('atlas-person-image-link')?.value || '').trim();
+  if (imageLink && !_safePersonImageLink(imageLink)) {
+    throw new Error('Use an http, https, data image, or app-relative / path for the image link');
+  }
+  const contactSnapshot = _personSnapshotWithImage(detail, imageLink);
   const payload = {
     display_name: document.getElementById('atlas-person-name')?.value || '',
     aliases: _aliases(document.getElementById('atlas-person-aliases')?.value),
@@ -1011,13 +1257,17 @@ async function _savePerson() {
     notes: document.getElementById('atlas-person-notes')?.value || null,
     llm_context: document.getElementById('atlas-person-context')?.value || null,
   };
+  if (!_creatingPerson) payload.contact_snapshot_json = contactSnapshot;
   if (!payload.display_name.trim()) throw new Error('Name is required');
   _busy = true;
   _render();
   try {
-    const result = _creatingPerson
+    let result = _creatingPerson
       ? await createPerson(payload)
       : await updatePerson(_selectedPersonId, payload);
+    if (_creatingPerson && contactSnapshot) {
+      result = await updatePerson(result.person.id, { contact_snapshot_json: contactSnapshot });
+    }
     _creatingPerson = false;
     _selectedPersonId = result.person.id;
     await _loadAtlas();

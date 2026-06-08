@@ -83,6 +83,29 @@ def test_usage_summary_from_rows_groups_costs_and_unknown_events(monkeypatch):
     assert messages[0]["unknown_cost_events"] == 1
 
 
+def test_record_model_usage_from_metrics_prefers_ledger_source(monkeypatch):
+    calls = []
+    monkeypatch.setattr(billing_usage, "record_model_usage", lambda **kwargs: calls.append(kwargs) or "event-1")
+
+    event_id = billing_usage.record_model_usage_from_metrics(
+        owner="alex",
+        session_id=None,
+        message_id="logbook:msg",
+        endpoint_url="https://api.openai.com/v1/chat/completions",
+        model="gpt-4o-mini",
+        metrics={
+            "input_tokens": 12,
+            "output_tokens": 5,
+            "model": "gpt-4o-mini",
+            "usage_source": "real",
+            "ledger_source": "logbook_ai:extract_all",
+        },
+    )
+
+    assert event_id == "event-1"
+    assert calls[0]["source"] == "logbook_ai:extract_all"
+
+
 def test_estimate_usage_cost_records_unknown_provider_without_cost(monkeypatch):
     monkeypatch.setattr(billing_usage, "_pricing_for", lambda endpoint, model: None)
 

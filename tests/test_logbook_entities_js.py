@@ -27,6 +27,7 @@ def test_logbook_entity_helpers_resolve_links_and_hide_hidden_places():
         import {
           currentEntitiesFromContent,
           entityListSignature,
+          linkTargetForEntity,
           locationForLink,
           personForLink,
           selectionLinkTarget,
@@ -53,6 +54,8 @@ def test_logbook_entity_helpers_resolve_links_and_hide_hidden_places():
           people: parsed.people.map(item => item.display_name),
           locations: parsed.locations.map(item => item.display_name),
           signature: entityListSignature(parsed.people, parsed.locations),
+          personTargetFromEntity: linkTargetForEntity('person', people[0], 'Jeanine'),
+          locationTargetFromEntity: linkTargetForEntity('location', locations[1], 'Office'),
           personTarget: selectionLinkTarget('person', 'Jeanine', { people, locations }),
           locationTarget: selectionLinkTarget('location', 'Office', { people, locations }),
           foodTarget: selectionLinkTarget('food', 'Breakfast', { people, locations })
@@ -68,6 +71,8 @@ def test_logbook_entity_helpers_resolve_links_and_hide_hidden_places():
         "people": ["Jeanine Peeters"],
         "locations": ["Office"],
         "signature": "person-1|loc-2",
+        "personTargetFromEntity": "person:jeanine_peeters",
+        "locationTargetFromEntity": "place:office",
         "personTarget": "person:jeanine_peeters",
         "locationTarget": "place:office",
         "foodTarget": "data:food",
@@ -93,6 +98,40 @@ def test_logbook_selection_link_parts_preserve_surrounding_space():
         "empty": None,
         "mention": "[Jeanine Peeters](person:jeanine_peeters)",
         "location": "[Training Place](place:gym)",
+    }
+
+
+def test_logbook_entity_resolution_prioritizes_explicit_targets_over_aliases():
+    values = _node_eval(
+        """
+        import { locationForLink, personForLink } from './static/js/logbook/entities.js';
+
+        const people = [
+          { id: 'alice', display_name: 'Alice', canonical_name: 'alice', aliases: ['Jan', 'A Team'] },
+          { id: 'jan', display_name: 'jan', canonical_name: 'jan', aliases: [] },
+          { id: 'test', display_name: 'Test', canonical_name: 'test', aliases: ['Jan'] }
+        ];
+        const locations = [
+          { id: 'cafe', display_name: 'Cafe', canonical_name: 'cafe', aliases: ['Gym'], hidden: false },
+          { id: 'gym', display_name: 'Gym', canonical_name: 'gym', aliases: [], hidden: false }
+        ];
+
+        console.log(JSON.stringify({
+          personTarget: personForLink(people, 'person:jan', 'Alias')?.id || null,
+          personLabel: personForLink(people, 'person:unknown', 'Jan')?.id || null,
+          personAliasTargetFallback: personForLink(people, 'person:a_team', '')?.id || null,
+          locationTarget: locationForLink(locations, 'place:gym', 'Cafe')?.id || null,
+          locationLabel: locationForLink(locations, 'place:unknown', 'Gym')?.id || null
+        }));
+        """
+    )
+
+    assert values == {
+        "personTarget": "jan",
+        "personLabel": "jan",
+        "personAliasTargetFallback": "alice",
+        "locationTarget": "gym",
+        "locationLabel": "gym",
     }
 
 
