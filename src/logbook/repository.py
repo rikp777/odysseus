@@ -26,8 +26,15 @@ from core.database import (
     LogbookMention,
     LogbookPerson,
     LogbookPersonConnection,
+    LogbookPersonFact,
 )
-from src.logbook.schemas import ALLOWED_CONNECTION_STATUS, LogbookDataPointIn
+from src.logbook.schemas import (
+    ALLOWED_CONNECTION_STATUS,
+    ALLOWED_CONNECTION_TYPES,
+    ALLOWED_PERSON_FACT_STATUS,
+    ALLOWED_PERSON_FACT_TYPES,
+    LogbookDataPointIn,
+)
 from src.logbook.utils import (
     add_evidence,
     aliases,
@@ -111,6 +118,255 @@ def get_or_create_person(
     db.add(person)
     db.flush()
     return person
+
+
+def _clean_person_context_text(value: Optional[str], *, max_length: int = 1200) -> Optional[str]:
+    text = re.sub(r"\s+", " ", str(value or "").strip())
+    return text[:max_length].strip() or None
+
+
+def _append_unique_person_text(existing: Optional[str], addition: Optional[str]) -> Optional[str]:
+    text = _clean_person_context_text(addition)
+    if not text:
+        return existing
+    current = str(existing or "").strip()
+    if not current:
+        return text
+    if text.lower() in current.lower():
+        return current
+    return f"{current}\n\n{text}"
+
+
+def normalize_person_fact_type(value: Optional[str], default: str = "unknown") -> str:
+    fact_type = str(value or default or "unknown").strip().lower().replace(" ", "_")
+    if fact_type not in ALLOWED_PERSON_FACT_TYPES:
+        fact_type = "unknown"
+    return fact_type
+
+
+def normalize_person_fact_status(value: Optional[str], default: str = "active") -> str:
+    status = str(value or default or "active").strip().lower()
+    if status not in ALLOWED_PERSON_FACT_STATUS:
+        status = "active"
+    return status
+
+
+def _clean_person_fact_value(value: Optional[str], *, max_length: int = 500) -> Optional[str]:
+    text = re.sub(r"\s+", " ", str(value or "").strip())
+    return text[:max_length].strip() or None
+
+
+def upsert_person_fact(
+    db,
+    owner: str,
+    person: LogbookPerson,
+    *,
+    fact_type: Optional[str],
+    value_text: Optional[str],
+    entry: Optional[LogbookEntry] = None,
+    label: Optional[str] = None,
+    value_json: Any = None,
+    confidence: Optional[int] = None,
+    source: str = "ai",
+    status: str = "active",
+) -> tuple[Optional[LogbookPersonFact], bool]:
+    value = _clean_person_fact_value(value_text)
+    if not person or not person.id or not value:
+        return None, False
+    normalized_type = normalize_person_fact_type(fact_type)
+    normalized_status = normalize_person_fact_status(status)
+    clean_label = _clean_person_context_text(label, max_length=80) or normalized_type.replace("_", " ").title()
+    source_name = _clean_person_context_text(source, max_length=40) or "ai"
+    entry_id = getattr(entry, "id", None)
+    entry_date = getattr(entry, "entry_date", None)
+    query = db.query(LogbookPersonFact).filter(
+        LogbookPersonFact.owner == owner,
+        LogbookPersonFact.person_id == person.id,
+        LogbookPersonFact.fact_type == normalized_type,
+        func.lower(LogbookPersonFact.value_text) == value.lower(),
+    )
+    fact = query.first()
+    duplicate = fact is not None
+    if not fact:
+        fact = LogbookPersonFact(
+            id=str(uuid.uuid4()),
+            owner=owner,
+            person_id=person.id,
+            fact_type=normalized_type,
+            label=clean_label,
+            value_text=value,
+            value_json=json_dump(value_json),
+            confidence=clamp_confidence(confidence, default=70),
+            source=source_name,
+            source_entry_id=entry_id,
+            source_entry_date=entry_date,
+            last_seen_entry_id=entry_id,
+            last_seen_date=entry_date,
+            status=normalized_status,
+        )
+        db.add(fact)
+    else:
+        fact.label = fact.label or clean_label
+        if value_json is not None:
+            fact.value_json = json_dump(value_json)
+        fact.confidence = max(fact.confidence or 0, clamp_confidence(confidence, default=fact.confidence or 70))
+        fact.source = fact.source or source_name
+        if entry_id:
+            fact.last_seen_entry_id = entry_id
+        if entry_date:
+            fact.last_seen_date = entry_date
+        if normalized_status != "active" or fact.status not in ALLOWED_PERSON_FACT_STATUS:
+            fact.status = normalized_status
+    db.flush()
+    return fact, duplicate
+
+
+def person_facts(
+    db,
+    owner: str,
+    person_id: str,
+    *,
+    include_inactive: bool = False,
+    limit: int = 50,
+) -> List[LogbookPersonFact]:
+    limit = max(1, min(int(limit or 50), 200))
+    query = db.query(LogbookPersonFact).filter(
+        LogbookPersonFact.owner == owner,
+        LogbookPersonFact.person_id == person_id,
+    )
+    if not include_inactive:
+        query = query.filter(LogbookPersonFact.status == "active")
+    return (
+        query
+        .order_by(LogbookPersonFact.last_seen_date.desc(), LogbookPersonFact.updated_at.desc())
+        .limit(limit)
+        .all()
+    )
+
+
+def person_facts_for_people(
+    db,
+    owner: str,
+    person_ids: List[str],
+    *,
+    include_inactive: bool = False,
+    limit_per_person: int = 3,
+) -> Dict[str, List[LogbookPersonFact]]:
+    ids = sorted({str(item) for item in person_ids or [] if item})
+    if not ids:
+        return {}
+    limit = max(1, min(int(limit_per_person or 3), 20))
+    query = db.query(LogbookPersonFact).filter(
+        LogbookPersonFact.owner == owner,
+        LogbookPersonFact.person_id.in_(ids),
+    )
+    if not include_inactive:
+        query = query.filter(LogbookPersonFact.status == "active")
+    rows = query.order_by(
+        LogbookPersonFact.person_id.asc(),
+        LogbookPersonFact.last_seen_date.desc(),
+        LogbookPersonFact.updated_at.desc(),
+    ).all()
+    grouped: Dict[str, List[LogbookPersonFact]] = {person_id: [] for person_id in ids}
+    for fact in rows:
+        bucket = grouped.get(fact.person_id)
+        if bucket is not None and len(bucket) < limit:
+            bucket.append(fact)
+    return grouped
+
+
+def _fact_status_rank(status: Optional[str]) -> int:
+    return {"active": 3, "archived": 2, "rejected": 1}.get(normalize_person_fact_status(status), 0)
+
+
+def _earlier_fact_source(existing: LogbookPersonFact, incoming: LogbookPersonFact) -> tuple[Optional[str], Optional[str]]:
+    existing_date = existing.source_entry_date or ""
+    incoming_date = incoming.source_entry_date or ""
+    if incoming_date and (not existing_date or incoming_date < existing_date):
+        return incoming.source_entry_id, incoming.source_entry_date
+    return existing.source_entry_id, existing.source_entry_date
+
+
+def _later_fact_seen(existing: LogbookPersonFact, incoming: LogbookPersonFact) -> tuple[Optional[str], Optional[str]]:
+    existing_date = existing.last_seen_date or ""
+    incoming_date = incoming.last_seen_date or ""
+    if incoming_date and (not existing_date or incoming_date > existing_date):
+        return incoming.last_seen_entry_id, incoming.last_seen_date
+    return existing.last_seen_entry_id, existing.last_seen_date
+
+
+def merge_person_facts(db, owner: str, source_person_id: str, target: LogbookPerson) -> Dict[str, int]:
+    moved = 0
+    merged = 0
+    if not source_person_id or not target or not target.id or source_person_id == target.id:
+        return {"moved": moved, "merged": merged}
+    facts = db.query(LogbookPersonFact).filter(
+        LogbookPersonFact.owner == owner,
+        LogbookPersonFact.person_id == source_person_id,
+    ).all()
+    for fact in facts:
+        existing = db.query(LogbookPersonFact).filter(
+            LogbookPersonFact.owner == owner,
+            LogbookPersonFact.person_id == target.id,
+            LogbookPersonFact.fact_type == fact.fact_type,
+            func.lower(LogbookPersonFact.value_text) == str(fact.value_text or "").lower(),
+            LogbookPersonFact.id != fact.id,
+        ).first()
+        if existing:
+            existing.label = existing.label or fact.label
+            if not existing.value_json and fact.value_json:
+                existing.value_json = fact.value_json
+            existing.confidence = max(existing.confidence or 0, fact.confidence or 0)
+            existing.source = existing.source or fact.source
+            existing.source_entry_id, existing.source_entry_date = _earlier_fact_source(existing, fact)
+            existing.last_seen_entry_id, existing.last_seen_date = _later_fact_seen(existing, fact)
+            if _fact_status_rank(fact.status) > _fact_status_rank(existing.status):
+                existing.status = normalize_person_fact_status(fact.status)
+            db.delete(fact)
+            merged += 1
+        else:
+            fact.person_id = target.id
+            moved += 1
+    db.flush()
+    return {"moved": moved, "merged": merged}
+
+
+def apply_person_suggestion_fields(
+    db,
+    owner: str,
+    person: LogbookPerson,
+    suggestion: Dict[str, Any],
+    *,
+    entry: Optional[LogbookEntry] = None,
+    source: str = "ai",
+) -> List[LogbookPersonFact]:
+    """Merge explicit AI person facts without overwriting manual context."""
+    if not isinstance(suggestion, dict):
+        return []
+    relationship = _clean_person_context_text(suggestion.get("relationship_label"), max_length=80)
+    if relationship and not person.relationship_label:
+        person.relationship_label = relationship
+    person.notes = _append_unique_person_text(person.notes, suggestion.get("notes"))
+    person.llm_context = _append_unique_person_text(person.llm_context, suggestion.get("llm_context"))
+    facts: List[LogbookPersonFact] = []
+    for raw_fact in suggestion.get("facts") or []:
+        if not isinstance(raw_fact, dict):
+            continue
+        fact, _duplicate = upsert_person_fact(
+            db,
+            owner,
+            person,
+            fact_type=raw_fact.get("fact_type"),
+            label=raw_fact.get("label"),
+            value_text=raw_fact.get("value_text"),
+            value_json=raw_fact.get("value_json"),
+            confidence=raw_fact.get("confidence", suggestion.get("confidence")),
+            source=source,
+            entry=entry,
+        )
+        if fact:
+            facts.append(fact)
+    return facts
 
 
 def location_is_hidden(location: Optional[LogbookLocation]) -> bool:
@@ -440,6 +696,138 @@ def upsert_co_mentioned_connection(db, owner: str, entry: LogbookEntry, person_a
         conn.status = "suggested"
 
 
+def normalize_connection_type(value: Optional[str], default: str = "unknown") -> str:
+    connection_type = str(value or default or "unknown").strip().lower().replace(" ", "_")
+    if connection_type not in ALLOWED_CONNECTION_TYPES:
+        raise HTTPException(400, "Unsupported connection type")
+    return connection_type
+
+
+def normalize_connection_status(value: Optional[str], default: str = "accepted") -> str:
+    status = str(value or default or "accepted").strip().lower()
+    if status not in ALLOWED_CONNECTION_STATUS:
+        raise HTTPException(400, "Unsupported connection status")
+    return status
+
+
+def _clean_connection_description(value: Optional[str]) -> Optional[str]:
+    text = str(value or "").strip()
+    return text or None
+
+
+def _apply_connection_fields(
+    conn: LogbookPersonConnection,
+    *,
+    connection_type: Optional[str] = None,
+    description: Optional[str] = None,
+    strength: Optional[int] = None,
+    confidence: Optional[int] = None,
+    status: Optional[str] = None,
+    fields_set: Optional[set] = None,
+) -> None:
+    fields = fields_set or {"connection_type", "description", "strength", "confidence", "status"}
+    if "connection_type" in fields:
+        conn.connection_type = normalize_connection_type(connection_type, conn.connection_type or "unknown")
+    if "description" in fields:
+        conn.description = _clean_connection_description(description)
+    if "strength" in fields:
+        conn.strength = clamp_score(strength, low=1, high=5) or 1
+    if "confidence" in fields:
+        conn.confidence = clamp_confidence(confidence, conn.confidence or 0)
+    if "status" in fields:
+        conn.status = normalize_connection_status(status, conn.status or "accepted")
+
+
+def upsert_manual_connection(
+    db,
+    owner: str,
+    *,
+    person_a_id: str,
+    person_b_id: str,
+    connection_type: Optional[str] = "unknown",
+    description: Optional[str] = None,
+    strength: Optional[int] = None,
+    confidence: Optional[int] = None,
+    status: Optional[str] = "accepted",
+) -> tuple[LogbookPersonConnection, bool]:
+    person_a = load_person_or_404(db, owner, person_a_id)
+    person_b = load_person_or_404(db, owner, person_b_id)
+    pair = pair_ids(person_a.id, person_b.id)
+    if not pair:
+        raise HTTPException(400, "Choose two different people")
+    a_id, b_id = pair
+    normalized_type = normalize_connection_type(connection_type)
+    conn = db.query(LogbookPersonConnection).filter(
+        LogbookPersonConnection.owner == owner,
+        LogbookPersonConnection.person_a_id == a_id,
+        LogbookPersonConnection.person_b_id == b_id,
+        LogbookPersonConnection.connection_type == normalized_type,
+    ).first()
+    duplicate = conn is not None
+    if not conn:
+        conn = LogbookPersonConnection(
+            id=str(uuid.uuid4()),
+            owner=owner,
+            person_a_id=a_id,
+            person_b_id=b_id,
+            connection_type=normalized_type,
+            description=None,
+            strength=1,
+            confidence=80,
+            evidence_json="[]",
+            status="accepted",
+        )
+        db.add(conn)
+    _apply_connection_fields(
+        conn,
+        connection_type=normalized_type,
+        description=description,
+        strength=strength if strength is not None else conn.strength,
+        confidence=confidence if confidence is not None else conn.confidence,
+        status=status,
+    )
+    return conn, duplicate
+
+
+def update_manual_connection(
+    db,
+    owner: str,
+    conn: LogbookPersonConnection,
+    *,
+    connection_type: Optional[str] = None,
+    description: Optional[str] = None,
+    strength: Optional[int] = None,
+    confidence: Optional[int] = None,
+    status: Optional[str] = None,
+    fields_set: Optional[set] = None,
+) -> LogbookPersonConnection:
+    fields = fields_set or set()
+    if "connection_type" in fields:
+        normalized_type = normalize_connection_type(connection_type, conn.connection_type or "unknown")
+        if normalized_type != conn.connection_type:
+            duplicate = db.query(LogbookPersonConnection.id).filter(
+                LogbookPersonConnection.owner == owner,
+                LogbookPersonConnection.person_a_id == conn.person_a_id,
+                LogbookPersonConnection.person_b_id == conn.person_b_id,
+                LogbookPersonConnection.connection_type == normalized_type,
+                LogbookPersonConnection.id != conn.id,
+            ).first()
+            if duplicate:
+                raise HTTPException(409, "A connection with this type already exists for these people")
+            conn.connection_type = normalized_type
+        fields = set(fields)
+        fields.discard("connection_type")
+    _apply_connection_fields(
+        conn,
+        description=description,
+        strength=strength,
+        confidence=confidence,
+        status=status,
+        fields_set=fields,
+    )
+    return conn
+
+
 def sync_co_mentioned_connections(db, owner: str, entry: LogbookEntry, people: List[LogbookPerson]) -> None:
     unique_ids = sorted({p.id for p in people if p and p.id})
     if len(unique_ids) < 2:
@@ -481,6 +869,7 @@ def link_person_suggestion(
         return None
     alias_values = suggestion.get("aliases") if isinstance(suggestion.get("aliases"), list) else None
     person = get_or_create_person(db, owner, name, alias_values)
+    apply_person_suggestion_fields(db, owner, person, suggestion, entry=entry, source=source)
     exists = db.query(LogbookMention.id).filter(
         LogbookMention.entry_id == entry.id,
         LogbookMention.person_id == person.id,
@@ -785,6 +1174,38 @@ def entries_for_people(db, owner: str, person_ids: List[str], *, limit: int = 20
         .limit(limit)
         .all()
     )
+
+
+def connections_for_people(
+    db,
+    owner: str,
+    person_ids: List[str],
+    *,
+    include_hidden: bool = False,
+    limit_per_person: int = 6,
+) -> Dict[str, List[LogbookPersonConnection]]:
+    ids = sorted({str(item) for item in person_ids or [] if item})
+    if not ids:
+        return {}
+    query = db.query(LogbookPersonConnection).options(
+        selectinload(LogbookPersonConnection.person_a),
+        selectinload(LogbookPersonConnection.person_b),
+    ).filter(
+        LogbookPersonConnection.owner == owner,
+        or_(
+            LogbookPersonConnection.person_a_id.in_(ids),
+            LogbookPersonConnection.person_b_id.in_(ids),
+        ),
+    )
+    if not include_hidden:
+        query = query.filter(LogbookPersonConnection.status != "hidden")
+    rows = query.order_by(LogbookPersonConnection.updated_at.desc()).all()
+    grouped: Dict[str, List[LogbookPersonConnection]] = {person_id: [] for person_id in ids}
+    for conn in rows:
+        for person_id in (conn.person_a_id, conn.person_b_id):
+            if person_id in grouped and len(grouped[person_id]) < limit_per_person:
+                grouped[person_id].append(conn)
+    return grouped
 
 
 def load_connection_or_404(db, owner: str, connection_id: str) -> LogbookPersonConnection:

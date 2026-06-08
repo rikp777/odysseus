@@ -9,6 +9,8 @@ from pydantic import BaseModel
 
 ALLOWED_CONNECTION_TYPES = {"co_mentioned", "family", "friend", "work", "training", "conflict", "unknown"}
 ALLOWED_CONNECTION_STATUS = {"suggested", "accepted", "hidden"}
+ALLOWED_PERSON_FACT_TYPES = {"workplace", "relationship", "role", "location", "preference", "note", "unknown"}
+ALLOWED_PERSON_FACT_STATUS = {"active", "archived", "rejected"}
 AI_MODES = {
     "clean_spelling",
     "structure_day",
@@ -111,10 +113,50 @@ class LogbookLocationsMerge(BaseModel):
     target_location_id: str
 
 
+class LogbookConnectionCreate(BaseModel):
+    person_a_id: str
+    person_b_id: str
+    connection_type: str = "unknown"
+    description: Optional[str] = None
+    strength: Optional[int] = None
+    confidence: Optional[int] = None
+    status: Optional[str] = "accepted"
+
+
+class LogbookConnectionUpdate(BaseModel):
+    connection_type: Optional[str] = None
+    description: Optional[str] = None
+    strength: Optional[int] = None
+    confidence: Optional[int] = None
+    status: Optional[str] = None
+
+
+class LogbookPersonFactSuggestion(BaseModel):
+    fact_type: str = "unknown"
+    label: Optional[str] = None
+    value_text: Optional[str] = None
+    value_json: Optional[Any] = None
+    confidence: Optional[int] = None
+    reason: Optional[str] = None
+
+
+class LogbookPersonFactCreate(BaseModel):
+    fact_type: str = "note"
+    label: Optional[str] = None
+    value_text: str = ""
+    value_json: Optional[Any] = None
+    confidence: Optional[int] = 100
+    status: Optional[str] = "active"
+
+
 class LogbookEntitySuggestion(BaseModel):
     display_name: Optional[str] = None
     surface_text: Optional[str] = None
     aliases: Optional[List[str]] = None
+    notes: Optional[str] = None
+    relationship_label: Optional[str] = None
+    llm_context: Optional[str] = None
+    facts: Optional[List[LogbookPersonFactSuggestion]] = None
     confidence: Optional[int] = None
     reason: Optional[str] = None
 

@@ -1056,6 +1056,15 @@ def _migrate_logbook_schema():
             "confidence": "INTEGER",
             "created_at": "DATETIME",
         },
+        "logbook_geocode_cache": {
+            "id": "TEXT",
+            "provider": "TEXT",
+            "query": "TEXT",
+            "query_key": "TEXT",
+            "result_json": "TEXT",
+            "created_at": "DATETIME",
+            "updated_at": "DATETIME",
+        },
         "logbook_person_connections": {
             "owner": "TEXT",
             "person_a_id": "TEXT",
@@ -1066,6 +1075,23 @@ def _migrate_logbook_schema():
             "confidence": "INTEGER DEFAULT 0",
             "evidence_json": "TEXT",
             "status": "TEXT DEFAULT 'suggested'",
+            "created_at": "DATETIME",
+            "updated_at": "DATETIME",
+        },
+        "logbook_person_facts": {
+            "owner": "TEXT",
+            "person_id": "TEXT",
+            "fact_type": "TEXT DEFAULT 'unknown'",
+            "label": "TEXT",
+            "value_text": "TEXT",
+            "value_json": "TEXT",
+            "confidence": "INTEGER DEFAULT 0",
+            "source": "TEXT DEFAULT 'ai'",
+            "source_entry_id": "TEXT",
+            "source_entry_date": "TEXT",
+            "last_seen_entry_id": "TEXT",
+            "last_seen_date": "TEXT",
+            "status": "TEXT DEFAULT 'active'",
             "created_at": "DATETIME",
             "updated_at": "DATETIME",
         },
@@ -1111,10 +1137,17 @@ def _migrate_logbook_schema():
         "CREATE INDEX IF NOT EXISTS ix_logbook_location_mentions_entry_id ON logbook_location_mentions(entry_id)",
         "CREATE INDEX IF NOT EXISTS ix_logbook_location_mentions_location_id ON logbook_location_mentions(location_id)",
         "CREATE INDEX IF NOT EXISTS ix_logbook_location_mentions_entry_location ON logbook_location_mentions(entry_id, location_id)",
+        "CREATE INDEX IF NOT EXISTS ix_logbook_geocode_cache_provider_key ON logbook_geocode_cache(provider, query_key)",
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_logbook_geocode_cache_provider_key ON logbook_geocode_cache(provider, query_key)",
         "CREATE INDEX IF NOT EXISTS ix_logbook_person_connections_owner ON logbook_person_connections(owner)",
         "CREATE INDEX IF NOT EXISTS ix_logbook_connections_owner_status ON logbook_person_connections(owner, status)",
         "CREATE INDEX IF NOT EXISTS ix_logbook_connections_pair ON logbook_person_connections(person_a_id, person_b_id)",
         "CREATE UNIQUE INDEX IF NOT EXISTS uq_logbook_connections_owner_pair_type ON logbook_person_connections(owner, person_a_id, person_b_id, connection_type)",
+        "CREATE INDEX IF NOT EXISTS ix_logbook_person_facts_owner ON logbook_person_facts(owner)",
+        "CREATE INDEX IF NOT EXISTS ix_logbook_person_facts_person ON logbook_person_facts(person_id)",
+        "CREATE INDEX IF NOT EXISTS ix_logbook_person_facts_person_type ON logbook_person_facts(person_id, fact_type)",
+        "CREATE INDEX IF NOT EXISTS ix_logbook_person_facts_owner_status ON logbook_person_facts(owner, status)",
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_logbook_person_facts_owner_person_type_value ON logbook_person_facts(owner, person_id, fact_type, value_text)",
         "CREATE INDEX IF NOT EXISTS ix_logbook_entry_revisions_entry_id ON logbook_entry_revisions(entry_id)",
         "CREATE INDEX IF NOT EXISTS ix_logbook_entry_revisions_owner ON logbook_entry_revisions(owner)",
         "CREATE INDEX IF NOT EXISTS ix_logbook_entry_revisions_entry_created ON logbook_entry_revisions(entry_id, created_at)",
@@ -1325,7 +1358,7 @@ def _migrate_assign_legacy_owner():
             "gallery_albums", "gallery_people", "user_tool_data",
             "api_tokens", "webhooks", "logbook_entries",
             "logbook_people", "logbook_person_connections",
-            "logbook_locations",
+            "logbook_person_facts", "logbook_locations",
         ]
         for table in tables:
             try:
@@ -1764,6 +1797,7 @@ class LogbookPerson(TimestampMixin, Base):
     contact_snapshot_json = Column(Text, nullable=True)
 
     mentions = relationship("LogbookMention", back_populates="person", cascade="all, delete-orphan")
+    facts = relationship("LogbookPersonFact", back_populates="person", cascade="all, delete-orphan")
 
     __table_args__ = (
         UniqueConstraint("owner", "canonical_name", name="uq_logbook_people_owner_canonical"),
@@ -1790,6 +1824,36 @@ class LogbookMention(Base):
 
     __table_args__ = (
         Index("ix_logbook_mentions_entry_person", "entry_id", "person_id"),
+    )
+
+
+class LogbookPersonFact(TimestampMixin, Base):
+    """A structured dated fact about a Logbook person."""
+    __tablename__ = "logbook_person_facts"
+
+    id                = Column(String, primary_key=True, index=True)
+    owner             = Column(String, nullable=True, index=True)
+    person_id         = Column(String, ForeignKey("logbook_people.id", ondelete="CASCADE"), nullable=False, index=True)
+    fact_type         = Column(String, nullable=False, default="unknown", index=True)
+    label             = Column(String, nullable=True)
+    value_text        = Column(Text, nullable=False)
+    value_json        = Column(Text, nullable=True)
+    confidence        = Column(Integer, nullable=False, default=0)
+    source            = Column(String, nullable=False, default="ai")
+    source_entry_id   = Column(String, ForeignKey("logbook_entries.id", ondelete="SET NULL"), nullable=True, index=True)
+    source_entry_date = Column(String, nullable=True)
+    last_seen_entry_id = Column(String, ForeignKey("logbook_entries.id", ondelete="SET NULL"), nullable=True, index=True)
+    last_seen_date    = Column(String, nullable=True)
+    status            = Column(String, nullable=False, default="active")
+
+    person = relationship("LogbookPerson", back_populates="facts")
+    source_entry = relationship("LogbookEntry", foreign_keys=[source_entry_id])
+    last_seen_entry = relationship("LogbookEntry", foreign_keys=[last_seen_entry_id])
+
+    __table_args__ = (
+        UniqueConstraint("owner", "person_id", "fact_type", "value_text", name="uq_logbook_person_facts_owner_person_type_value"),
+        Index("ix_logbook_person_facts_person_type", "person_id", "fact_type"),
+        Index("ix_logbook_person_facts_owner_status", "owner", "status"),
     )
 
 
@@ -1837,6 +1901,22 @@ class LogbookLocationMention(Base):
 
     __table_args__ = (
         Index("ix_logbook_location_mentions_entry_location", "entry_id", "location_id"),
+    )
+
+
+class LogbookGeocodeCache(TimestampMixin, Base):
+    """Cached geocoder responses for repeated manual address lookups."""
+    __tablename__ = "logbook_geocode_cache"
+
+    id          = Column(String, primary_key=True, index=True)
+    provider    = Column(String, nullable=False)
+    query       = Column(Text, nullable=False)
+    query_key   = Column(String, nullable=False)
+    result_json = Column(Text, nullable=False, default="[]")
+
+    __table_args__ = (
+        UniqueConstraint("provider", "query_key", name="uq_logbook_geocode_cache_provider_key"),
+        Index("ix_logbook_geocode_cache_provider_key", "provider", "query_key"),
     )
 
 

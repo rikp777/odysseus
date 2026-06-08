@@ -8,6 +8,8 @@ from fastapi import HTTPException, Request
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response
 
+from src.logbook.map_tiles import map_tile_csp_origin
+
 
 # Per-process token that lets the in-app tool layer hit admin-gated
 # routes via HTTP loopback (the agent's tool calls don't carry the
@@ -81,6 +83,10 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             pass
         else:
             response.headers["X-Frame-Options"] = "DENY"
+            tile_origin = map_tile_csp_origin()
+            img_src = "'self' data: blob:"
+            if tile_origin:
+                img_src = f"{img_src} {tile_origin}"
             # NOTE: `style-src 'unsafe-inline'` is intentionally retained.
             # `static/index.html` and `static/login.html` ship inline <style>
             # blocks, and several JS modules build runtime `style=""` attrs.
@@ -92,7 +98,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
                 f"script-src 'self' 'nonce-{nonce}' https://cdn.jsdelivr.net; "
                 "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
                 "font-src 'self' https://cdn.jsdelivr.net; "
-                "img-src 'self' data: blob:; "
+                f"img-src {img_src}; "
                 "media-src 'self' blob:; "
                 "connect-src 'self'; "
                 "frame-src 'self'; "

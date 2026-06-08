@@ -40,6 +40,14 @@ services:
       - HF_TOKEN=${HF_TOKEN:-}
       - HUGGING_FACE_HUB_TOKEN=${HUGGING_FACE_HUB_TOKEN:-}
       - SEARXNG_INSTANCE=http://searxng:8080
+      - LOGBOOK_GEOCODER_URL=${LOGBOOK_GEOCODER_URL:-http://geocoder:2322}
+      - LOGBOOK_GEOCODER_PROVIDER=${LOGBOOK_GEOCODER_PROVIDER:-photon}
+      - LOGBOOK_GEOCODER_USER_AGENT=${LOGBOOK_GEOCODER_USER_AGENT:-OdysseusLogbook/1.0 (self-hosted; https://github.com/pewdiepie-archdaemon/odysseus)}
+      - LOGBOOK_GEOCODER_EMAIL=${LOGBOOK_GEOCODER_EMAIL:-}
+      - LOGBOOK_MAP_TILE_PROVIDER=${LOGBOOK_MAP_TILE_PROVIDER:-}
+      - LOGBOOK_MAP_TILE_URL=${LOGBOOK_MAP_TILE_URL:-}
+      - LOGBOOK_MAP_TILE_ATTRIBUTION=${LOGBOOK_MAP_TILE_ATTRIBUTION:-}
+      - LOGBOOK_MAP_TILE_MAX_ZOOM=${LOGBOOK_MAP_TILE_MAX_ZOOM:-18}
       - CHROMADB_HOST=chromadb
       - CHROMADB_PORT=8000
       - DATABASE_URL=${DATABASE_URL:-sqlite:///./data/app.db}
@@ -161,7 +169,31 @@ services:
       - NTFY_BASE_URL=${NTFY_BASE_URL:-http://localhost:8091}
     restart: unless-stopped
 
+  geocoder:
+    profiles: ["geocoder"]
+    build:
+      context: .
+      dockerfile: docker/geocoder/photon.Dockerfile
+      args:
+        PHOTON_VERSION: ${PHOTON_VERSION:-1.1.0}
+    ports:
+      - "${GEOCODER_BIND:-127.0.0.1}:${GEOCODER_PORT:-2322}:2322"
+    volumes:
+      - geocoder-photon-data:/photon
+    environment:
+      - PHOTON_DB_URL=${PHOTON_DB_URL:-https://download1.graphhopper.com/public/europe/netherlands/photon-db-netherlands-1.0-latest.tar.bz2}
+      - PHOTON_HEAP=${PHOTON_HEAP:-4G}
+      - PHOTON_DEFAULT_LANGUAGE=${PHOTON_DEFAULT_LANGUAGE:-nl}
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS 'http://localhost:2322/api?q=Amsterdam&limit=1' >/dev/null || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 20
+      start_period: 5m
+    restart: unless-stopped
+
 volumes:
   searxng-data:
   chromadb-data:
   ntfy-cache:
+  geocoder-photon-data:

@@ -69,6 +69,12 @@ docker compose up -d --build
 ```
 To include optional extras in the image (PDF viewer, Office extraction; includes AGPL PyMuPDF), build with `docker compose build --build-arg INSTALL_OPTIONAL=true` before `up`.
 
+For a local Logbook address geocoder, start the optional Photon profile:
+
+```bash
+docker compose --profile geocoder up -d --build geocoder
+```
+
 Open `http://localhost:7000` when the containers are healthy. Docker Compose
 binds the web UI to `127.0.0.1` by default. If the port is taken, set
 `APP_PORT=7001` in `.env` and recreate the container. Set `APP_BIND=0.0.0.0`
@@ -120,9 +126,46 @@ expose this port directly to the public internet. To build a clickable app wrapp
 <summary>Cookbook, GPU, Ollama, and troubleshooting notes</summary>
 
 **Docker bundled services.** Compose starts Odysseus, ChromaDB, SearXNG, and
-ntfy. Odysseus and the bundled service ports bind to `127.0.0.1` by default, so
-they are reachable from the host but not exposed to your LAN/public internet
-unless you opt in.
+ntfy. The optional `geocoder` profile starts a local Photon OpenStreetMap
+geocoder for Logbook address lookup. Odysseus and the bundled service ports
+bind to `127.0.0.1` by default, so they are reachable from the host but not
+exposed to your LAN/public internet unless you opt in.
+
+**Local geocoder.** The Photon profile keeps address lookup local to your
+machine/server instead of sending journal places to a public geocoding API. The
+first start downloads the configured Photon database into the
+`geocoder-photon-data` volume; the default `.env.example` value is the
+Netherlands extract. Override `PHOTON_DB_URL` for another country/region dump.
+Use `GEOCODER_BIND=0.0.0.0` only when you intentionally want to expose Photon to
+a trusted LAN/VPN.
+
+**Low-RAM public geocoder option.** If you do not have enough RAM/disk for a
+local Photon database, Logbook can proxy user-triggered address lookup through
+public Nominatim instead:
+
+```bash
+LOGBOOK_GEOCODER_PROVIDER=nominatim
+LOGBOOK_GEOCODER_URL=https://nominatim.openstreetmap.org
+LOGBOOK_GEOCODER_USER_AGENT="OdysseusLogbook/1.0 (your-contact-or-site)"
+```
+
+This is not private: typed addresses are sent to the public Nominatim service.
+Odysseus caches repeated queries and rate-limits public Nominatim calls, but you
+must still follow the Nominatim Usage Policy: no autocomplete, no bulk geocoding,
+maximum 1 request/second for the whole app, valid identifying User-Agent or
+Referer, and visible OpenStreetMap attribution.
+
+**Optional map imagery.** The Logbook map is a private local pin grid by
+default. To show a satellite background, enable browser-loaded map tiles:
+
+```bash
+LOGBOOK_MAP_TILE_PROVIDER=satellite
+```
+
+This sends tile requests for the visible map area to the tile provider. Use
+`LOGBOOK_MAP_TILE_URL` with a `{z}/{x}/{y}` slippy-map template if you run your
+own tiles or prefer another provider, and set `LOGBOOK_MAP_TILE_ATTRIBUTION`
+when the provider requires custom attribution.
 
 **Cookbook storage in Docker.** Downloads live in `./data/huggingface`
 (`~/.cache/huggingface` in the container). Cookbook-installed Python CLIs and
@@ -390,6 +433,7 @@ Common internal-only ports from the default docs/compose setup:
 | `8080` | SearXNG |
 | `8091` | ntfy |
 | `8100` | ChromaDB host port for manual/compose access |
+| `2322` | Optional local Photon geocoder |
 | `11434` | Ollama |
 | `8000-8020` | Common local model/provider APIs |
 
@@ -410,6 +454,18 @@ Key settings:
 | `OPENAI_API_KEY` | -- | Optional OpenAI key. Prefer adding providers in the app unless pre-seeding. |
 | `SEARXNG_INSTANCE` | `http://localhost:8080` | SearXNG URL. Docker overrides this to `http://searxng:8080`. |
 | `SEARXNG_SECRET` | generated on first Docker boot | Optional SearXNG cookie/CSRF secret. Leave blank unless you need to pin it. |
+| `LOGBOOK_GEOCODER_URL` | -- | Optional local Logbook geocoder URL. Docker sets this to `http://geocoder:2322` inside the stack. |
+| `LOGBOOK_GEOCODER_PROVIDER` | `photon` | Geocoder adapter for Logbook address lookup. Set `nominatim` for the low-RAM public API option. |
+| `LOGBOOK_GEOCODER_USER_AGENT` | Odysseus identifier | User-Agent used for public Nominatim requests. Set your own contact/site before using the public service. |
+| `LOGBOOK_GEOCODER_EMAIL` | -- | Optional email query parameter for Nominatim identification. |
+| `LOGBOOK_MAP_TILE_PROVIDER` | -- | Optional Logbook map tile preset. Set `satellite`/`esri_world_imagery` for ArcGIS World Imagery, or leave blank for the private local grid. |
+| `LOGBOOK_MAP_TILE_URL` | -- | Optional custom browser tile URL template containing `{z}`, `{x}`, and `{y}`. |
+| `LOGBOOK_MAP_TILE_ATTRIBUTION` | -- | Optional attribution shown in the Logbook map corner. Presets include default attribution. |
+| `LOGBOOK_MAP_TILE_MAX_ZOOM` | `18` | Maximum raster tile zoom used by the Logbook atlas. |
+| `GEOCODER_BIND` | `127.0.0.1` | Docker Compose bind address for the optional Photon geocoder. |
+| `GEOCODER_PORT` | `2322` | Docker Compose host port for the optional Photon geocoder. |
+| `PHOTON_DB_URL` | Netherlands extract | Photon database archive URL used by the optional geocoder profile. |
+| `PHOTON_HEAP` | `4G` | Java heap size for the optional Photon geocoder. |
 | `APP_BIND` | `127.0.0.1` | Docker Compose host bind address for the web UI. Use `0.0.0.0` only for intentional LAN/reverse-proxy access. |
 | `APP_PORT` | `7000` | Docker Compose host port for the web UI. |
 | `AUTH_ENABLED` | `true` | Enable/disable login |

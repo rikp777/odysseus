@@ -173,6 +173,101 @@ def test_logbook_local_ai_fallback_extracts_obvious_dutch_prose_hints():
     assert "[eiwitrijk ontbijt](data:food)" in result["preview_content"]
 
 
+def test_logbook_local_ai_fallback_adds_workplace_context_to_person_suggestion():
+    result = local_ai_fallback_payload(
+        "extract_all",
+        "Ava werkt bij de buurtmarkt. Later dronk de tester thee met haar.",
+        owner="tester",
+    )
+
+    ava = next(item for item in result["people_suggestions"] if item["display_name"] == "Ava")
+
+    assert ava["reason"] == "Fallback workplace hint"
+    assert ava["llm_context"] == "Works at Buurtmarkt."
+    assert ava["facts"] == [{
+        "fact_type": "workplace",
+        "label": "Workplace",
+        "value_text": "Buurtmarkt",
+        "confidence": 74,
+        "reason": "Fallback workplace hint",
+    }]
+
+
+def test_logbook_local_ai_fallback_adds_workplace_fact_for_linked_person():
+    result = local_ai_fallback_payload(
+        "structure_day",
+        "[Ava](person:ava) werkt bij de buurtmarkt. Later dronk de tester thee met haar.",
+        owner="tester",
+    )
+
+    ava = next(item for item in result["people_suggestions"] if item["display_name"] == "Ava")
+
+    assert ava["llm_context"] == "Works at Buurtmarkt."
+    assert ava["facts"][0]["fact_type"] == "workplace"
+    assert ava["facts"][0]["value_text"] == "Buurtmarkt"
+
+
+def test_logbook_ai_normalization_merges_local_workplace_fact_into_model_person():
+    result = normalize_ai_payload(
+        "structure_day",
+        {
+            "preview_content": "[Ava](person:ava) works at Buurtmarkt.",
+            "people_suggestions": [{"display_name": "Ava", "confidence": 80, "reason": "Model person"}],
+        },
+        "[Ava](person:ava) werkt bij de buurtmarkt.",
+        owner="tester",
+    )
+
+    ava = next(item for item in result["people_suggestions"] if item["display_name"] == "Ava")
+
+    assert ava["confidence"] == 80
+    assert ava["llm_context"] == "Works at Buurtmarkt."
+    assert ava["facts"] == [{
+        "fact_type": "workplace",
+        "label": "Workplace",
+        "value_text": "Buurtmarkt",
+        "confidence": 74,
+        "reason": "Fallback workplace hint",
+    }]
+
+
+def test_logbook_local_ai_fallback_resolves_sister_workplace_to_named_person():
+    content = (
+        "Ik ben even naar de Buurtmarkt gereden waar mijn zus aan het werken was. "
+        "Nadat ik wakker werd, was \nLina\n   klaar met werken en had ze lekker gekookt."
+    )
+
+    result = local_ai_fallback_payload("structure_day", content, owner="tester")
+    lina = next(item for item in result["people_suggestions"] if item["display_name"] == "Lina")
+
+    assert lina["relationship_label"] == "family"
+    assert lina["llm_context"] == "Works at Buurtmarkt."
+    assert {"fact_type": "relationship", "label": "Relationship", "value_text": "Sister", "confidence": 70, "reason": "Fallback relation hint"} in lina["facts"]
+    assert {"fact_type": "workplace", "label": "Workplace", "value_text": "Buurtmarkt", "confidence": 72, "reason": "Fallback relation workplace hint"} in lina["facts"]
+
+
+def test_logbook_ai_normalization_merges_sister_workplace_fact_when_model_misses_it():
+    content = (
+        "Ik ben even naar de Buurtmarkt gereden waar mijn zus aan het werken was. "
+        "Nadat ik wakker werd, was \nLina\n   klaar met werken en had ze lekker gekookt."
+    )
+
+    result = normalize_ai_payload(
+        "structure_day",
+        {
+            "preview_content": content,
+            "people_suggestions": [{"display_name": "Lina", "confidence": 82, "reason": "Model person"}],
+        },
+        content,
+        owner="tester",
+    )
+    lina = next(item for item in result["people_suggestions"] if item["display_name"] == "Lina")
+
+    assert lina["confidence"] == 82
+    assert lina["relationship_label"] == "family"
+    assert any(fact["fact_type"] == "workplace" and fact["value_text"] == "Buurtmarkt" for fact in lina["facts"])
+
+
 @pytest.mark.parametrize("status_code", [404, 504])
 @pytest.mark.asyncio
 async def test_logbook_ai_assist_returns_local_fallback_on_provider_error(monkeypatch, status_code):

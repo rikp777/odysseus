@@ -415,8 +415,27 @@
 }
 
 .logbook-date-sub {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
   font-size: 11px;
+}
+
+.logbook-date-sub > span:first-child {
   opacity: 0.58;
+}
+
+.logbook-token-count {
+  display: inline-flex;
+  align-items: center;
+  min-height: 18px;
+  border: 1px solid color-mix(in srgb, var(--accent, var(--red)) 30%, var(--border));
+  border-radius: 999px;
+  padding: 0 7px;
+  background: color-mix(in srgb, var(--accent, var(--red)) 7%, transparent);
+  color: color-mix(in srgb, var(--fg) 86%, transparent);
+  opacity: 1;
 }
 
 .logbook-write-section {
@@ -819,6 +838,146 @@
   line-height: 1.35;
 }
 
+.logbook-person-connections {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.logbook-person-connections.compact {
+  margin-top: 3px;
+}
+
+.logbook-person-connection-chip,
+.logbook-person-connection-more {
+  min-width: 0;
+  min-height: 22px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0 7px;
+  font-size: 11px;
+  line-height: 1;
+  color: color-mix(in srgb, var(--fg) 82%, transparent);
+  background: color-mix(in srgb, var(--fg) 5%, transparent);
+}
+
+.logbook-person-connection-chip.accepted {
+  border-color: color-mix(in srgb, var(--color-success) 45%, var(--border));
+  background: color-mix(in srgb, var(--color-success) 10%, transparent);
+}
+
+.logbook-person-connection-chip.suggested {
+  border-color: color-mix(in srgb, var(--color-warning) 45%, var(--border));
+  background: color-mix(in srgb, var(--color-warning) 10%, transparent);
+}
+
+.logbook-person-connection-chip svg {
+  flex: 0 0 auto;
+}
+
+.logbook-person-facts-preview {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 3px;
+}
+
+.logbook-person-fact-chip,
+.logbook-person-fact-more {
+  min-width: 0;
+  min-height: 22px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid color-mix(in srgb, var(--accent, var(--red)) 35%, var(--border));
+  border-radius: 999px;
+  padding: 0 7px;
+  background: color-mix(in srgb, var(--accent, var(--red)) 8%, transparent);
+  color: color-mix(in srgb, var(--fg) 86%, transparent);
+  line-height: 1;
+  max-width: 100%;
+}
+
+.logbook-person-fact-chip strong,
+.logbook-person-fact-chip span,
+.logbook-person-fact-more {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  line-height: 1.2;
+}
+
+.logbook-person-fact-chip strong {
+  color: var(--accent, var(--red));
+  font-weight: 650;
+}
+
+#calendar-modal .custom-logbook-calendar-marker {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  z-index: 3;
+  width: 19px;
+  height: 19px;
+  min-width: 0;
+  min-height: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding: 0;
+  border: 1px solid color-mix(in srgb, var(--accent, var(--red)) 48%, var(--border));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent, var(--red)) 12%, var(--bg));
+  color: var(--accent, var(--red));
+  box-shadow: 0 1px 4px color-mix(in srgb, var(--bg) 72%, transparent);
+  cursor: pointer;
+}
+
+#calendar-modal .custom-logbook-calendar-marker:hover {
+  background: color-mix(in srgb, var(--accent, var(--red)) 20%, var(--bg));
+}
+
+#calendar-modal .custom-logbook-calendar-marker svg {
+  width: 10px;
+  height: 10px;
+  flex: 0 0 auto;
+}
+
+#calendar-modal .custom-logbook-calendar-marker span {
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+#calendar-modal .cal-wk-col-head .custom-logbook-calendar-marker {
+  position: static;
+  margin-left: auto;
+  flex: 0 0 auto;
+}
+
+#calendar-modal .cal-year-day.custom-logbook-has-entry {
+  position: relative;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent, var(--red)) 45%, transparent);
+}
+
+#calendar-modal .cal-year-day.custom-logbook-has-entry::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 4px;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--accent, var(--red));
+}
+
 .logbook-person-card-link {
   font-size: 12px;
   color: var(--accent, var(--red));
@@ -879,6 +1038,27 @@
   white-space: nowrap;
 }
 
+.logbook-directory-main > .logbook-person-facts-preview,
+.logbook-directory-main > .logbook-person-connections {
+  width: 100%;
+  overflow: visible;
+  white-space: normal;
+  opacity: 1;
+}
+
+.logbook-directory-main .logbook-person-fact-chip,
+.logbook-directory-main .logbook-person-fact-more,
+.logbook-directory-main .logbook-person-connection-chip,
+.logbook-directory-main .logbook-person-connection-more {
+  opacity: 1;
+}
+
+.logbook-directory-main .logbook-person-fact-chip span,
+.logbook-directory-main .logbook-person-fact-chip strong {
+  font-size: 11px;
+  opacity: 1;
+}
+
 .logbook-directory-main strong {
   display: inline-flex;
   align-items: center;
@@ -931,6 +1111,152 @@
   display: grid;
   gap: 7px;
   margin-bottom: 8px;
+}
+
+.logbook-atlas-person-connections {
+  display: grid;
+  gap: 7px;
+}
+
+.logbook-atlas-person-facts {
+  display: grid;
+  gap: 6px;
+}
+
+.logbook-person-fact-form {
+  display: grid;
+  gap: 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px;
+  background: color-mix(in srgb, var(--fg) 3%, transparent);
+}
+
+.logbook-person-fact-form-grid {
+  display: grid;
+  grid-template-columns: minmax(110px, 0.55fr) minmax(130px, 0.75fr) minmax(180px, 1fr);
+  gap: 8px;
+}
+
+.logbook-person-fact-form-grid label {
+  min-width: 0;
+}
+
+.logbook-person-fact-form-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.logbook-person-merge {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px;
+  background: color-mix(in srgb, var(--fg) 3%, transparent);
+}
+
+.logbook-person-merge-grid {
+  display: grid;
+  grid-template-columns: minmax(160px, 1fr) auto auto;
+  align-items: end;
+  gap: 8px;
+}
+
+.logbook-person-merge-grid label {
+  min-width: 0;
+}
+
+.logbook-person-merge-grid .cal-btn {
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.logbook-person-fact {
+  display: grid;
+  grid-template-columns: minmax(80px, 0.35fr) minmax(120px, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px;
+  background: color-mix(in srgb, var(--fg) 4%, transparent);
+  font-size: 12px;
+}
+
+.logbook-person-fact strong,
+.logbook-person-fact span,
+.logbook-person-fact em {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.logbook-person-fact em {
+  justify-self: end;
+  color: color-mix(in srgb, var(--fg) 66%, transparent);
+  font-style: normal;
+  font-size: 11px;
+}
+
+@media (max-width: 760px) {
+  .logbook-person-fact-form-grid,
+  .logbook-person-merge-grid,
+  .logbook-person-fact {
+    grid-template-columns: 1fr;
+  }
+
+  .logbook-person-fact em {
+    justify-self: start;
+  }
+}
+
+.logbook-connection-form {
+  display: grid;
+  gap: 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px;
+  margin-bottom: 10px;
+  background: color-mix(in srgb, var(--fg) 3%, transparent);
+}
+
+.logbook-connection-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.logbook-connection-form label {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+  font-size: 12px;
+  color: color-mix(in srgb, var(--fg) 76%, transparent);
+}
+
+.logbook-connection-form .logbook-select,
+.logbook-connection-form .memory-search-input,
+.logbook-connection-form .logbook-atlas-text {
+  width: 100%;
+}
+
+.logbook-person-connection-row {
+  display: grid;
+  gap: 4px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px;
+  background: color-mix(in srgb, var(--fg) 4%, transparent);
+}
+
+.logbook-person-connection-row strong {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.logbook-person-connection-row span {
+  font-size: 12px;
+  color: color-mix(in srgb, var(--fg) 72%, transparent);
 }
 
 .logbook-connection-head {
@@ -1148,6 +1474,10 @@ button.logbook-connection-person:hover {
 
   .logbook-dp-number {
     grid-column: span 1;
+  }
+
+  .logbook-connection-form-grid {
+    grid-template-columns: 1fr;
   }
 }
 
@@ -1393,6 +1723,102 @@ button.logbook-connection-person:hover {
   gap: 8px;
 }
 
+.logbook-location-address-tools {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: end;
+}
+
+.logbook-location-geocode-results {
+  display: grid;
+  gap: 6px;
+}
+
+.logbook-geocode-result {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 3px 8px;
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px;
+  color: var(--fg);
+  background: color-mix(in srgb, var(--fg) 4%, transparent);
+  text-align: left;
+  cursor: pointer;
+}
+
+.logbook-geocode-result:hover {
+  border-color: color-mix(in srgb, var(--accent) 50%, var(--border));
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+.logbook-geocode-result strong,
+.logbook-geocode-result span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.logbook-geocode-result strong {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+}
+
+.logbook-geocode-result span {
+  grid-column: 1 / -1;
+  color: color-mix(in srgb, var(--fg) 68%, transparent);
+  font-size: 11px;
+}
+
+.logbook-geocode-result em {
+  color: color-mix(in srgb, var(--fg) 62%, transparent);
+  font-size: 11px;
+  font-style: normal;
+  white-space: nowrap;
+}
+
+@media (max-width: 640px) {
+  .logbook-location-address-tools {
+    grid-template-columns: 1fr;
+  }
+}
+
+.logbook-location-pin-details {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--fg) 3%, transparent);
+}
+
+.logbook-location-pin-details summary {
+  min-height: 38px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 10px;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.logbook-location-pin-details summary span {
+  font-weight: 650;
+}
+
+.logbook-location-pin-details summary em {
+  color: color-mix(in srgb, var(--fg) 64%, transparent);
+  font-style: normal;
+  font-size: 11px;
+}
+
+.logbook-location-pin-details .logbook-atlas-coordinates {
+  padding: 0 10px 10px;
+}
+
 .logbook-atlas-contact {
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -1465,13 +1891,33 @@ button.logbook-connection-person:hover {
 }
 
 .map-panel {
-  display: grid;
+  display: flex;
+  flex-direction: column;
   gap: 10px;
+  overflow: hidden;
+}
+
+.logbook-map-layout {
+  min-height: 0;
+  flex: 1 1 auto;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(260px, 0.34fr);
+  gap: 10px;
+}
+
+.logbook-map-stage {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  align-items: flex-start;
 }
 
 .geo-map {
   position: relative;
-  min-height: 430px;
+  width: 100%;
+  min-height: 520px;
+  aspect-ratio: 960 / 520;
+  flex: 0 0 auto;
   border: 1px solid var(--border);
   border-radius: 8px;
   overflow: hidden;
@@ -1480,6 +1926,70 @@ button.logbook-connection-person:hover {
     linear-gradient(90deg, color-mix(in srgb, var(--fg) 8%, transparent) 1px, transparent 1px),
     color-mix(in srgb, var(--fg) 4%, transparent);
   background-size: 36px 36px;
+}
+
+.logbook-map-mode {
+  font-size: 11px;
+  color: color-mix(in srgb, var(--fg) 64%, transparent);
+}
+
+.geo-map.geo-map-tiles {
+  background: #101418;
+}
+
+.geo-map-tile-layer,
+.geo-map-pin-layer {
+  position: absolute;
+  inset: 0;
+}
+
+.geo-map-tile-layer {
+  z-index: 0;
+  pointer-events: none;
+  background: #15191d;
+}
+
+.geo-map-tile {
+  position: absolute;
+  display: block;
+  max-width: none;
+  object-fit: fill;
+  user-select: none;
+}
+
+.geo-map-pin-layer {
+  z-index: 2;
+  pointer-events: none;
+}
+
+.geo-map-controls {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 4;
+  display: inline-flex;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid rgb(255 255 255 / 18%);
+  border-radius: 6px;
+  background: rgb(0 0 0 / 48%);
+  box-shadow: 0 8px 20px rgb(0 0 0 / 28%);
+}
+
+.geo-map-controls button {
+  min-width: 30px;
+  min-height: 28px;
+  border: 1px solid rgb(255 255 255 / 20%);
+  border-radius: 4px;
+  background: rgb(255 255 255 / 10%);
+  color: #fff;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.geo-map-controls button:hover {
+  background: rgb(255 255 255 / 18%);
 }
 
 .geo-map-pin {
@@ -1492,6 +2002,14 @@ button.logbook-connection-person:hover {
   background: var(--bg);
   color: var(--fg);
   cursor: pointer;
+}
+
+.geo-map-tiles .geo-map-pin {
+  z-index: 3;
+  background: var(--accent, var(--red));
+  color: var(--accent-contrast, #fff);
+  box-shadow: 0 0 0 2px rgb(0 0 0 / 36%), 0 8px 20px rgb(0 0 0 / 38%);
+  pointer-events: auto;
 }
 
 .geo-map-pin span {
@@ -1507,6 +2025,28 @@ button.logbook-connection-person:hover {
   background: var(--panel);
   padding: 3px 6px;
   font-size: 11px;
+}
+
+.geo-map-tiles .geo-map-pin span {
+  color: var(--fg);
+  background: color-mix(in srgb, var(--panel) 92%, transparent);
+  box-shadow: 0 6px 16px rgb(0 0 0 / 28%);
+}
+
+.geo-map-attribution {
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
+  z-index: 4;
+  max-width: calc(100% - 12px);
+  border: 1px solid rgb(255 255 255 / 22%);
+  border-radius: 4px;
+  padding: 2px 5px;
+  background: rgb(0 0 0 / 56%);
+  color: #fff;
+  font-size: 10px;
+  line-height: 1.25;
+  text-align: right;
 }
 
 .geo-map-empty {
@@ -1532,6 +2072,67 @@ button.logbook-connection-person:hover {
   gap: 5px;
 }
 
+.logbook-map-side {
+  min-width: 0;
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  overflow: auto;
+}
+
+.logbook-map-place-list {
+  display: grid;
+  gap: 6px;
+}
+
+.logbook-map-place-row {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+  align-items: center;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px;
+  background: color-mix(in srgb, var(--fg) 4%, transparent);
+}
+
+.logbook-map-place-main {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+  border: 0;
+  background: transparent;
+  color: var(--fg);
+  padding: 0;
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+}
+
+.logbook-map-place-main strong {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.logbook-map-place-main span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: color-mix(in srgb, var(--fg) 68%, transparent);
+  font-size: 11px;
+}
+
+.logbook-map-place-actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 5px;
+}
+
 @media (max-width: 900px) {
   .logbook-atlas-body {
     grid-template-columns: 1fr;
@@ -1541,6 +2142,10 @@ button.logbook-connection-person:hover {
   .logbook-atlas-list,
   .logbook-atlas-detail {
     min-height: 260px;
+  }
+
+  .logbook-map-layout {
+    grid-template-columns: 1fr;
   }
 }
 
@@ -1555,6 +2160,7 @@ button.logbook-connection-person:hover {
   }
 
   .logbook-atlas-coordinates,
+  .logbook-map-place-row,
   .logbook-atlas-list-tools,
   .logbook-contact-linked,
   .logbook-contact-candidate,

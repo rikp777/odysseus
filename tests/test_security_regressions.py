@@ -120,6 +120,27 @@ def test_docker_compose_binds_web_ui_to_loopback_by_default():
     assert '"${APP_PORT:-7000}:7000"' not in compose
 
 
+def test_csp_allows_only_configured_logbook_tile_origin(monkeypatch):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from core.middleware import SecurityHeadersMiddleware
+
+    monkeypatch.setenv("LOGBOOK_MAP_TILE_PROVIDER", "satellite")
+    monkeypatch.delenv("LOGBOOK_MAP_TILE_URL", raising=False)
+    app = FastAPI()
+    app.add_middleware(SecurityHeadersMiddleware)
+
+    @app.get("/")
+    def index():
+        return {"ok": True}
+
+    csp = TestClient(app).get("/").headers["Content-Security-Policy"]
+
+    assert "img-src 'self' data: blob: https://server.arcgisonline.com;" in csp
+    assert "img-src 'self' data: blob: https:;" not in csp
+
+
 def test_readme_native_quickstart_uses_loopback():
     readme = Path("README.md").read_text(encoding="utf-8")
     assert "python -m uvicorn app:app --host 127.0.0.1 --port 7000" in readme

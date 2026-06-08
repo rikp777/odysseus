@@ -41,3 +41,4 @@ def test_inject_custom_frontend_assets_replaces_all_placeholders():
     assert "/static/js/custom/route-metadata.js" in rendered
     assert "/static/css/billing.css" in rendered
     assert "/static/js/custom/app-wiring.js" in rendered
+    assert "/static/js/custom/logbook-calendar-overlay.js" in rendered

@@ -12,7 +12,7 @@ from fastapi import HTTPException
 from fastapi.responses import JSONResponse
 
 from core.database import LogbookEntry, LogbookPerson, LogbookPersonConnection
-from src.logbook.repository import find_person
+from src.logbook.repository import apply_person_suggestion_fields, find_person
 from src.logbook.schemas import AI_MODES, ALLOWED_CONNECTION_TYPES, LogbookAIAssist
 from src.logbook.utils import (
     add_evidence,
@@ -68,6 +68,54 @@ COMMON_PLACE_HINTS = (
     ("thuis", "Thuis", 62),
     ("tuin", "Tuin", 58),
 )
+WORKPLACE_RE = re.compile(
+    rf"(?<![\w@#])(?P<name>{NAME_WORD}(?:\s+(?:{NAME_PARTICLE}|{NAME_WORD})){{0,4}})\s+"
+    r"(?i:(?:werkt|werkte|works|worked|is werkzaam|is employed)\s+(?:bij|voor|at|for))\s+"
+    r"(?P<org>[^.;,\n]{2,80})"
+)
+WORKPLACE_LINK_RE = re.compile(
+    r"\[(?P<name>[^\]\n]{2,80})\]\(person:[^)]+\)\s+"
+    r"(?:werkt|werkte|works|worked|is werkzaam|is employed)\s+(?:bij|voor|at|for)\s+"
+    r"(?P<org>[^.;,\n]{2,80})",
+    re.IGNORECASE,
+)
+RELATION_WORKPLACE_RE = re.compile(
+    r"\b(?:naar|bij|in|to|at)\s+(?:de|het|the)?\s*"
+    r"(?P<org>[A-Za-z0-9&'_-]+(?:\s+[A-Za-z0-9&'_-]+){0,4}?)\s+"
+    r"(?:(?:gereden|gegaan|gelopen|gefietst|drove|went|walked|cycled)\s+)?"
+    r"waar\s+(?:mijn|m'n|mn|my)\s+"
+    r"(?P<relation>zus|broer|moeder|vader|sister|brother|mother|father)\s+"
+    r"(?:aan\s+het\s+werk(?:en)?\s+was|werkte|werkt|was\s+working|works|worked)\b",
+    re.IGNORECASE,
+)
+RELATION_PERSON_RE = re.compile(
+    rf"(?i:\b(?:mijn|m'n|mn|my)\s+(?P<relation>zus|broer|moeder|vader|sister|brother|mother|father)\s*,?\s+)"
+    rf"(?P<name>{NAME_WORD}(?:\s+(?:{NAME_PARTICLE}|{NAME_WORD})){{0,4}})(?![\w-])"
+)
+WORK_DONE_PERSON_RE = re.compile(
+    rf"(?<![\w@#])(?P<name>{NAME_WORD}(?:\s+(?:{NAME_PARTICLE}|{NAME_WORD})){{0,4}})\s+"
+    r"(?i:(?:was\s+)?klaar\s+met\s+werken|finished\s+work|done\s+working)\b"
+)
+WORK_DONE_WAS_PERSON_RE = re.compile(
+    rf"(?i:\bwas\s+)(?P<name>{NAME_WORD}(?:\s+(?:{NAME_PARTICLE}|{NAME_WORD})){{0,4}})\s+"
+    r"(?i:klaar\s+met\s+werken|finished\s+work|done\s+working)\b"
+)
+WORKPLACE_STOP_RE = re.compile(
+    r"\b(?:en|maar|waar|die|dat|toen|terwijl|omdat|and|but|where|who|that|when|while|because)\b",
+    re.IGNORECASE,
+)
+WORKPLACE_ARTICLE_RE = re.compile(r"^(?:de|het|een|the|a|an)\s+", re.IGNORECASE)
+WORKPLACE_GENERIC_WORDS = {"supermarkt", "supermarket", "store", "winkel", "market"}
+RELATION_LABELS = {
+    "zus": ("family", "Sister"),
+    "sister": ("family", "Sister"),
+    "broer": ("family", "Brother"),
+    "brother": ("family", "Brother"),
+    "moeder": ("family", "Mother"),
+    "mother": ("family", "Mother"),
+    "vader": ("family", "Father"),
+    "father": ("family", "Father"),
+}
 
 
 def _overlaps(start: int, end: int, ranges: List[tuple[int, int]]) -> bool:
@@ -114,6 +162,117 @@ def _add_person_hint(
         "start_offset": start,
         "end_offset": end,
     })
+
+
+def _person_hint_by_name(people: List[Dict[str, Any]], name: str) -> Dict[str, Any] | None:
+    canonical = canonical_name(name)
+    if not canonical:
+        return None
+    for person in people:
+        if canonical_name(str(person.get("display_name") or "")) == canonical:
+            return person
+        for alias in person.get("aliases") or []:
+            if canonical_name(alias) == canonical:
+                return person
+    return None
+
+
+def _clean_workplace_name(value: str) -> str:
+    text = WORKPLACE_STOP_RE.split(str(value or "").strip(), maxsplit=1)[0]
+    text = WORKPLACE_ARTICLE_RE.sub("", text).strip(" .,:;!?\"'")
+    text = re.sub(r"\bsupermarked\b", "supermarkt", text, flags=re.IGNORECASE)
+    text = re.sub(r"\s+", " ", text)
+    if not text:
+        return ""
+    words = text.split()[:5]
+    if text == text.lower():
+        words = [
+            word.upper() if word.lower() in {"ah", "b.v.", "bv"} else
+            word.lower() if word.lower() in WORKPLACE_GENERIC_WORDS else
+            word.capitalize()
+            for word in words
+        ]
+    return " ".join(words).strip()
+
+
+def _append_person_context(person: Dict[str, Any], text: str) -> None:
+    addition = re.sub(r"\s+", " ", str(text or "").strip())
+    if not addition:
+        return
+    current = str(person.get("llm_context") or "").strip()
+    if current and addition.lower() in current.lower():
+        return
+    person["llm_context"] = f"{current}\n\n{addition}" if current else addition
+
+
+def _append_person_fact(
+    person: Dict[str, Any],
+    *,
+    fact_type: str,
+    label: str,
+    value_text: str,
+    confidence: int,
+    reason: str,
+) -> None:
+    value = re.sub(r"\s+", " ", str(value_text or "").strip())
+    if not value:
+        return
+    facts = person.setdefault("facts", [])
+    for fact in facts:
+        if (
+            isinstance(fact, dict)
+            and str(fact.get("fact_type") or "").lower() == fact_type.lower()
+            and str(fact.get("value_text") or "").lower() == value.lower()
+        ):
+            return
+    facts.append({
+        "fact_type": fact_type,
+        "label": label,
+        "value_text": value,
+        "confidence": confidence,
+        "reason": reason,
+    })
+
+
+def _apply_relationship_hint(
+    person: Dict[str, Any],
+    relation: str,
+    *,
+    confidence: int,
+    reason: str,
+) -> None:
+    relation_key = canonical_name(relation)
+    label, display = RELATION_LABELS.get(relation_key, ("family", relation.strip().title()))
+    if label and not person.get("relationship_label"):
+        person["relationship_label"] = label
+    if display:
+        _append_person_fact(
+            person,
+            fact_type="relationship",
+            label="Relationship",
+            value_text=display,
+            confidence=confidence,
+            reason=reason,
+        )
+
+
+def _apply_workplace_hint(
+    person: Dict[str, Any],
+    workplace: str,
+    *,
+    confidence: int,
+    reason: str,
+) -> None:
+    _append_person_context(person, f"Works at {workplace}.")
+    _append_person_fact(
+        person,
+        fact_type="workplace",
+        label="Workplace",
+        value_text=workplace,
+        confidence=confidence,
+        reason=reason,
+    )
+    person["reason"] = reason
 
 
 def _add_location_hint(
@@ -230,6 +389,90 @@ def prose_fallback_suggestions(content: str, owner: str = "") -> Dict[str, Any]:
                 reason="Fallback relation name hint",
                 allow_single=True,
             )
+
+    for matcher in (WORKPLACE_LINK_RE, WORKPLACE_RE):
+        for match in matcher.finditer(text):
+            name = match.group("name")
+            workplace = _clean_workplace_name(match.group("org"))
+            if not workplace:
+                continue
+            _add_person_hint(
+                people,
+                people_seen,
+                owner,
+                name,
+                name,
+                match.start("name"),
+                match.end("name"),
+                confidence=74,
+                reason="Fallback workplace hint",
+                allow_single=True,
+            )
+            person = _person_hint_by_name(people, name)
+            if person:
+                _apply_workplace_hint(person, workplace, confidence=74, reason="Fallback workplace hint")
+
+    relation_workplaces = []
+    for match in RELATION_WORKPLACE_RE.finditer(text):
+        workplace = _clean_workplace_name(match.group("org"))
+        relation = str(match.group("relation") or "").strip()
+        if workplace and relation:
+            relation_workplaces.append({"workplace": workplace, "relation": relation})
+
+    relation_people: Dict[str, str] = {}
+    for match in RELATION_PERSON_RE.finditer(text):
+        relation = str(match.group("relation") or "").strip()
+        name = str(match.group("name") or "").strip()
+        if relation and name:
+            relation_people[canonical_name(name)] = relation
+
+    work_done_people = {}
+    for matcher in (WORK_DONE_PERSON_RE, WORK_DONE_WAS_PERSON_RE):
+        for match in matcher.finditer(text):
+            name = str(match.group("name") or "").strip()
+            canonical = canonical_name(name)
+            if canonical and not _self_name(name, owner) and canonical not in work_done_people:
+                work_done_people[canonical] = {
+                    "name": name,
+                    "start": match.start("name"),
+                    "end": match.end("name"),
+                }
+
+    if len(relation_workplaces) == 1:
+        hint = relation_workplaces[0]
+        candidate_names = [
+            item for canonical, item in work_done_people.items()
+            if canonical in relation_people or not relation_people
+        ]
+        if len(candidate_names) == 1:
+            candidate = candidate_names[0]
+            name = candidate["name"]
+            _add_person_hint(
+                people,
+                people_seen,
+                owner,
+                name,
+                name,
+                candidate["start"],
+                candidate["end"],
+                confidence=72,
+                reason="Fallback relation workplace hint",
+                allow_single=True,
+            )
+            person = _person_hint_by_name(people, name)
+            if person:
+                _apply_relationship_hint(
+                    person,
+                    relation_people.get(canonical_name(name)) or hint["relation"],
+                    confidence=70,
+                    reason="Fallback relation hint",
+                )
+                _apply_workplace_hint(
+                    person,
+                    hint["workplace"],
+                    confidence=72,
+                    reason="Fallback relation workplace hint",
+                )
 
     locations: List[Dict[str, Any]] = []
     locations_seen: set[str] = set()
@@ -367,7 +610,7 @@ def local_ai_fallback_payload(mode: str, content: str, *, owner: str = "", warni
     }
     if mode in {"structure_day", "extract_all"}:
         raw["preview_content"] = _fallback_preview_content(content or "", suggestions)
-    return normalize_ai_payload(mode, raw, content or "")
+    return normalize_ai_payload(mode, raw, content or "", owner=owner)
 
 
 def deterministic_ai_suggestions(content: str) -> Dict[str, Any]:
@@ -455,7 +698,79 @@ def deterministic_ai_suggestions(content: str) -> Dict[str, Any]:
     }
 
 
-def normalize_ai_payload(mode: str, raw: Dict[str, Any], content: str) -> Dict[str, Any]:
+def _person_suggestion_names(person: Dict[str, Any]) -> set[str]:
+    names = {
+        canonical_name(str(person.get("display_name") or "")),
+        canonical_name(str(person.get("surface_text") or "")),
+    }
+    for alias in person.get("aliases") or []:
+        names.add(canonical_name(str(alias or "")))
+    return {name for name in names if name}
+
+
+def _merge_person_suggestion(people: List[Any], suggestion: Dict[str, Any]) -> None:
+    if not isinstance(suggestion, dict):
+        return
+    names = _person_suggestion_names(suggestion)
+    if not names:
+        return
+    target = None
+    for person in people:
+        if isinstance(person, dict) and (_person_suggestion_names(person) & names):
+            target = person
+            break
+    if target is None:
+        people.append(dict(suggestion))
+        return
+
+    if suggestion.get("confidence") is not None:
+        target["confidence"] = max(
+            clamp_confidence(target.get("confidence"), default=0),
+            clamp_confidence(suggestion.get("confidence"), default=0),
+        )
+    for key in ("display_name", "surface_text", "relationship_label", "notes", "reason", "start_offset", "end_offset"):
+        if not target.get(key) and suggestion.get(key) is not None:
+            target[key] = suggestion.get(key)
+    if suggestion.get("llm_context"):
+        _append_person_context(target, str(suggestion.get("llm_context") or ""))
+    if isinstance(suggestion.get("aliases"), list):
+        aliases = [str(alias).strip() for alias in (target.get("aliases") or []) if str(alias).strip()]
+        seen_aliases = {canonical_name(alias) for alias in aliases}
+        for alias in suggestion.get("aliases") or []:
+            value = str(alias or "").strip()
+            canonical = canonical_name(value)
+            if value and canonical and canonical not in seen_aliases:
+                aliases.append(value)
+                seen_aliases.add(canonical)
+        if aliases:
+            target["aliases"] = aliases
+    for fact in suggestion.get("facts") or []:
+        if not isinstance(fact, dict):
+            continue
+        _append_person_fact(
+            target,
+            fact_type=str(fact.get("fact_type") or "unknown"),
+            label=str(fact.get("label") or "Fact"),
+            value_text=str(fact.get("value_text") or ""),
+            confidence=clamp_confidence(
+                fact.get("confidence"),
+                default=clamp_confidence(suggestion.get("confidence"), default=70),
+            ),
+            reason=str(fact.get("reason") or suggestion.get("reason") or "Local fact hint"),
+        )
+
+
+def _merge_local_person_detail_hints(out: Dict[str, Any], content: str, owner: str) -> None:
+    local = prose_fallback_suggestions(content or "", owner=owner)
+    for person in local.get("people_suggestions") or []:
+        if not isinstance(person, dict):
+            continue
+        if not (person.get("facts") or person.get("llm_context") or person.get("relationship_label")):
+            continue
+        _merge_person_suggestion(out["people_suggestions"], person)
+
+
+def normalize_ai_payload(mode: str, raw: Dict[str, Any], content: str, *, owner: str = "") -> Dict[str, Any]:
     out = {
         "ok": True,
         "mode": mode,
@@ -483,6 +798,8 @@ def normalize_ai_payload(mode: str, raw: Dict[str, Any], content: str) -> Dict[s
     for person in deterministic["people_suggestions"]:
         if canonical_name(person["display_name"]) not in seen_people:
             out["people_suggestions"].append(person)
+    if mode in {"structure_day", "extract_people", "extract_all"}:
+        _merge_local_person_detail_hints(out, content, owner)
     seen_locations = {canonical_name(l.get("display_name", "")) for l in out["location_suggestions"] if isinstance(l, dict)}
     for location in deterministic["location_suggestions"]:
         if canonical_name(location["display_name"]) not in seen_locations:
@@ -510,6 +827,11 @@ def ai_system_prompt(mode: str, locale: str) -> str:
         "For ask_questions, ask at most three short questions that can be answered in a few words. "
         "For reflect, give a gentle reflection, not therapy or medical advice. "
         "For people, locations, and connections, use only evidence from the supplied logbook text. "
+        "For people_suggestions, include relationship_label only when the text describes the user's relation to that person. "
+        "Put explicit stable person facts such as workplace or employer in people_suggestions[].facts with fact_type, label, value_text, confidence, and reason. "
+        "For example: \"facts\": [{\"fact_type\": \"workplace\", \"label\": \"Workplace\", \"value_text\": \"Buurtmarkt\"}]. "
+        "You may also summarize the same stable fact in llm_context, for example: Works at Buurtmarkt. "
+        "Resolve clear cross-references inside the entry: if it says the user's sister/brother/parent was working at a place and later names that person as finished with work, attach that workplace fact to the named person. "
         "When mode is structure_day or extract_all, return preview_content that preserves the user's text but marks "
         "confident person mentions as Markdown links like [Nora](person:nora_smit). "
         "Mark confident locations as Markdown links like [Meerstad](place:meerstad). "
@@ -520,6 +842,7 @@ def ai_system_prompt(mode: str, locale: str) -> str:
         f"Locale: {locale}. Mode: {mode}. "
         "Return strict JSON only with keys: ok, mode, preview_content, summary, questions, mood_suggestion, "
         "datapoint_suggestions, people_suggestions, location_suggestions, connection_suggestions, reflection. "
+        "people_suggestions items may include display_name, surface_text, aliases, relationship_label, notes, llm_context, facts, confidence, reason. "
         "connection_suggestions items must include person_a, person_b, connection_type, description, confidence, evidence."
     )
 
@@ -611,7 +934,33 @@ async def run_ai_assist(owner: str, payload: LogbookAIAssist) -> JSONResponse | 
             )
         return JSONResponse(status_code=503, content={"ok": False, "error": "AI assist failed. Your entry was not changed."})
     cleaned = strip_think(raw or "", prose=True, prompt_echo=True)
-    return normalize_ai_payload(mode, extract_json_object(cleaned), payload.content or "")
+    return normalize_ai_payload(mode, extract_json_object(cleaned), payload.content or "", owner=owner)
+
+
+def store_ai_person_suggestion_details(
+    db,
+    owner: str,
+    entry: LogbookEntry,
+    suggestions: List[Dict[str, Any]],
+) -> List[LogbookPerson]:
+    people = db.query(LogbookPerson).filter(LogbookPerson.owner == owner).all()
+    updated: List[LogbookPerson] = []
+    for suggestion in suggestions or []:
+        if not isinstance(suggestion, dict):
+            continue
+        if not any(suggestion.get(key) for key in ("relationship_label", "notes", "llm_context", "facts")):
+            continue
+        if clamp_confidence(suggestion.get("confidence"), default=70) < 50:
+            continue
+        person = find_person(db, owner, str(suggestion.get("display_name") or suggestion.get("surface_text") or ""), people)
+        if not person:
+            continue
+        before = (person.relationship_label, person.notes, person.llm_context)
+        facts = apply_person_suggestion_fields(db, owner, person, suggestion, entry=entry, source="ai")
+        after = (person.relationship_label, person.notes, person.llm_context)
+        if (after != before or facts) and person not in updated:
+            updated.append(person)
+    return updated
 
 
 def store_ai_connection_suggestions(

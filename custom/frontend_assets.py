@@ -20,6 +20,7 @@ CUSTOM_STYLESHEETS = (
 CUSTOM_BODY_MODULES = (
     "/static/js/custom/index-ui.js",
     "/static/js/custom/app-wiring.js",
+    "/static/js/custom/logbook-calendar-overlay.js",
 )
 
 

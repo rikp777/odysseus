@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from core.database import (
     LogbookDataPoint,
@@ -13,6 +13,7 @@ from core.database import (
     LogbookMention,
     LogbookPerson,
     LogbookPersonConnection,
+    LogbookPersonFact,
 )
 from src.logbook.utils import aliases, entry_snippet, json_load
 
@@ -52,6 +53,27 @@ def location_to_dict(location: LogbookLocation) -> Dict[str, Any]:
         "llm_context": getattr(location, "llm_context", None),
         "created_at": location.created_at.isoformat() if location.created_at else None,
         "updated_at": location.updated_at.isoformat() if location.updated_at else None,
+    }
+
+
+def person_fact_to_dict(fact: LogbookPersonFact) -> Dict[str, Any]:
+    return {
+        "id": fact.id,
+        "owner": fact.owner,
+        "person_id": fact.person_id,
+        "fact_type": fact.fact_type,
+        "label": fact.label,
+        "value_text": fact.value_text,
+        "value_json": json_load(fact.value_json, None),
+        "confidence": fact.confidence,
+        "source": fact.source,
+        "source_entry_id": fact.source_entry_id,
+        "source_entry_date": fact.source_entry_date,
+        "last_seen_entry_id": fact.last_seen_entry_id,
+        "last_seen_date": fact.last_seen_date,
+        "status": fact.status,
+        "created_at": fact.created_at.isoformat() if fact.created_at else None,
+        "updated_at": fact.updated_at.isoformat() if fact.updated_at else None,
     }
 
 
@@ -117,6 +139,35 @@ def connection_to_dict(conn: LogbookPersonConnection) -> Dict[str, Any]:
         "evidence": evidence if isinstance(evidence, list) else [],
         "status": conn.status,
         "created_at": conn.created_at.isoformat() if conn.created_at else None,
+        "updated_at": conn.updated_at.isoformat() if conn.updated_at else None,
+    }
+
+
+def connection_summary_to_dict(conn: LogbookPersonConnection, person_id: str) -> Optional[Dict[str, Any]]:
+    """Return a compact person-centric connection summary."""
+    if conn.person_a_id == person_id:
+        other = conn.person_b
+        other_id = conn.person_b_id
+    elif conn.person_b_id == person_id:
+        other = conn.person_a
+        other_id = conn.person_a_id
+    else:
+        return None
+
+    evidence = json_load(conn.evidence_json, [])
+    evidence = evidence if isinstance(evidence, list) else []
+    latest_evidence = evidence[-1] if evidence else None
+    return {
+        "id": conn.id,
+        "other_person_id": other_id,
+        "other_person": person_to_dict(other) if other else None,
+        "connection_type": conn.connection_type,
+        "description": conn.description,
+        "strength": conn.strength,
+        "confidence": conn.confidence,
+        "status": conn.status,
+        "latest_evidence": latest_evidence if isinstance(latest_evidence, dict) else None,
+        "evidence_count": len(evidence),
         "updated_at": conn.updated_at.isoformat() if conn.updated_at else None,
     }
 

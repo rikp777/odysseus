@@ -1,9 +1,15 @@
 """Daily Logbook API."""
 
+import asyncio
 import json
+import math
+import os
+import time
 import uuid
 from typing import Optional
+from urllib.parse import urlparse
 
+import httpx
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy import or_
@@ -13,16 +19,19 @@ from sqlalchemy.orm import selectinload
 from core.database import (
     LogbookDataPoint,
     LogbookEntry,
+    LogbookGeocodeCache,
     LogbookLocation,
     LogbookLocationMention,
     LogbookMention,
     LogbookPerson,
     LogbookPersonConnection,
     SessionLocal,
+    utcnow_naive,
 )
 from src.auth_helpers import effective_user, require_user
 from src.contacts import service as contacts_service
 from src.logbook import ai as logbook_ai
+from src.logbook.map_tiles import map_tile_config
 from src.logbook import repository as logbook_repo
 from src.logbook import serializers as logbook_serializers
 from src.logbook import utils as logbook_utils
@@ -30,6 +39,8 @@ from src.tool_security import owner_is_admin_or_single_user
 from src.logbook.schemas import (
     LogbookApplySuggestions,
     LogbookAIAssist,
+    LogbookConnectionCreate,
+    LogbookConnectionUpdate,
     LogbookEntryUpdate,
     LogbookEntryUpsert,
     LogbookLocationCreate,
@@ -38,8 +49,13 @@ from src.logbook.schemas import (
     LogbookPeopleMerge,
     LogbookPersonContactLink,
     LogbookPersonCreate,
+    LogbookPersonFactCreate,
     LogbookPersonUpdate,
 )
+
+_NOMINATIM_PUBLIC_URL = "https://nominatim.openstreetmap.org"
+_GEOCODER_RATE_LOCK = asyncio.Lock()
+_GEOCODER_LAST_REQUEST_AT = 0.0
 
 
 def _owner(request: Request) -> str:
@@ -50,6 +66,180 @@ def _owner(request: Request) -> str:
 def _clean_optional(value: Optional[str]) -> Optional[str]:
     text = str(value or "").strip()
     return text or None
+
+
+def _configured_geocoder() -> tuple[str, str]:
+    provider = (os.getenv("LOGBOOK_GEOCODER_PROVIDER") or "photon").strip().lower()
+    if provider in {"nominatim_public", "public_nominatim", "nominatim-osm"}:
+        provider = "nominatim"
+    if provider not in {"photon", "nominatim"}:
+        raise HTTPException(400, "Unsupported logbook geocoder provider")
+    base_url = (os.getenv("LOGBOOK_GEOCODER_URL") or "").strip().rstrip("/")
+    if provider == "nominatim" and not base_url:
+        base_url = _NOMINATIM_PUBLIC_URL
+    if not base_url:
+        raise HTTPException(503, "Local logbook geocoder is not configured")
+    parsed = urlparse(base_url)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise HTTPException(503, "Local logbook geocoder URL is invalid")
+    return provider, base_url
+
+
+def _geocode_query_key(query: str) -> str:
+    return " ".join(str(query or "").strip().lower().split())
+
+
+def _geocode_cache_get(provider: str, query_key: str) -> Optional[list]:
+    db = SessionLocal()
+    try:
+        row = db.query(LogbookGeocodeCache).filter(
+            LogbookGeocodeCache.provider == provider,
+            LogbookGeocodeCache.query_key == query_key,
+        ).first()
+        if not row:
+            return None
+        data = json.loads(row.result_json or "[]")
+        return data if isinstance(data, list) else None
+    except Exception:
+        return None
+    finally:
+        db.close()
+
+
+def _geocode_cache_set(provider: str, query: str, query_key: str, results: list) -> None:
+    db = SessionLocal()
+    try:
+        now = utcnow_naive()
+        payload = json.dumps(results, ensure_ascii=False)
+        row = db.query(LogbookGeocodeCache).filter(
+            LogbookGeocodeCache.provider == provider,
+            LogbookGeocodeCache.query_key == query_key,
+        ).first()
+        if row:
+            row.query = query
+            row.result_json = payload
+            row.updated_at = now
+        else:
+            db.add(LogbookGeocodeCache(
+                id=str(uuid.uuid4()),
+                provider=provider,
+                query=query,
+                query_key=query_key,
+                result_json=payload,
+                created_at=now,
+                updated_at=now,
+            ))
+        db.commit()
+    except Exception:
+        db.rollback()
+    finally:
+        db.close()
+
+
+async def _respect_public_geocoder_rate_limit(provider: str, base_url: str) -> None:
+    global _GEOCODER_LAST_REQUEST_AT
+    if provider != "nominatim" or urlparse(base_url).netloc.lower() != "nominatim.openstreetmap.org":
+        return
+    async with _GEOCODER_RATE_LOCK:
+        elapsed = time.monotonic() - _GEOCODER_LAST_REQUEST_AT
+        if elapsed < 1.0:
+            await asyncio.sleep(1.0 - elapsed)
+        _GEOCODER_LAST_REQUEST_AT = time.monotonic()
+
+
+def _geocoder_user_agent() -> str:
+    return (
+        os.getenv("LOGBOOK_GEOCODER_USER_AGENT")
+        or "OdysseusLogbook/1.0 (self-hosted; https://github.com/pewdiepie-archdaemon/odysseus)"
+    ).strip()
+
+
+def _photon_prop(properties: dict, *names: str) -> str:
+    for name in names:
+        value = properties.get(name)
+        if value is not None and str(value).strip():
+            return str(value).strip()
+    return ""
+
+
+def _photon_feature_to_candidate(feature: dict) -> Optional[dict]:
+    geometry = feature.get("geometry") if isinstance(feature, dict) else {}
+    coordinates = geometry.get("coordinates") if isinstance(geometry, dict) else None
+    if not isinstance(coordinates, list) or len(coordinates) < 2:
+        return None
+    try:
+        longitude = float(coordinates[0])
+        latitude = float(coordinates[1])
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(latitude) or not math.isfinite(longitude):
+        return None
+
+    properties = feature.get("properties") if isinstance(feature, dict) else {}
+    if not isinstance(properties, dict):
+        properties = {}
+    name = _photon_prop(properties, "name", "street", "city", "country")
+    street = _photon_prop(properties, "street")
+    house_number = _photon_prop(properties, "housenumber")
+    street_line = " ".join(part for part in [street, house_number] if part)
+    address_parts = [
+        street_line,
+        _photon_prop(properties, "postcode"),
+        _photon_prop(properties, "city", "county"),
+        _photon_prop(properties, "state"),
+        _photon_prop(properties, "country"),
+    ]
+    address = ", ".join(dict.fromkeys(part for part in address_parts if part))
+    label = name or address or "Map result"
+    osm_type = _photon_prop(properties, "osm_type")
+    osm_id = _photon_prop(properties, "osm_id")
+    osm_key = _photon_prop(properties, "osm_key")
+    osm_value = _photon_prop(properties, "osm_value")
+    return {
+        "provider": "photon",
+        "provider_id": ":".join(part for part in [osm_type, osm_id] if part) or None,
+        "label": label,
+        "address": address or label,
+        "latitude": latitude,
+        "longitude": longitude,
+        "kind": "/".join(part for part in [osm_key, osm_value] if part) or None,
+    }
+
+
+def _nominatim_result_to_candidate(item: dict) -> Optional[dict]:
+    try:
+        latitude = float(item.get("lat"))
+        longitude = float(item.get("lon"))
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(latitude) or not math.isfinite(longitude):
+        return None
+    display_name = str(item.get("display_name") or "").strip()
+    address = item.get("address") if isinstance(item.get("address"), dict) else {}
+    label = (
+        address.get("amenity")
+        or address.get("shop")
+        or address.get("building")
+        or address.get("road")
+        or address.get("city")
+        or address.get("town")
+        or address.get("village")
+        or display_name
+        or "Map result"
+    )
+    osm_type = str(item.get("osm_type") or "").strip()
+    osm_id = str(item.get("osm_id") or "").strip()
+    category = str(item.get("category") or "").strip()
+    place_type = str(item.get("type") or "").strip()
+    return {
+        "provider": "nominatim",
+        "provider_id": ":".join(part for part in [osm_type, osm_id] if part) or None,
+        "label": str(label),
+        "address": display_name or str(label),
+        "latitude": latitude,
+        "longitude": longitude,
+        "kind": "/".join(part for part in [category, place_type] if part) or None,
+    }
 
 
 def _contacts_allowed(owner: str) -> bool:
@@ -95,6 +285,32 @@ def _clear_contact_link(person: LogbookPerson) -> None:
     person.contact_snapshot_json = None
 
 
+def _people_with_connection_summaries(db, owner: str, people, stats=None, *, limit_per_person: int = 4):
+    stats = stats or logbook_repo.person_stats(db, owner)
+    person_ids = [person.id for person in people]
+    grouped = logbook_repo.connections_for_people(
+        db,
+        owner,
+        person_ids,
+        limit_per_person=limit_per_person,
+    )
+    facts_by_person = logbook_repo.person_facts_for_people(db, owner, person_ids, limit_per_person=3)
+    rows = []
+    for person in people:
+        data = logbook_utils.with_stats(logbook_serializers.person_to_dict(person), stats.get(person.id, {}))
+        summaries = [
+            summary for conn in grouped.get(person.id, [])
+            if (summary := logbook_serializers.connection_summary_to_dict(conn, person.id))
+        ]
+        data["connections_summary"] = summaries
+        data["facts"] = [
+            logbook_serializers.person_fact_to_dict(fact)
+            for fact in facts_by_person.get(person.id, [])
+        ]
+        rows.append(data)
+    return rows
+
+
 def setup_logbook_routes() -> APIRouter:
     router = APIRouter(prefix="/api/logbook", tags=["logbook"])
 
@@ -115,10 +331,7 @@ def setup_logbook_routes() -> APIRouter:
                 conn_query = conn_query.filter(LogbookPersonConnection.status == status)
             connections = conn_query.order_by(LogbookPersonConnection.updated_at.desc()).all()
             return {
-                "people": [
-                    logbook_utils.with_stats(logbook_serializers.person_to_dict(person), person_stats.get(person.id, {}))
-                    for person in people
-                ],
+                "people": _people_with_connection_summaries(db, owner, people, person_stats),
                 "locations": [
                     logbook_utils.with_stats(logbook_serializers.location_to_dict(location), location_stats.get(location.id, {}))
                     for location in locations
@@ -147,6 +360,75 @@ def setup_logbook_routes() -> APIRouter:
             }
         finally:
             db.close()
+
+    @router.get("/map/config")
+    def map_config(request: Request):
+        _owner(request)
+        return map_tile_config()
+
+    @router.get("/geocode")
+    async def geocode(request: Request, q: str, limit: int = 5):
+        _owner(request)
+        query = (q or "").strip()
+        if len(query) < 3:
+            raise HTTPException(400, "Enter at least 3 characters to geocode")
+        limit = max(1, min(int(limit or 5), 10))
+        provider, base_url = _configured_geocoder()
+        query_key = _geocode_query_key(query)
+        cached = _geocode_cache_get(provider, query_key)
+        if cached is not None:
+            return {"ok": True, "provider": provider, "query": query, "results": cached, "cached": True}
+        try:
+            timeout = httpx.Timeout(connect=1.5, read=6.0, write=2.0, pool=2.0)
+            async with httpx.AsyncClient(timeout=timeout, follow_redirects=False, trust_env=False) as client:
+                if provider == "photon":
+                    url = f"{base_url}/api"
+                    params = {"q": query, "limit": limit}
+                    headers = None
+                else:
+                    await _respect_public_geocoder_rate_limit(provider, base_url)
+                    url = f"{base_url}/search"
+                    params = {
+                        "q": query,
+                        "format": "jsonv2",
+                        "addressdetails": "1",
+                        "limit": limit,
+                    }
+                    email = (os.getenv("LOGBOOK_GEOCODER_EMAIL") or "").strip()
+                    if email:
+                        params["email"] = email
+                    headers = {"User-Agent": _geocoder_user_agent()}
+                response = await client.get(url, params=params, headers=headers)
+                response.raise_for_status()
+                payload = response.json()
+        except httpx.TimeoutException:
+            raise HTTPException(504, "Logbook geocoder timed out")
+        except httpx.HTTPStatusError as exc:
+            status = exc.response.status_code if exc.response is not None else "unknown"
+            raise HTTPException(502, f"Logbook geocoder returned {status}")
+        except httpx.RequestError:
+            raise HTTPException(503, "Logbook geocoder is unavailable")
+        except ValueError:
+            raise HTTPException(502, "Logbook geocoder returned invalid JSON")
+
+        if provider == "photon":
+            features = payload.get("features") if isinstance(payload, dict) else []
+            if not isinstance(features, list):
+                features = []
+            results = [
+                candidate
+                for feature in features[:limit] if isinstance(feature, dict)
+                if (candidate := _photon_feature_to_candidate(feature))
+            ]
+        else:
+            rows = payload if isinstance(payload, list) else []
+            results = [
+                candidate
+                for item in rows[:limit] if isinstance(item, dict)
+                if (candidate := _nominatim_result_to_candidate(item))
+            ]
+        _geocode_cache_set(provider, query, query_key, results)
+        return {"ok": True, "provider": provider, "query": query, "results": results, "cached": False}
 
     @router.get("/entries")
     def list_entries(
@@ -381,7 +663,7 @@ def setup_logbook_routes() -> APIRouter:
                 prefix = person.canonical_name.startswith(term) or any(a.startswith(term) for a in aliases)
                 return (0 if exact else 1 if prefix else 2, person.display_name.lower())
             people.sort(key=score)
-            return {"people": [logbook_utils.with_stats(logbook_serializers.person_to_dict(p), stats.get(p.id, {})) for p in people]}
+            return {"people": _people_with_connection_summaries(db, owner, people, stats)}
         finally:
             db.close()
 
@@ -412,23 +694,28 @@ def setup_logbook_routes() -> APIRouter:
         try:
             person = logbook_repo.load_person_or_404(db, owner, person_id)
             entries = logbook_repo.entries_for_person(db, owner, person.id, limit=limit)
-            connections = db.query(LogbookPersonConnection).options(
-                selectinload(LogbookPersonConnection.person_a),
-                selectinload(LogbookPersonConnection.person_b),
-            ).filter(
-                LogbookPersonConnection.owner == owner,
-                or_(
-                    LogbookPersonConnection.person_a_id == person.id,
-                    LogbookPersonConnection.person_b_id == person.id,
-                ),
-            ).order_by(LogbookPersonConnection.updated_at.desc()).all()
+            connections = logbook_repo.connections_for_people(
+                db,
+                owner,
+                [person.id],
+                include_hidden=True,
+                limit_per_person=100,
+            ).get(person.id, [])
+            person_data = logbook_utils.with_stats(
+                logbook_serializers.person_to_dict(person),
+                logbook_repo.person_stats(db, owner).get(person.id, {}),
+            )
+            person_data["connections_summary"] = [
+                summary for conn in connections
+                if (summary := logbook_serializers.connection_summary_to_dict(conn, person.id))
+            ]
+            facts = logbook_repo.person_facts(db, owner, person.id, include_inactive=True, limit=100)
+            person_data["facts"] = [logbook_serializers.person_fact_to_dict(fact) for fact in facts]
             return {
-                "person": logbook_utils.with_stats(
-                    logbook_serializers.person_to_dict(person),
-                    logbook_repo.person_stats(db, owner).get(person.id, {}),
-                ),
+                "person": person_data,
                 "entries": [logbook_serializers.entry_to_dict(entry, full=False) for entry in entries],
                 "connections": [logbook_serializers.connection_to_dict(conn) for conn in connections],
+                "facts": person_data["facts"],
             }
         finally:
             db.close()
@@ -441,6 +728,38 @@ def setup_logbook_routes() -> APIRouter:
             person = logbook_repo.load_person_or_404(db, owner, person_id)
             entries = logbook_repo.entries_for_person(db, owner, person.id, limit=limit)
             return {"entries": [logbook_serializers.entry_to_dict(entry, full=False) for entry in entries]}
+        finally:
+            db.close()
+
+    @router.post("/people/{person_id}/facts")
+    def create_person_fact(request: Request, person_id: str, body: LogbookPersonFactCreate):
+        owner = _owner(request)
+        db = SessionLocal()
+        try:
+            person = logbook_repo.load_person_or_404(db, owner, person_id)
+            value_text = _clean_optional(body.value_text)
+            if not value_text:
+                raise HTTPException(400, "Fact value is required")
+            fact, duplicate = logbook_repo.upsert_person_fact(
+                db,
+                owner,
+                person,
+                fact_type=body.fact_type,
+                label=body.label,
+                value_text=value_text,
+                value_json=body.value_json,
+                confidence=body.confidence,
+                source="manual",
+                status=body.status or "active",
+            )
+            if not fact:
+                raise HTTPException(400, "Fact value is required")
+            db.commit()
+            return {
+                "ok": True,
+                "duplicate": duplicate,
+                "fact": logbook_serializers.person_fact_to_dict(fact),
+            }
         finally:
             db.close()
 
@@ -580,9 +899,14 @@ def setup_logbook_routes() -> APIRouter:
                 target.contact_uid = source.contact_uid
                 target.contact_source = source.contact_source
                 target.contact_snapshot_json = source.contact_snapshot_json
+            fact_merge = logbook_repo.merge_person_facts(db, owner, source.id, target)
             db.delete(source)
             db.commit()
-            return {"ok": True, "person": logbook_serializers.person_to_dict(target)}
+            return {
+                "ok": True,
+                "person": logbook_serializers.person_to_dict(target),
+                "facts": fact_merge,
+            }
         finally:
             db.close()
 
@@ -807,6 +1131,54 @@ def setup_logbook_routes() -> APIRouter:
         finally:
             db.close()
 
+    @router.post("/connections")
+    def create_connection(request: Request, body: LogbookConnectionCreate):
+        owner = _owner(request)
+        db = SessionLocal()
+        try:
+            conn, duplicate = logbook_repo.upsert_manual_connection(
+                db,
+                owner,
+                person_a_id=body.person_a_id,
+                person_b_id=body.person_b_id,
+                connection_type=body.connection_type,
+                description=body.description,
+                strength=body.strength,
+                confidence=body.confidence,
+                status=body.status,
+            )
+            db.commit()
+            return {
+                "ok": True,
+                "duplicate": duplicate,
+                "connection": logbook_serializers.connection_to_dict(conn),
+            }
+        finally:
+            db.close()
+
+    @router.put("/connections/{connection_id}")
+    def update_connection(request: Request, connection_id: str, body: LogbookConnectionUpdate):
+        owner = _owner(request)
+        db = SessionLocal()
+        try:
+            conn = logbook_repo.load_connection_or_404(db, owner, connection_id)
+            fields_set = getattr(body, "__fields_set__", getattr(body, "model_fields_set", set()))
+            conn = logbook_repo.update_manual_connection(
+                db,
+                owner,
+                conn,
+                connection_type=body.connection_type,
+                description=body.description,
+                strength=body.strength,
+                confidence=body.confidence,
+                status=body.status,
+                fields_set=fields_set,
+            )
+            db.commit()
+            return {"ok": True, "connection": logbook_serializers.connection_to_dict(conn)}
+        finally:
+            db.close()
+
     @router.post("/connections/{connection_id}/accept")
     def accept_connection(request: Request, connection_id: str):
         owner = _owner(request)
@@ -857,8 +1229,10 @@ def setup_logbook_routes() -> APIRouter:
             result = await logbook_ai.run_ai_assist(owner, payload)
             if isinstance(result, JSONResponse):
                 return result
+            updated_people = logbook_ai.store_ai_person_suggestion_details(db, owner, entry, result.get("people_suggestions") or [])
             stored = logbook_ai.store_ai_connection_suggestions(db, owner, entry, result.get("connection_suggestions") or [])
             db.commit()
+            result["updated_people"] = [logbook_serializers.person_to_dict(person) for person in updated_people]
             result["stored_connections"] = [logbook_serializers.connection_to_dict(c) for c in stored]
             return result
         finally:

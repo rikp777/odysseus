@@ -58,6 +58,20 @@ export function updatePerson(personId, payload) {
   });
 }
 
+export function createPersonFact(personId, payload) {
+  return jsonFetch(`${API_BASE}/api/logbook/people/${encodeURIComponent(personId)}/facts`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function mergePeople(payload) {
+  return jsonFetch(`${API_BASE}/api/logbook/people/merge`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
 export function linkPersonContact(personId, contactUid) {
   return jsonFetch(`${API_BASE}/api/logbook/people/${encodeURIComponent(personId)}/link-contact`, {
     method: 'POST',
@@ -127,8 +141,31 @@ export function getMapLocations(withCoordinates = false) {
   return jsonFetch(`${API_BASE}/api/logbook/map?${params.toString()}`);
 }
 
+export function getMapConfig() {
+  return jsonFetch(`${API_BASE}/api/logbook/map/config`);
+}
+
+export function geocodeAddress(q, limit = 5) {
+  const params = new URLSearchParams({ q: String(q || ''), limit: String(limit) });
+  return jsonFetch(`${API_BASE}/api/logbook/geocode?${params.toString()}`);
+}
+
 export function listConnections() {
   return jsonFetch(`${API_BASE}/api/logbook/connections`);
+}
+
+export function createConnection(payload) {
+  return jsonFetch(`${API_BASE}/api/logbook/connections`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function saveConnection(connectionId, payload) {
+  return jsonFetch(`${API_BASE}/api/logbook/connections/${encodeURIComponent(connectionId)}`, {
+    method: 'PUT',
+    body: JSON.stringify(payload),
+  });
 }
 
 export function getAIStatus() {

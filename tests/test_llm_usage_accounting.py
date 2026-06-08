@@ -97,13 +97,13 @@ def test_record_llm_usage_forwards_context(monkeypatch):
         endpoint_url="https://api.openai.com/v1/chat/completions",
         model="selected-model",
         metrics={"input_tokens": 1, "output_tokens": 2, "model": "answered-model"},
-        owner="rik",
+        owner="owner-1",
         session_id="session-a",
         message_id="message-a",
     )
 
     assert calls == [{
-        "owner": "rik",
+        "owner": "owner-1",
         "session_id": "session-a",
         "message_id": "message-a",
         "endpoint_url": "https://api.openai.com/v1/chat/completions",
@@ -124,14 +124,14 @@ async def test_llm_call_async_records_real_provider_usage(monkeypatch):
         "gpt-4o-mini",
         [{"role": "user", "content": "hi"}],
         headers={"Authorization": "Bearer test"},
-        owner="rik",
+        owner="owner-1",
         billing_context={"session_id": "session-a"},
         max_retries=1,
     )
 
     assert result == "hello"
     assert len(calls) == 1
-    assert calls[0]["owner"] == "rik"
+    assert calls[0]["owner"] == "owner-1"
     assert calls[0]["session_id"] == "session-a"
     assert calls[0]["model"] == "gpt-4o-mini"
     assert calls[0]["metrics"]["input_tokens"] == 11
@@ -158,7 +158,7 @@ async def test_llm_call_async_retries_transient_upstream_status(monkeypatch):
         "gpt-4o-mini",
         [{"role": "user", "content": "hi"}],
         headers={"Authorization": "Bearer test"},
-        owner="rik",
+        owner="owner-1",
         max_retries=2,
     )
 
@@ -182,7 +182,7 @@ def test_stream_llm_records_usage_once_for_owned_call(monkeypatch):
             "gpt-4o-mini",
             [{"role": "user", "content": "hi"}],
             headers={"Authorization": "Bearer test"},
-            owner="rik",
+            owner="owner-1",
             billing_context={"session_id": "session-a"},
         )]
 
@@ -190,7 +190,7 @@ def test_stream_llm_records_usage_once_for_owned_call(monkeypatch):
 
     assert chunks[-1] == "data: [DONE]\n\n"
     assert len(calls) == 1
-    assert calls[0]["owner"] == "rik"
+    assert calls[0]["owner"] == "owner-1"
     assert calls[0]["session_id"] == "session-a"
     assert calls[0]["metrics"]["input_tokens"] == 3
     assert calls[0]["metrics"]["output_tokens"] == 5
@@ -213,7 +213,7 @@ def test_stream_llm_record_false_prevents_double_counting(monkeypatch):
             "gpt-4o-mini",
             [{"role": "user", "content": "hi"}],
             headers={"Authorization": "Bearer test"},
-            owner="rik",
+            owner="owner-1",
             billing_context={"record": False},
         ):
             if chunk.startswith("data: ") and '"type": "usage"' in chunk:
