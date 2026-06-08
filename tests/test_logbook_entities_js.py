@@ -94,3 +94,30 @@ def test_logbook_selection_link_parts_preserve_surrounding_space():
         "mention": "[Jeanine Peeters](person:jeanine_peeters)",
         "location": "[Training Place](place:gym)",
     }
+
+
+def test_logbook_entities_drop_after_unlinking_markdown():
+    values = _node_eval(
+        """
+        import { currentEntitiesFromContent } from './static/js/logbook/entities.js';
+        import { unlinkMarkdownSelection } from './static/js/logbook/editor.js';
+
+        const people = [{ id: 'person-1', display_name: 'Jeanine', canonical_name: 'jeanine', aliases: [] }];
+        const locations = [{ id: 'loc-1', display_name: 'Gym', canonical_name: 'gym', aliases: [], hidden: false }];
+        const content = '[Jeanine](person:jeanine) visited [Gym](place:gym)';
+        const unlinked = unlinkMarkdownSelection(content, 0, content.length);
+        const parsed = currentEntitiesFromContent(unlinked.text, { people, locations });
+
+        console.log(JSON.stringify({
+          text: unlinked.text,
+          people: parsed.people.length,
+          locations: parsed.locations.length
+        }));
+        """
+    )
+
+    assert values == {
+        "text": "Jeanine visited Gym",
+        "people": 0,
+        "locations": 0,
+    }

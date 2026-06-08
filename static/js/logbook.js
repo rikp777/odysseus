@@ -44,12 +44,21 @@ import {
   focusRichEditorEnd as _focusRichEditorEnd,
   linkedSelectionText as _linkedSelectionText,
   renderEditorText as _renderEditorText,
+  replaceRichSelectionWithLink as _replaceRichSelectionWithLinkIn,
   richEditorToMarkdown as _richEditorToMarkdown,
   selectionInside as _selectionInside,
-  tokenPlainText as _tokenPlainText,
   unlinkMarkdownSelection as _unlinkMarkdownSelection,
+  unlinkRichSelection as _unlinkRichSelectionIn,
 } from './logbook/editor.js';
 import { iconBook as _iconBook, logbookIcon as _logbookIcon } from './logbook/icons.js';
+import {
+  bindDirectoryControls as _bindDirectoryControls,
+  bindDirectoryRowActions as _bindDirectoryRowActions,
+  renderLocationRowsHtml as _renderLocationRowsHtml,
+  renderLocationsPanelHtml as _renderLocationsPanelHtml,
+  renderPeoplePanelHtml as _renderPeoplePanelHtml,
+  renderPeopleRowsHtml as _renderPeopleRowsHtml,
+} from './logbook/panels.js';
 import {
   cleanKey as _cleanKey,
   dateAdd as _dateAdd,
@@ -907,156 +916,57 @@ function _personFactsPreviewHtml(person, { limit = 2 } = {}) {
 }
 
 function _peopleHtml() {
-  const todayPeople = _entry?.people || [];
-  const today = todayPeople.length
-    ? todayPeople.map(p => `<span class="logbook-person-chip">${_logbookIcon('person', 12)}${_e(p.display_name)}</span>`).join('')
-    : '<div class="logbook-empty">No people mentioned today.</div>';
-  const suggestions = (_aiPreview?.people_suggestions || []).map((p, index) => `
-    <div class="logbook-suggestion-row">
-      <strong>${_e(p.display_name || p.surface_text || 'Person')}</strong>
-      <span>${_e(_personSuggestionMeta(p))}</span>
-      <button type="button" class="cal-btn" data-add-ai-person="${index}">${_e(_personSuggestionActionLabel(p))}</button>
-    </div>
-  `).join('');
-  return `
-    <div class="logbook-section-head"><h5>People</h5></div>
-    <div class="logbook-chip-wrap">${today}</div>
-    ${suggestions ? `<div class="logbook-subtitle">Suggested people</div>${suggestions}` : ''}
-    <div class="logbook-directory-tools">
-      <input id="logbook-people-search" class="memory-search-input" placeholder="Find people" value="${_e(_peopleSearch)}">
-      <select id="logbook-people-sort" class="logbook-select">
-        <option value="recent" ${_peopleSort === 'recent' ? 'selected' : ''}>Recent</option>
-        <option value="count" ${_peopleSort === 'count' ? 'selected' : ''}>Most used</option>
-        <option value="name" ${_peopleSort === 'name' ? 'selected' : ''}>Name</option>
-      </select>
-    </div>
-    <div class="logbook-subtitle">All people</div>
-    <div id="logbook-people-list" class="logbook-directory-list">${_peopleRowsHtml()}</div>
-  `;
+  return _renderPeoplePanelHtml({
+    entry: _entry,
+    aiPreview: _aiPreview,
+    people: _people,
+    search: _peopleSearch,
+    sort: _peopleSort,
+    activePersonId: _filterPerson,
+    escapeHtml: _e,
+    icon: _logbookIcon,
+    personSuggestionMeta: _personSuggestionMeta,
+    personSuggestionActionLabel: _personSuggestionActionLabel,
+    renderFactsPreview: _personFactsPreviewHtml,
+    renderConnectionsPreview: _personConnectionsPreviewHtml,
+  });
 }
 
 function _peopleRowsHtml() {
-  const people = _visiblePeople();
-  return people.map(p => {
-    const aliases = (p.aliases || []).slice(0, 3).join(', ');
-    const meta = _directoryMeta(p, aliases);
-    const active = _filterPerson === p.id ? ' active' : '';
-    const connections = _personConnectionsPreviewHtml(p, { limit: 2, compact: true });
-    const facts = _personFactsPreviewHtml(p, { limit: 2 });
-    return `
-      <div class="logbook-directory-row${active}">
-        <button type="button" class="logbook-directory-main" data-filter-person="${_e(p.id)}">
-          <strong>${_logbookIcon('person', 12)}${_e(p.display_name)}</strong>
-          <span>${_e(meta)}</span>
-          ${facts}
-          ${connections}
-        </button>
-        <button type="button" class="logbook-icon-btn" data-insert-person="${_e(p.display_name)}" aria-label="Insert">+</button>
-      </div>
-    `;
-  }).join('') || '<div class="logbook-empty">No known people yet.</div>';
+  return _renderPeopleRowsHtml({
+    people: _people,
+    search: _peopleSearch,
+    sort: _peopleSort,
+    activePersonId: _filterPerson,
+    escapeHtml: _e,
+    icon: _logbookIcon,
+    renderFactsPreview: _personFactsPreviewHtml,
+    renderConnectionsPreview: _personConnectionsPreviewHtml,
+  });
 }
 
 function _locationsHtml() {
-  const todayLocations = _entry?.locations || [];
-  const today = todayLocations.length
-    ? todayLocations.map(l => `<span class="logbook-person-chip">${_logbookIcon('location', 12)}${_e(l.display_name)}</span>`).join('')
-    : '<div class="logbook-empty">No places mentioned today.</div>';
-  const suggestions = (_aiPreview?.location_suggestions || []).map((loc, index) => `
-    <div class="logbook-suggestion-row">
-      <strong>${_e(loc.display_name || loc.surface_text || 'Place')}</strong>
-      <span>${_e(loc.reason || 'Suggested from entry')}</span>
-      <button type="button" class="cal-btn" data-add-ai-location="${index}">Add</button>
-    </div>
-  `).join('');
-  return `
-    <div class="logbook-section-head"><h5>Places</h5></div>
-    <div class="logbook-chip-wrap">${today}</div>
-    ${suggestions ? `<div class="logbook-subtitle">Suggested places</div>${suggestions}` : ''}
-    <div class="logbook-directory-tools">
-      <input id="logbook-location-new" class="memory-search-input" placeholder="New place">
-      <button type="button" class="cal-btn" id="logbook-create-location">Add</button>
-    </div>
-    <div class="logbook-directory-tools">
-      <input id="logbook-location-search" class="memory-search-input" placeholder="Find places" value="${_e(_locationSearch)}">
-      <select id="logbook-location-sort" class="logbook-select">
-        <option value="recent" ${_locationSort === 'recent' ? 'selected' : ''}>Recent</option>
-        <option value="count" ${_locationSort === 'count' ? 'selected' : ''}>Most used</option>
-        <option value="name" ${_locationSort === 'name' ? 'selected' : ''}>Name</option>
-      </select>
-    </div>
-    <div class="logbook-subtitle">All places</div>
-    <div id="logbook-location-list" class="logbook-directory-list">${_locationRowsHtml()}</div>
-  `;
+  return _renderLocationsPanelHtml({
+    entry: _entry,
+    aiPreview: _aiPreview,
+    locations: _locations,
+    search: _locationSearch,
+    sort: _locationSort,
+    activeLocationId: _filterLocation,
+    escapeHtml: _e,
+    icon: _logbookIcon,
+  });
 }
 
 function _locationRowsHtml() {
-  const locations = _visibleLocations();
-  return locations.map(loc => {
-    const aliases = (loc.aliases || []).slice(0, 3).join(', ');
-    const meta = _directoryMeta(loc, aliases);
-    const active = _filterLocation === loc.id ? ' active' : '';
-    return `
-      <div class="logbook-directory-row${active}">
-        <button type="button" class="logbook-directory-main" data-filter-location="${_e(loc.id)}">
-          <strong>${_logbookIcon('location', 12)}${_e(loc.display_name)}</strong>
-          <span>${_e(meta)}</span>
-        </button>
-        <button type="button" class="logbook-icon-btn" data-insert-location="${_e(loc.display_name)}" aria-label="Insert">+</button>
-      </div>
-    `;
-  }).join('') || '<div class="logbook-empty">No places yet.</div>';
-}
-
-function _directoryMeta(item, aliases = '') {
-  const count = Number(item.mention_count || 0);
-  const bits = [];
-  bits.push(`${count} ${count === 1 ? 'entry' : 'entries'}`);
-  if (item.last_mentioned) bits.push(`last ${item.last_mentioned}`);
-  if (aliases) bits.push(aliases);
-  return bits.join(' | ');
-}
-
-function _visiblePeople() {
-  const term = _peopleSearch.trim().toLowerCase();
-  const list = _people.filter(p => {
-    if (!term) return true;
-    const factBits = Array.isArray(p.facts)
-      ? p.facts.flatMap(fact => [fact?.label, fact?.fact_type, fact?.value_text])
-      : [];
-    const names = [
-      p.display_name,
-      ...(p.aliases || []),
-      p.relationship_label,
-      p.notes,
-      p.llm_context,
-      ...factBits,
-    ].map(x => String(x || '').toLowerCase());
-    return names.some(name => name.includes(term));
+  return _renderLocationRowsHtml({
+    locations: _locations,
+    search: _locationSearch,
+    sort: _locationSort,
+    activeLocationId: _filterLocation,
+    escapeHtml: _e,
+    icon: _logbookIcon,
   });
-  list.sort((a, b) => _directorySort(a, b, _peopleSort));
-  return list;
-}
-
-function _visibleLocations() {
-  const term = _locationSearch.trim().toLowerCase();
-  const list = _locations.filter(loc => {
-    if (loc.hidden) return false;
-    if (!term) return true;
-    const names = [loc.display_name, ...(loc.aliases || [])].map(x => String(x || '').toLowerCase());
-    return names.some(name => name.includes(term));
-  });
-  list.sort((a, b) => _directorySort(a, b, _locationSort));
-  return list;
-}
-
-function _directorySort(a, b, sort) {
-  if (sort === 'name') return String(a.display_name || '').localeCompare(String(b.display_name || ''));
-  if (sort === 'count') return Number(b.mention_count || 0) - Number(a.mention_count || 0)
-    || String(a.display_name || '').localeCompare(String(b.display_name || ''));
-  return String(b.last_mentioned || '').localeCompare(String(a.last_mentioned || ''))
-    || Number(b.mention_count || 0) - Number(a.mention_count || 0)
-    || String(a.display_name || '').localeCompare(String(b.display_name || ''));
 }
 
 function _personConnectionSummaries(person) {
@@ -1661,68 +1571,49 @@ async function _openLocation(locationId) {
 }
 
 function _bindPeopleRowEvents() {
-  document.querySelectorAll('[data-insert-person]').forEach(btn => {
-    btn.addEventListener('click', () => _insertMention(btn.dataset.insertPerson));
-  });
-  document.querySelectorAll('[data-filter-person]').forEach(btn => {
-    btn.addEventListener('click', () => {
-      _filterPerson = btn.dataset.filterPerson || '';
+  _bindDirectoryRowActions(document, {
+    onInsertPerson: _insertMention,
+    onFilterPerson: personId => {
+      _filterPerson = personId;
       _loadEntries().then(_renderNavigator).catch(_showError);
-    });
+    },
   });
 }
 
 function _bindLocationRowEvents() {
-  document.querySelectorAll('[data-insert-location]').forEach(btn => {
-    btn.addEventListener('click', () => _insertLocation(btn.dataset.insertLocation));
-  });
-  document.querySelectorAll('[data-filter-location]').forEach(btn => {
-    btn.addEventListener('click', () => {
-      _filterLocation = btn.dataset.filterLocation || '';
+  _bindDirectoryRowActions(document, {
+    onInsertLocation: _insertLocation,
+    onFilterLocation: locationId => {
+      _filterLocation = locationId;
       _loadEntries().then(_renderNavigator).catch(_showError);
-    });
+    },
   });
 }
 
 function _bindPeopleDirectoryEvents() {
-  const peopleSearch = document.getElementById('logbook-people-search');
-  peopleSearch?.addEventListener('input', () => {
-    _peopleSearch = peopleSearch.value;
-    const list = document.getElementById('logbook-people-list');
-    if (list) {
-      list.innerHTML = _peopleRowsHtml();
-      _bindPeopleRowEvents();
-    }
-  });
-  document.getElementById('logbook-people-sort')?.addEventListener('change', e => {
-    _peopleSort = e.target.value || 'recent';
-    const list = document.getElementById('logbook-people-list');
-    if (list) {
-      list.innerHTML = _peopleRowsHtml();
-      _bindPeopleRowEvents();
-    }
+  _bindDirectoryControls({
+    searchId: 'logbook-people-search',
+    sortId: 'logbook-people-sort',
+    listId: 'logbook-people-list',
+    onSearch: value => { _peopleSearch = value; },
+    onSort: value => { _peopleSort = value; },
+    renderRows: _peopleRowsHtml,
+    bindRows: _bindPeopleRowEvents,
   });
 }
 
 function _bindLocationDirectoryEvents() {
-  const locationSearch = document.getElementById('logbook-location-search');
-  locationSearch?.addEventListener('input', () => {
-    _locationSearch = locationSearch.value;
-    const list = document.getElementById('logbook-location-list');
-    if (list) {
-      list.innerHTML = _locationRowsHtml();
-      _bindLocationRowEvents();
-    }
+  _bindDirectoryControls({
+    searchId: 'logbook-location-search',
+    sortId: 'logbook-location-sort',
+    listId: 'logbook-location-list',
+    onSearch: value => { _locationSearch = value; },
+    onSort: value => { _locationSort = value; },
+    renderRows: _locationRowsHtml,
+    bindRows: _bindLocationRowEvents,
+    createId: 'logbook-create-location',
+    onCreate: () => _createLocation().catch(_showError),
   });
-  document.getElementById('logbook-location-sort')?.addEventListener('change', e => {
-    _locationSort = e.target.value || 'recent';
-    const list = document.getElementById('logbook-location-list');
-    if (list) {
-      list.innerHTML = _locationRowsHtml();
-      _bindLocationRowEvents();
-    }
-  });
-  document.getElementById('logbook-create-location')?.addEventListener('click', () => _createLocation().catch(_showError));
 }
 
 function _renderPeoplePanel() {
@@ -1845,27 +1736,12 @@ function _replaceRawSelectionWithLink(kind) {
 
 function _replaceRichSelectionWithLink(kind) {
   const editor = document.getElementById('logbook-rich-content');
-  const selection = window.getSelection?.();
-  if (!editor || !selection || !selection.rangeCount) return false;
-  const range = selection.getRangeAt(0);
-  const startsInside = range.startContainer === editor || editor.contains(range.startContainer);
-  const endsInside = range.endContainer === editor || editor.contains(range.endContainer);
-  if (range.collapsed || !startsInside || !endsInside) return false;
-  const linked = _linkedSelectionText(selection.toString(), kind, _selectionLinkTarget);
+  const linked = _replaceRichSelectionWithLinkIn(editor, kind, {
+    resolveTarget: _selectionLinkTarget,
+    renderToken: _editorTokenHtml,
+    escapeHtml: _e,
+  });
   if (!linked) return false;
-  const template = document.createElement('template');
-  template.innerHTML = `${_e(linked.leading)}${_editorTokenHtml(linked.label, linked.target)}${_e(linked.trailing)}`;
-  const fragment = template.content;
-  const last = fragment.lastChild;
-  range.deleteContents();
-  range.insertNode(fragment);
-  if (last) {
-    range.setStartAfter(last);
-    range.collapse(true);
-    selection.removeAllRanges();
-    selection.addRange(range);
-  }
-  editor.focus();
   _syncEntryFromEditor();
   _bindEntityLinkEvents(editor);
   _refreshEntityPanelsFromContent();
@@ -1898,41 +1774,8 @@ function _unlinkRawSelection() {
 
 function _unlinkRichSelection() {
   const editor = document.getElementById('logbook-rich-content');
-  if (!editor) return false;
-  const selection = window.getSelection?.();
-  const active = document.activeElement;
-  const activeToken = active?.dataset?.logbookToken === '1' && editor.contains(active) ? active : null;
-  let tokens = activeToken ? [activeToken] : [];
-  if (!tokens.length && selection?.rangeCount) {
-    const range = selection.getRangeAt(0);
-    const startsInside = range.startContainer === editor || editor.contains(range.startContainer);
-    const endsInside = range.endContainer === editor || editor.contains(range.endContainer);
-    if (startsInside && endsInside) {
-      tokens = [...editor.querySelectorAll('[data-logbook-token="1"]')]
-        .filter(token => {
-          try {
-            return range.intersectsNode(token);
-          } catch (_) {
-            return false;
-          }
-        });
-    }
-  }
-  if (!tokens.length) return false;
-  let last = null;
-  tokens.forEach(token => {
-    const textNode = document.createTextNode(_tokenPlainText(token));
-    token.replaceWith(textNode);
-    last = textNode;
-  });
-  if (last && selection) {
-    const range = document.createRange();
-    range.setStartAfter(last);
-    range.collapse(true);
-    selection.removeAllRanges();
-    selection.addRange(range);
-  }
-  editor.focus();
+  const unlinked = _unlinkRichSelectionIn(editor);
+  if (!unlinked) return false;
   _syncEntryFromEditor();
   _refreshEntityPanelsFromContent();
   _markDirty();

@@ -41,8 +41,9 @@ def test_logbook_editor_helpers_render_and_transform_markdown_links():
         const contained = unlinkMarkdownSelection('Saw [Jeanine](person:jeanine) today', 8, 8);
         const sample = '[Jean](person:jean) and [Gym](place:gym)';
         const selected = unlinkMarkdownSelection(sample, 0, sample.length);
+        const plain = unlinkMarkdownSelection('Jeanine visited Gym', 0, 7);
 
-        console.log(JSON.stringify({ html, linked, contained, selected }));
+        console.log(JSON.stringify({ html, linked, contained, selected, plain }));
         """
     )
 
@@ -69,6 +70,7 @@ def test_logbook_editor_helpers_render_and_transform_markdown_links():
         "text": "Jean and Gym",
         "cursor": 12,
     }
+    assert values["plain"] is None
 
 
 def test_logbook_rich_editor_serializer_preserves_tokens_and_blocks():

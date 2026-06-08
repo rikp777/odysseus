@@ -1,5 +1,9 @@
 import { LOGBOOK_LINK_RE, selectionLinkParts } from './entities.js';
 
+function defaultEscape(value) {
+  return String(value ?? '');
+}
+
 export function renderEditorText(content, { escapeHtml, renderToken, linkPattern = LOGBOOK_LINK_RE } = {}) {
   const text = String(content || '');
   const escape = escapeHtml || (value => String(value ?? ''));
@@ -91,6 +95,94 @@ export function unlinkMarkdownSelection(value, start, end, linkPattern = LOGBOOK
     text: unlinked,
     cursor: rangeStart + unlinked.length,
   };
+}
+
+export function replaceRichSelectionWithLink(editor, kind, {
+  selection = globalThis.window?.getSelection?.(),
+  resolveTarget,
+  renderToken,
+  escapeHtml = defaultEscape,
+  createTemplate = html => {
+    const documentRef = editor?.ownerDocument || globalThis.document;
+    const template = documentRef?.createElement?.('template');
+    if (!template) return null;
+    template.innerHTML = html;
+    return template;
+  },
+} = {}) {
+  if (!editor || !selection || !selection.rangeCount || !resolveTarget || !renderToken) return false;
+  const range = selection.getRangeAt(0);
+  const startsInside = range.startContainer === editor || editor.contains(range.startContainer);
+  const endsInside = range.endContainer === editor || editor.contains(range.endContainer);
+  if (range.collapsed || !startsInside || !endsInside) return false;
+
+  const linked = linkedSelectionText(selection.toString(), kind, resolveTarget);
+  if (!linked) return false;
+  const template = createTemplate(
+    `${escapeHtml(linked.leading)}${renderToken(linked.label, linked.target)}${escapeHtml(linked.trailing)}`,
+  );
+  if (!template) return false;
+
+  const fragment = template.content;
+  const last = fragment.lastChild;
+  range.deleteContents();
+  range.insertNode(fragment);
+  if (last) {
+    range.setStartAfter(last);
+    range.collapse(true);
+    selection.removeAllRanges();
+    selection.addRange(range);
+  }
+  editor.focus();
+  return true;
+}
+
+export function unlinkRichSelection(editor, {
+  selection = globalThis.window?.getSelection?.(),
+  activeElement = globalThis.document?.activeElement,
+  createTextNode = text => (editor?.ownerDocument || globalThis.document)?.createTextNode?.(text),
+  createRange = () => (editor?.ownerDocument || globalThis.document)?.createRange?.(),
+} = {}) {
+  if (!editor) return false;
+  const activeToken = activeElement?.dataset?.logbookToken === '1' && editor.contains(activeElement)
+    ? activeElement
+    : null;
+  let tokens = activeToken ? [activeToken] : [];
+  if (!tokens.length && selection?.rangeCount) {
+    const range = selection.getRangeAt(0);
+    const startsInside = range.startContainer === editor || editor.contains(range.startContainer);
+    const endsInside = range.endContainer === editor || editor.contains(range.endContainer);
+    if (startsInside && endsInside) {
+      tokens = [...editor.querySelectorAll('[data-logbook-token="1"]')]
+        .filter(token => {
+          try {
+            return range.intersectsNode(token);
+          } catch (_) {
+            return false;
+          }
+        });
+    }
+  }
+  if (!tokens.length) return false;
+
+  let last = null;
+  for (const token of tokens) {
+    const textNode = createTextNode(tokenPlainText(token));
+    if (!textNode) return false;
+    token.replaceWith(textNode);
+    last = textNode;
+  }
+  if (last && selection) {
+    const range = createRange();
+    if (range) {
+      range.setStartAfter(last);
+      range.collapse(true);
+      selection.removeAllRanges();
+      selection.addRange(range);
+    }
+  }
+  editor.focus();
+  return true;
 }
 
 export function selectionInside(el, selection = globalThis.window?.getSelection?.()) {
