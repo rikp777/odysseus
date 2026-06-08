@@ -1070,10 +1070,7 @@ def setup_logbook_routes() -> APIRouter:
         db = SessionLocal()
         try:
             location = logbook_repo.load_location_or_404(db, owner, location_id)
-            mention_count = db.query(LogbookLocationMention.id).filter(
-                LogbookLocationMention.location_id == location.id,
-            ).count()
-            if mention_count:
+            if logbook_repo.location_mention_count(db, location.id):
                 raise HTTPException(409, "Place has linked entries; hide it instead")
             db.delete(location)
             db.commit()

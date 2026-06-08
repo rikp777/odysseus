@@ -414,6 +414,12 @@ def find_location_duplicate(
     return None
 
 
+def location_mention_count(db, location_id: str) -> int:
+    return db.query(LogbookLocationMention.id).filter(
+        LogbookLocationMention.location_id == location_id,
+    ).count()
+
+
 def merge_location_aliases(location: LogbookLocation, names: List[str]) -> None:
     existing = aliases(location)
     seen = {canonical_name(location.display_name), *[canonical_name(a) for a in existing]}

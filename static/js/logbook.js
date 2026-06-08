@@ -23,6 +23,10 @@ import {
   saveEntry,
   updateConnection,
 } from './logbook/api.js';
+import {
+  entityAutocompleteContext as _entityAutocompleteContext,
+  entityAutocompleteMatches as _entityAutocompleteMatches,
+} from './logbook/autocomplete.js';
 import { MODAL_ID, MOODS, QUICK_DATA, SAVE_DELAY } from './logbook/constants.js';
 import {
   LOGBOOK_LINK_RE,
@@ -33,10 +37,18 @@ import {
   locationMarkdown as _locationMarkdown,
   mentionMarkdown as _mentionMarkdown,
   personForLink as _personForLinkIn,
-  selectionLinkParts as _selectionLinkParts,
   selectionLinkTarget as _selectionLinkTargetForLists,
   slugName as _slugName,
 } from './logbook/entities.js';
+import {
+  focusRichEditorEnd as _focusRichEditorEnd,
+  linkedSelectionText as _linkedSelectionText,
+  renderEditorText as _renderEditorText,
+  richEditorToMarkdown as _richEditorToMarkdown,
+  selectionInside as _selectionInside,
+  tokenPlainText as _tokenPlainText,
+  unlinkMarkdownSelection as _unlinkMarkdownSelection,
+} from './logbook/editor.js';
 import { iconBook as _iconBook, logbookIcon as _logbookIcon } from './logbook/icons.js';
 import {
   cleanKey as _cleanKey,
@@ -403,17 +415,7 @@ function _editorTokenHtml(label, target) {
 }
 
 function _renderLogbookEditorText(content) {
-  const text = String(content || '');
-  let html = '';
-  let last = 0;
-  LOGBOOK_LINK_RE.lastIndex = 0;
-  for (const match of text.matchAll(LOGBOOK_LINK_RE)) {
-    html += _e(text.slice(last, match.index));
-    html += _editorTokenHtml(match[1], match[2]);
-    last = match.index + match[0].length;
-  }
-  html += _e(text.slice(last));
-  return html;
+  return _renderEditorText(content, { escapeHtml: _e, renderToken: _editorTokenHtml });
 }
 
 function _renderLogbookText(content) {
@@ -431,31 +433,6 @@ function _renderLogbookText(content) {
   }
   html += _e(text.slice(last));
   return html || '<span class="logbook-empty">No text yet.</span>';
-}
-
-function _blockNeedsNewline(el) {
-  return el && /^(DIV|P|LI|H[1-6]|BLOCKQUOTE)$/i.test(el.nodeName || '');
-}
-
-function _serializeRichEditorNode(node, root) {
-  if (!node) return '';
-  if (node.nodeType === Node.TEXT_NODE) return node.nodeValue.replace(/\u00a0/g, ' ');
-  if (node.nodeType !== Node.ELEMENT_NODE) return '';
-  if (node.dataset?.logbookToken === '1') {
-    const label = node.dataset.label || node.textContent.replace(/^[@#]/, '').trim();
-    const target = node.dataset.target || '';
-    return label && target ? `[${label}](${target})` : node.textContent || '';
-  }
-  if (node.nodeName === 'BR') return '\n';
-  let out = '';
-  node.childNodes.forEach(child => { out += _serializeRichEditorNode(child, root); });
-  if (node !== root && _blockNeedsNewline(node) && out && !out.endsWith('\n')) out += '\n';
-  return out;
-}
-
-function _richEditorToMarkdown(editor = document.getElementById('logbook-rich-content')) {
-  if (!editor) return '';
-  return _serializeRichEditorNode(editor, editor).replace(/\n{3,}/g, '\n\n').replace(/[ \t]+\n/g, '\n').trimEnd();
 }
 
 function _syncEntryFromEditor() {
@@ -1798,69 +1775,36 @@ function _addDatapoint(key = '', label = '') {
   _markDirty();
 }
 
-function _mentionContext() {
+function _rawAutocompleteContext() {
   if (_editorMode !== 'raw') return null;
   const ta = document.getElementById('logbook-content');
   if (!ta) return null;
-  const pos = ta.selectionStart ?? 0;
-  const before = ta.value.slice(0, pos);
-  const match = before.match(/(^|[\s(])@([A-Za-z0-9_-]{0,40})$/);
-  if (!match) return null;
-  return {
-    textarea: ta,
-    start: pos - match[2].length - 1,
-    end: pos,
-    query: match[2].toLowerCase(),
-  };
-}
-
-function _locationContext() {
-  if (_editorMode !== 'raw') return null;
-  const ta = document.getElementById('logbook-content');
-  if (!ta) return null;
-  const pos = ta.selectionStart ?? 0;
-  const before = ta.value.slice(0, pos);
-  const match = before.match(/(^|[\s(])#([A-Za-z0-9_-]{0,40})$/);
-  if (!match) return null;
-  return {
-    textarea: ta,
-    start: pos - match[2].length - 1,
-    end: pos,
-    query: match[2].toLowerCase(),
-  };
+  const context = _entityAutocompleteContext(ta.value, ta.selectionStart ?? 0);
+  return context ? { ...context, textarea: ta } : null;
 }
 
 function _renderMentionMenu() {
   const menu = document.getElementById('logbook-mention-menu');
-  const ctx = _mentionContext();
-  const locCtx = ctx ? null : _locationContext();
-  if (!menu || (!ctx && !locCtx)) {
+  const ctx = _rawAutocompleteContext();
+  if (!menu || !ctx) {
     _hideMentionMenu();
     return;
   }
-  const query = (ctx || locCtx).query;
-  const matches = ctx
-    ? _people.filter(p => {
-        const names = [p.display_name, ...(p.aliases || [])].map(x => String(x || '').toLowerCase());
-        return !query || names.some(name => name.startsWith(query) || name.includes(query));
-      }).slice(0, 8)
-    : _locations.filter(loc => {
-        const names = [loc.display_name, ...(loc.aliases || [])].map(x => String(x || '').toLowerCase());
-        return !query || names.some(name => name.startsWith(query) || name.includes(query));
-      }).slice(0, 8);
+  const isPerson = ctx.kind === 'person';
+  const matches = _entityAutocompleteMatches(isPerson ? _people : _locations, ctx.query);
   if (!matches.length) {
     _hideMentionMenu();
     return;
   }
   menu.classList.remove('hidden');
-  menu.innerHTML = ctx
+  menu.innerHTML = isPerson
     ? matches.map(p => `<button type="button" data-mention-person="${_e(p.display_name)}">${_logbookIcon('person', 12)}<span>${_e(p.display_name)}</span></button>`).join('')
     : matches.map(loc => `<button type="button" data-mention-location="${_e(loc.display_name)}">${_logbookIcon('location', 12)}<span>${_e(loc.display_name)}</span></button>`).join('');
   menu.querySelectorAll('[data-mention-person], [data-mention-location]').forEach(btn => {
     btn.addEventListener('mousedown', e => {
       e.preventDefault();
       if (btn.dataset.mentionPerson) _replaceMention(ctx, btn.dataset.mentionPerson);
-      else _replaceLocation(locCtx, btn.dataset.mentionLocation);
+      else _replaceLocation(ctx, btn.dataset.mentionLocation);
     });
   });
 }
@@ -1887,12 +1831,10 @@ function _replaceRawSelectionWithLink(kind) {
   if (!ta || ta.selectionStart === ta.selectionEnd) return false;
   const start = ta.selectionStart ?? 0;
   const end = ta.selectionEnd ?? start;
-  const parts = _selectionLinkParts(ta.value.slice(start, end));
-  if (!parts) return false;
-  const target = _selectionLinkTarget(kind, parts.label);
-  const linked = `${parts.leading}[${parts.label}](${target})${parts.trailing}`;
-  ta.value = ta.value.slice(0, start) + linked + ta.value.slice(end);
-  const pos = start + linked.length;
+  const linked = _linkedSelectionText(ta.value.slice(start, end), kind, _selectionLinkTarget);
+  if (!linked) return false;
+  ta.value = ta.value.slice(0, start) + linked.markdown + ta.value.slice(end);
+  const pos = start + linked.markdown.length;
   ta.focus();
   ta.setSelectionRange(pos, pos);
   if (_entry) _entry.content = ta.value;
@@ -1909,11 +1851,10 @@ function _replaceRichSelectionWithLink(kind) {
   const startsInside = range.startContainer === editor || editor.contains(range.startContainer);
   const endsInside = range.endContainer === editor || editor.contains(range.endContainer);
   if (range.collapsed || !startsInside || !endsInside) return false;
-  const parts = _selectionLinkParts(selection.toString());
-  if (!parts) return false;
-  const target = _selectionLinkTarget(kind, parts.label);
+  const linked = _linkedSelectionText(selection.toString(), kind, _selectionLinkTarget);
+  if (!linked) return false;
   const template = document.createElement('template');
-  template.innerHTML = `${_e(parts.leading)}${_editorTokenHtml(parts.label, target)}${_e(parts.trailing)}`;
+  template.innerHTML = `${_e(linked.leading)}${_editorTokenHtml(linked.label, linked.target)}${_e(linked.trailing)}`;
   const fragment = template.content;
   const last = fragment.lastChild;
   range.deleteContents();
@@ -1950,27 +1891,9 @@ function _unlinkRawSelection() {
   if (!ta) return false;
   const start = ta.selectionStart ?? 0;
   const end = ta.selectionEnd ?? start;
-  const value = ta.value || '';
-  LOGBOOK_LINK_RE.lastIndex = 0;
-  for (const match of value.matchAll(LOGBOOK_LINK_RE)) {
-    const matchStart = match.index ?? 0;
-    const matchEnd = matchStart + match[0].length;
-    if (matchStart <= start && matchEnd >= end) {
-      return _replaceRawSelectionWithText(matchStart, matchEnd, match[1]);
-    }
-  }
-  if (start === end) return false;
-  const selected = value.slice(start, end);
-  LOGBOOK_LINK_RE.lastIndex = 0;
-  const unlinked = selected.replace(LOGBOOK_LINK_RE, '$1');
-  if (unlinked === selected) return false;
-  return _replaceRawSelectionWithText(start, end, unlinked);
-}
-
-function _tokenPlainText(token) {
-  const label = token?.dataset?.label || '';
-  if (label) return label;
-  return String(token?.textContent || '').replace(/^[@#]/, '');
+  const unlinked = _unlinkMarkdownSelection(ta.value || '', start, end);
+  if (!unlinked) return false;
+  return _replaceRawSelectionWithText(unlinked.start, unlinked.end, unlinked.text);
 }
 
 function _unlinkRichSelection() {
@@ -2028,24 +1951,6 @@ function _unlinkSelectedText() {
     ? _unlinkRawSelection()
     : _unlinkRichSelection();
   if (!unlinked) _setStatus('Select a linked token first');
-}
-
-function _selectionInside(el) {
-  const selection = window.getSelection?.();
-  if (!selection || !selection.rangeCount || !el) return false;
-  const node = selection.anchorNode;
-  return Boolean(node && (node === el || el.contains(node)));
-}
-
-function _focusRichEditorEnd(editor) {
-  if (!editor) return;
-  editor.focus();
-  const range = document.createRange();
-  range.selectNodeContents(editor);
-  range.collapse(false);
-  const selection = window.getSelection?.();
-  selection?.removeAllRanges();
-  selection?.addRange(range);
 }
 
 function _insertIntoRichEditor(html) {

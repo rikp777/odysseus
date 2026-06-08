@@ -25,6 +25,7 @@ from src.logbook.repository import (
     get_or_create_location,
     get_or_create_person,
     link_person_suggestion,
+    location_mention_count,
     merge_person_facts,
     person_facts,
     person_facts_for_people,
@@ -115,6 +116,39 @@ def test_location_duplicate_check_includes_aliases_and_hidden_places():
     assert find_location_duplicate(db, owner, ["Archive"]).id == hidden.id
     assert find_location_duplicate(db, owner, ["Office"], exclude_id=office.id) is None
     assert find_location_duplicate(db, owner, ["Gym"], exclude_id=office.id).id == gym.id
+
+
+def test_location_mention_count_tracks_unlink_and_unused_places_can_delete():
+    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
+    Base.metadata.create_all(bind=engine)
+    db = sessionmaker(bind=engine)()
+    owner = "owner-1"
+
+    gym = get_or_create_location(db, owner, "Gym")
+    unused = get_or_create_location(db, owner, "Old Cafe")
+    entry = LogbookEntry(
+        id="entry-1",
+        owner=owner,
+        entry_date="2026-06-04",
+        title="Daily log",
+        content="Trained at [Gym](place:gym).",
+    )
+    db.add(entry)
+    db.flush()
+
+    rebuild_entry_links(db, owner, entry)
+    db.flush()
+    assert location_mention_count(db, gym.id) == 1
+    assert location_mention_count(db, unused.id) == 0
+
+    db.delete(unused)
+    db.flush()
+    assert db.query(LogbookLocation).filter(LogbookLocation.id == unused.id).first() is None
+
+    entry.content = "Trained at Gym."
+    rebuild_entry_links(db, owner, entry)
+    db.flush()
+    assert location_mention_count(db, gym.id) == 0
 
 
 def test_entry_revision_snapshots_and_restores_entry_fields_and_datapoints():

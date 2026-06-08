@@ -107,6 +107,15 @@ Why:
 - linking entities should be explicit so the logbook does not silently create
   unwanted personal data.
 
+Implementation notes:
+
+- runtime code belongs in the normal project paths, not inside `custom/`;
+- `custom/` documents the fork and registers custom integration points;
+- editor parsing/link helpers live under `static/js/logbook/` so they can be
+  tested and maintained next to the upstream logbook code;
+- raw autocomplete, entity parsing, and editor serialization are split into
+  small modules instead of being kept as one large inline block.
+
 ### Logbook Entity Hover Cards
 
 Linked people, places, and food/data entities can show hover info in the editor.
@@ -174,4 +183,3 @@ or the production machine:
 - raw billing account IDs;
 - exact production firewall details;
 - personal screenshots or data exports that reveal private content.
-
