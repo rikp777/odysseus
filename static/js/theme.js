@@ -1132,6 +1132,10 @@ export function initThemeUI() {
         }
         // Restore saved value after options are populated
         nf.value = _initFont;
+        if (_customFonts[_initFont]) {
+          const density = document.getElementById('theme-density-select')?.value || _initDensity;
+          applyFontDensity(_initFont, density);
+        }
       })
       .catch(e => console.warn('Custom fonts fetch failed:', e));
   }

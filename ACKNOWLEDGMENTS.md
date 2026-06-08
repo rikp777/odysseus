@@ -86,6 +86,7 @@ Bundled in `static/fonts/`:
 | [Fira Code](https://github.com/tonsky/FiraCode) | SIL Open Font License 1.1 | Nikita Prokopov & contributors |
 | [Inter](https://github.com/rsms/inter) | SIL Open Font License 1.1 | Rasmus Andersson |
 | [GohuFont](https://font.gohu.org/) (`fonts/custom/GohuFont.ttf`) | WTFPL | Hugo Chargois |
+| [JetBrains Mono](https://github.com/JetBrains/JetBrainsMono) (`fonts/custom/JetBrainsMono-Regular.woff2`) | SIL Open Font License 1.1; see [`licenses/JetBrainsMono-OFL-LICENSE.txt`](licenses/JetBrainsMono-OFL-LICENSE.txt) | The JetBrains Mono Project Authors |
 
 ## Python dependencies
 

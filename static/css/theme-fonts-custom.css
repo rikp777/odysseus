@@ -1,0 +1,8 @@
+/* Custom theme font faces registered by the custom branch. */
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+  src: url('/static/fonts/custom/JetBrainsMono-Regular.woff2') format('woff2');
+}

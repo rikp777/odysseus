@@ -11,12 +11,14 @@ def test_custom_css_files_load_after_base_stylesheet():
     html = inject_custom_frontend_assets(raw_html)
 
     base = html.index('/static/style.css')
+    theme_fonts = html.index('/static/css/theme-fonts-custom.css')
     billing = html.index('/static/css/billing.css')
     model_picker = html.index('/static/css/model-picker-custom.css')
     logbook = html.index('/static/css/logbook.css')
 
-    assert base < billing < model_picker < logbook
+    assert base < theme_fonts < billing < model_picker < logbook
     assert CUSTOM_STYLESHEETS == (
+        "/static/css/theme-fonts-custom.css",
         "/static/css/billing.css",
         "/static/css/model-picker-custom.css",
         "/static/css/logbook.css",
@@ -27,6 +29,7 @@ def test_custom_css_files_load_after_base_stylesheet():
 
 def test_custom_css_blocks_stay_extracted_from_base_stylesheet():
     style = (ROOT / "static" / "style.css").read_text(encoding="utf-8")
+    theme_fonts = (ROOT / "static" / "css" / "theme-fonts-custom.css").read_text(encoding="utf-8")
     billing = (ROOT / "static" / "css" / "billing.css").read_text(encoding="utf-8")
     model_picker = (ROOT / "static" / "css" / "model-picker-custom.css").read_text(encoding="utf-8")
     logbook = (ROOT / "static" / "css" / "logbook.css").read_text(encoding="utf-8")
@@ -35,9 +38,12 @@ def test_custom_css_blocks_stay_extracted_from_base_stylesheet():
     assert "Custom model picker pricing styles moved to /static/css/model-picker-custom.css" in style
     assert "Custom Daily Logbook styles moved to /static/css/logbook.css" in style
 
+    assert "JetBrains Mono" in theme_fonts
+    assert "JetBrainsMono-Regular.woff2" in theme_fonts
     assert ".cloud-billing-toggle" in billing
     assert ".model-picker-wrap" in model_picker
     assert ".logbook-modal" in logbook
 
+    assert "JetBrainsMono-Regular.woff2" not in style
     assert ".cloud-billing-toggle" not in style
     assert ".logbook-modal {" not in style

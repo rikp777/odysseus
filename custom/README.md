@@ -93,6 +93,21 @@ Why:
 - expensive models should be harder to choose accidentally;
 - pricing belongs close to provider/model management, not only after a request.
 
+### Theme Font Options
+
+The custom build vendors JetBrains Mono under `static/fonts/custom/` so it
+appears in Theme -> Customize -> Font through the existing custom font
+discovery route.
+
+Why:
+
+- the personal theme can use the JetBrains-style coding font without relying on
+  a system-installed browser font;
+- custom font assets stay in the existing `static/fonts/custom/` extension
+  point;
+- the SIL Open Font License is kept in `licenses/` with the other third-party
+  notices.
+
 ### Daily Logbook Editor
 
 The Daily Logbook now defaults to a richer editor experience while still keeping

@@ -12,6 +12,7 @@ CUSTOM_HEAD_SCRIPTS = (
 )
 
 CUSTOM_STYLESHEETS = (
+    "/static/css/theme-fonts-custom.css",
     "/static/css/billing.css",
     "/static/css/model-picker-custom.css",
     "/static/css/logbook.css",
