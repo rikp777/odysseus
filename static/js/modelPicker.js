@@ -357,7 +357,7 @@ function _initModelPickerDropdown() {
       const nameSpan = document.createElement('span');
       nameSpan.className = 'mp-model-name model-switch-name';
       nameSpan.textContent = _middleTrim(m.display || m.mid);
-      nameSpan.title = m.mid || m.display || '';
+      nameSpan.title = m.display || m.mid || '';
       main.appendChild(nameSpan);
 
       const subLine = document.createElement('span');
@@ -368,12 +368,6 @@ function _initModelPickerDropdown() {
         epSpan.className = 'model-switch-ep';
         epSpan.textContent = _epDisplay;
         subLine.appendChild(epSpan);
-      }
-      if (m.stale) {
-        const badge = document.createElement('span');
-        badge.className = 'model-switch-stale-badge';
-        badge.textContent = 'offline';
-        subLine.appendChild(badge);
       }
       if (subLine.children.length) main.appendChild(subLine);
       row.appendChild(main);
@@ -780,6 +774,9 @@ export function updateModelPicker() {
   }
 
   const displayName = modelId ? modelId.split('/').pop() : 'Select model';
+  // The header indicator clips long names with ellipsis; show the full model
+  // identifier on hover (#1982). No tooltip on the "Select model" placeholder.
+  label.title = modelId || '';
   const logo = modelId ? providerLogo(modelId) : null;
   const pricing = modelId ? _getModelPricing(modelId, modelUrl, modelEndpointId) : null;
   const priceInfo = _formatModelPrice(pricing);

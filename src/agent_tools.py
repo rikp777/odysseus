@@ -23,33 +23,9 @@ from src.tool_types import (
     ToolBlock,
 )
 
+from src.tool_utils import _truncate, get_mcp_manager, set_mcp_manager
+
 logger = logging.getLogger(__name__)
-
-# MCP Manager (kept here — used by execution and agent_loop)
-# ---------------------------------------------------------------------------
-_mcp_manager = None
-
-def set_mcp_manager(manager):
-    """Set the global MCP manager instance."""
-    global _mcp_manager
-    _mcp_manager = manager
-
-def get_mcp_manager():
-    """Get the global MCP manager instance."""
-    return _mcp_manager
-
-# ---------------------------------------------------------------------------
-# Helpers (kept here — used by sub-modules)
-# ---------------------------------------------------------------------------
-def _truncate(text: str, limit: int = MAX_OUTPUT_CHARS) -> str:
-    # Callers treat the result as text, so always return a string: coerce a
-    # non-string (None -> "", otherwise str(...)) instead of returning it raw,
-    # which would just move the crash downstream.
-    if not isinstance(text, str):
-        text = "" if text is None else str(text)
-    if len(text) > limit:
-        return text[:limit] + f"\n... (truncated, {len(text)} chars total)"
-    return text
 
 # ---------------------------------------------------------------------------
 # Re-exports from sub-modules

@@ -17,15 +17,23 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
+from urllib.parse import urljoin, urlparse, urlunparse
 
 import httpx
+
+from src.constants import (
+    CONTACTS_FILE as _CONTACTS_FILE,
+    DATA_DIR as _DATA_DIR,
+    SETTINGS_FILE as _SETTINGS_FILE,
+)
+from src.url_safety import check_outbound_url
 
 
 logger = logging.getLogger(__name__)
 
-DATA_DIR = Path(__file__).resolve().parents[2] / "data"
-SETTINGS_FILE = DATA_DIR / "settings.json"
-LOCAL_CONTACTS_FILE = DATA_DIR / "contacts.json"
+DATA_DIR = Path(_DATA_DIR)
+SETTINGS_FILE = Path(_SETTINGS_FILE)
+LOCAL_CONTACTS_FILE = Path(_CONTACTS_FILE)
 
 _contact_cache: Dict[str, object] = {"contacts": [], "fetched_at": None}
 
@@ -63,7 +71,10 @@ def update_carddav_config(data: Dict) -> Dict[str, bool]:
     settings = load_settings()
     for key in ("carddav_url", "carddav_username", "carddav_password"):
         if key in data:
-            settings[key] = data[key]
+            if key == "carddav_url" and str(data[key] or "").strip():
+                settings[key] = validate_carddav_url(data[key])
+            else:
+                settings[key] = data[key]
     save_settings(settings)
     invalidate_cache()
     return {"success": True}
@@ -72,6 +83,21 @@ def update_carddav_config(data: Dict) -> Dict[str, bool]:
 def carddav_configured(cfg: Optional[Dict] = None) -> bool:
     cfg = cfg or get_carddav_config()
     return bool((cfg.get("url") or "").strip())
+
+
+def validate_carddav_url(url: str) -> str:
+    cleaned = (url if isinstance(url, str) else "").strip().rstrip("/")
+    ok, reason = check_outbound_url(
+        cleaned,
+        block_private=os.getenv("CARDDAV_BLOCK_PRIVATE_IPS", "false").lower() == "true",
+    )
+    if not ok:
+        raise ValueError(f"Rejected CardDAV URL: {reason}")
+    return cleaned
+
+
+def carddav_base_url(cfg: Dict) -> str:
+    return validate_carddav_url(cfg.get("url") or "")
 
 
 def invalidate_cache() -> None:
@@ -215,13 +241,14 @@ def build_vcard(
 
 
 def _abs_url(href: str) -> str:
-    from urllib.parse import urlparse, urlunparse
-
-    if href.startswith("http://") or href.startswith("https://"):
-        return href
     cfg = get_carddav_config()
-    parsed = urlparse(cfg["url"])
-    return urlunparse((parsed.scheme, parsed.netloc, href, "", "", ""))
+    base = carddav_base_url(cfg)
+    base_p = urlparse(base)
+    joined = urljoin(base.rstrip("/") + "/", href or "")
+    joined_p = urlparse(joined)
+    if (joined_p.scheme, joined_p.netloc) != (base_p.scheme, base_p.netloc):
+        joined = urlunparse((base_p.scheme, base_p.netloc, joined_p.path or "/", "", joined_p.query, ""))
+    return validate_carddav_url(joined)
 
 
 _ADDRESSBOOK_QUERY = (
@@ -282,6 +309,7 @@ def fetch_contacts(force: bool = False) -> List[Dict]:
         return contacts
 
     try:
+        cfg["url"] = carddav_base_url(cfg)
         auth = (cfg["username"], cfg["password"]) if cfg.get("username") else None
         contacts = _fetch_via_report(cfg, auth)
         if contacts is None:
@@ -316,7 +344,7 @@ def _vcard_url(uid: str) -> str:
     from urllib.parse import quote
 
     cfg = get_carddav_config()
-    return cfg["url"].rstrip("/") + "/" + quote(uid, safe="") + ".vcf"
+    return carddav_base_url(cfg) + "/" + quote(uid, safe="") + ".vcf"
 
 
 def _resolve_resource_url(uid: str) -> str:
@@ -348,8 +376,8 @@ def create_contact(name: str, email: str) -> bool:
         return True
 
     contact_uid = str(uuid.uuid4())
-    url = cfg["url"].rstrip("/") + "/" + contact_uid + ".vcf"
     try:
+        url = carddav_base_url(cfg) + "/" + contact_uid + ".vcf"
         response = httpx.put(
             url,
             data=build_vcard(name, email, contact_uid).encode("utf-8"),
@@ -465,6 +493,12 @@ def import_vcards(text: str) -> Dict:
             save_local_contacts(contacts)
         return {"imported": imported, "failed": 0, "total": len(parsed)}
 
+    try:
+        base_url = carddav_base_url(cfg)
+    except ValueError as exc:
+        logger.warning("CardDAV import URL rejected: %s", exc)
+        return {"imported": 0, "failed": 0, "total": 0, "error": str(exc)}
+
     auth = (cfg["username"], cfg["password"]) if cfg.get("username") else None
     raw = (text or "").replace("\r\n", "\n").replace("\r", "\n")
     blocks = []
@@ -490,7 +524,7 @@ def import_vcards(text: str) -> Dict:
             block = block.replace("BEGIN:VCARD", "BEGIN:VCARD\nVERSION:4.0", 1)
         try:
             response = httpx.put(
-                cfg["url"].rstrip("/") + "/" + quote(uid, safe="") + ".vcf",
+                base_url + "/" + quote(uid, safe="") + ".vcf",
                 data=(block.replace("\n", "\r\n") + "\r\n").encode("utf-8"),
                 headers={"Content-Type": "text/vcard; charset=utf-8"},
                 auth=auth,

@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Query, Response
+import os
+from urllib.parse import quote, urljoin, urlparse, urlunparse
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 
 from core.middleware import require_admin
 from src.contacts import service as contacts_service
+from src.url_safety import check_outbound_url
 
 
 # Backwards-compatible aliases for older in-process callers. New code should
@@ -18,6 +22,37 @@ _get_carddav_config = contacts_service.get_carddav_config
 _parse_vcards = contacts_service.parse_vcards
 
 
+def _validate_carddav_url(url: str) -> str:
+    cleaned = (url if isinstance(url, str) else "").strip().rstrip("/")
+    ok, reason = check_outbound_url(
+        cleaned,
+        block_private=os.getenv("CARDDAV_BLOCK_PRIVATE_IPS", "false").lower() == "true",
+    )
+    if not ok:
+        raise ValueError(f"Rejected CardDAV URL: {reason}")
+    return cleaned
+
+
+def _carddav_base_url(cfg: dict) -> str:
+    return _validate_carddav_url(cfg.get("url") or "")
+
+
+def _abs_url(href: str) -> str:
+    cfg = _get_carddav_config()
+    base = _carddav_base_url(cfg)
+    base_p = urlparse(base)
+    joined = urljoin(base.rstrip("/") + "/", href or "")
+    joined_p = urlparse(joined)
+    if (joined_p.scheme, joined_p.netloc) != (base_p.scheme, base_p.netloc):
+        joined = urlunparse((base_p.scheme, base_p.netloc, joined_p.path or "/", "", joined_p.query, ""))
+    return _validate_carddav_url(joined)
+
+
+def _vcard_url(uid: str) -> str:
+    cfg = _get_carddav_config()
+    return _carddav_base_url(cfg) + "/" + quote(uid, safe="") + ".vcf"
+
+
 def setup_contacts_routes():
     router = APIRouter(prefix="/api/contacts", tags=["contacts"])
 
@@ -28,28 +63,11 @@ def setup_contacts_routes():
 
     @router.get("/search")
     async def search_contacts(q: str = Query(""), _admin: str = Depends(require_admin)):
-        term = (q or "").strip().lower()
-        if not term:
-            return {"results": []}
-        results = []
-        for contact in _fetch_contacts():
-            if term in (contact.get("name") or "").lower():
-                results.append(contact)
-                continue
-            if any(term in (email or "").lower() for email in contact.get("emails") or []):
-                results.append(contact)
-        return {"results": results[:10]}
+        return {"results": contacts_service.search_contacts(q)}
 
     @router.post("/add")
     async def add_contact(data: dict, _admin: str = Depends(require_admin)):
-        email = (data.get("email") or "").strip()
-        name = (data.get("name") or "").strip() or (email.split("@")[0] if email else "")
-        if not email:
-            return {"success": False, "error": "Email required"}
-        for contact in _fetch_contacts():
-            if email.lower() in [e.lower() for e in contact.get("emails", [])]:
-                return {"success": True, "message": "Already exists", "contact": contact}
-        return {"success": _create_contact(name, email)}
+        return contacts_service.add_contact(data.get("name") or "", data.get("email") or "")
 
     @router.post("/import")
     async def import_contacts(data: dict, _admin: str = Depends(require_admin)):
@@ -81,7 +99,10 @@ def setup_contacts_routes():
 
     @router.put("/config")
     async def update_config(data: dict, _admin: str = Depends(require_admin)):
-        return contacts_service.update_carddav_config(data)
+        try:
+            return contacts_service.update_carddav_config(data)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
 
     @router.delete("/clear")
     async def clear_contacts(_admin: str = Depends(require_admin)):
