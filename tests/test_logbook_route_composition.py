@@ -27,3 +27,18 @@ def test_logbook_router_keeps_core_custom_routes_composed():
     assert "GET" in methods["/api/logbook/people"]
     assert "GET" in methods["/api/logbook/locations"]
     assert "GET" in methods["/api/logbook/connections"]
+
+
+def test_logbook_router_composes_people_and_contact_routes():
+    methods = _route_methods(setup_logbook_routes())
+
+    assert "GET" in methods["/api/logbook/contacts/candidates"]
+    assert "GET" in methods["/api/logbook/people"]
+    assert "POST" in methods["/api/logbook/people"]
+    assert "GET" in methods["/api/logbook/people/{person_id}"]
+    assert "PUT" in methods["/api/logbook/people/{person_id}"]
+    assert "GET" in methods["/api/logbook/people/{person_id}/entries"]
+    assert "POST" in methods["/api/logbook/people/{person_id}/facts"]
+    assert "POST" in methods["/api/logbook/people/{person_id}/link-contact"]
+    assert "POST" in methods["/api/logbook/people/{person_id}/unlink-contact"]
+    assert "POST" in methods["/api/logbook/people/merge"]
