@@ -29,6 +29,10 @@ import {
   entityAutocompleteContext as _entityAutocompleteContext,
   entityAutocompleteMatches as _entityAutocompleteMatches,
 } from './logbook/autocomplete.js';
+import {
+  bindAIPanelEvents as _bindAIPanelEvents,
+  renderAIPanelHtml as _renderAIPanelHtml,
+} from './logbook/ai-panel.js';
 import { MODAL_ID, MOODS, QUICK_DATA, SAVE_DELAY } from './logbook/constants.js';
 import {
   currentEntitiesFromContent as _currentEntitiesFromContentForLists,
@@ -120,33 +124,6 @@ let _revisionPreview = null;
 let _revisionPreviewBusy = false;
 let _selectionMenu = null;
 let _entityLinkChooser = null;
-
-const AI_MODE_GROUPS = [
-  {
-    label: 'Write',
-    items: [
-      { mode: 'structure_day', label: 'Draft', detail: 'Shape today', icon: 'book', primary: true },
-      { mode: 'clean_spelling', label: 'Spelling', detail: 'Keep voice', icon: 'bold' },
-      { mode: 'ask_questions', label: 'Questions', detail: 'Find gaps', icon: 'quote' },
-    ],
-  },
-  {
-    label: 'Review',
-    items: [
-      { mode: 'summarize', label: 'Summary', detail: 'Short recap', icon: 'list' },
-      { mode: 'reflect', label: 'Reflect', detail: 'Gentle note', icon: 'quote' },
-    ],
-  },
-  {
-    label: 'Extract',
-    items: [
-      { mode: 'extract_people', label: 'People', detail: 'Mentions', icon: 'person' },
-      { mode: 'extract_locations', label: 'Places', detail: 'Locations', icon: 'location' },
-      { mode: 'extract_all', label: 'Detect', detail: 'Links and data', icon: 'link' },
-      { mode: 'extract_facts', label: 'Facts', detail: 'Saved entry', icon: 'food', facts: true },
-    ],
-  },
-];
 let _activeEditorToken = null;
 let _floatingEntityCard = null;
 let _floatingEntityCardSource = null;
@@ -1350,208 +1327,27 @@ function _connectionsHtml() {
   `;
 }
 
-function _aiModeMeta(mode) {
-  for (const group of AI_MODE_GROUPS) {
-    const found = group.items.find(item => item.mode === mode);
-    if (found) return found;
-  }
-  return { mode, label: mode.replace(/_/g, ' '), detail: '', icon: 'person' };
-}
-
-function _aiMetricHtml(label, value, meta = '') {
-  return `
-    <div class="logbook-ai-metric">
-      <span>${_e(label)}</span>
-      <strong>${_e(value)}</strong>
-      ${meta ? `<em>${_e(meta)}</em>` : ''}
-    </div>
-  `;
-}
-
-function _aiUsageMeterHtml() {
-  const estimate = _aiEstimateData();
-  const actual = _aiActualUsageData();
-  const usage = _aiUsageData();
-  const billing = usage.billing || {};
-  const day = usage.day || {};
-  const month = usage.month || {};
-  const estimatedInput = estimate?.input_tokens ?? _estimateEntryTokens(_entry?.content || '');
-  const estimatedOutput = estimate?.max_output_tokens ?? 0;
-  const estimatedTotal = estimate?.total_tokens ?? (estimatedInput + estimatedOutput);
-  const estimateCost = estimate?.cost || {};
-  const runCost = billing.enabled
-    ? _formatMoneyDisplay(estimateCost.display, estimateCost.known ? '$0.00' : 'Unknown')
-    : 'Billing off';
-  const billingLabel = billing.enabled
-    ? (billing.usage_ledger_enabled === false ? 'Billing on, ledger off' : 'Billing on')
-    : 'Billing off';
-  const dayCost = billing.enabled ? _formatMoneyDisplay(day.display, '$0.00') : '';
-  const monthCost = billing.enabled ? _formatMoneyDisplay(month.display, '$0.00') : '';
-  const actualMeta = actual?.total_tokens
-    ? `${_formatCompactTokens(actual.total_tokens)} last run${actual.cost?.display && billing.enabled ? ` | ${actual.cost.display}` : ''}`
-    : (_aiEstimateBusy ? 'Updating...' : 'Ready');
-  return `
-    <div class="logbook-ai-meter">
-      <div class="logbook-ai-meter-head">
-        <span>Usage</span>
-        <strong>${_e(billingLabel)}</strong>
-      </div>
-      <div class="logbook-ai-meter-grid">
-        ${_aiMetricHtml('Prompt', _formatCompactTokens(estimatedInput), 'input')}
-        ${_aiMetricHtml('Output cap', estimatedOutput ? _formatCompactTokens(estimatedOutput) : '0', 'max')}
-        ${_aiMetricHtml('Run total', _formatCompactTokens(estimatedTotal), actualMeta)}
-        ${_aiMetricHtml('Run cost', runCost, estimateCost.known || !billing.enabled ? '' : 'pricing missing')}
-      </div>
-      <div class="logbook-ai-ledger">
-        <span><strong>Today</strong>${_e(_formatCompactTokens(day.total_tokens || 0))} tokens${dayCost ? ` | ${_e(dayCost)}` : ''}</span>
-        <span><strong>Month</strong>${_e(_formatCompactTokens(month.total_tokens || 0))} tokens${monthCost ? ` | ${_e(monthCost)}` : ''}</span>
-      </div>
-    </div>
-  `;
-}
-
-function _aiModeGroupsHtml(disabled, disabledTitle) {
-  return AI_MODE_GROUPS.map(group => `
-    <div class="logbook-ai-command-group">
-      <div class="logbook-ai-command-title">${_e(group.label)}</div>
-      <div class="logbook-ai-command-grid">
-        ${group.items.map(item => {
-          const active = _aiSelectedMode === item.mode;
-          const primary = item.primary ? ' primary' : '';
-          const activeCls = active ? ' active' : '';
-          return `
-            <button type="button" class="logbook-ai-command${primary}${activeCls}" data-ai-mode="${_e(item.mode)}"${disabled}${disabledTitle}>
-              <span class="logbook-ai-command-icon">${_aiIcon(item.icon, 14)}</span>
-              <span class="logbook-ai-command-copy">
-                <strong>${_e(item.label)}</strong>
-                <em>${_e(item.detail)}</em>
-              </span>
-            </button>
-          `;
-        }).join('')}
-      </div>
-    </div>
-  `).join('');
-}
-
-function _aiRunControlsHtml(disabled, disabledTitle) {
-  const selected = _aiModeMeta(_aiSelectedMode);
-  const isFactsMode = _aiSelectedMode === 'extract_facts';
-  const label = isFactsMode ? 'Run fact extraction' : 'Run AI help';
-  const detail = isFactsMode ? 'Uses the saved entry' : `${selected.label} | ${selected.detail}`;
-  return `
-    <div class="logbook-ai-runbar">
-      <div class="logbook-ai-runbar-copy">
-        <span>Selected</span>
-        <strong>${_e(selected.label)}</strong>
-        <em>${_e(detail)}</em>
-      </div>
-      <button type="button" class="cal-btn cal-btn-primary logbook-ai-run-btn" id="logbook-run-ai"${disabled}${disabledTitle}>${_e(label)}</button>
-    </div>
-  `;
-}
-
-function _aiRunReceiptHtml() {
-  const usage = _aiPreview?.usage;
-  if (!usage) return '';
-  const actual = usage.actual || {};
-  const billing = usage.billing || {};
-  const mode = _aiModeMeta(usage.mode || _aiSelectedMode);
-  const state = usage.fallback ? 'Local fallback' : usage.cached ? 'Cached result' : 'Last run';
-  const cost = billing.enabled
-    ? _formatMoneyDisplay(actual.cost?.display, actual.cost?.known ? '$0.00' : 'Unknown cost')
-    : 'Billing off';
-  const source = actual.usage_source ? ` | ${actual.usage_source}` : '';
-  return `
-    <div class="logbook-ai-receipt">
-      <div>
-        <strong>${_e(state)}</strong>
-        <span>${_e(mode.label)}${_e(source)}</span>
-      </div>
-      <div>
-        <strong>${_e(_formatCompactTokens(actual.total_tokens || 0))}</strong>
-        <span>${_e(cost)}</span>
-      </div>
-    </div>
-  `;
-}
-
 function _aiHtml() {
-  const aiAvailable = _aiStatus?.available === true;
-  const disabled = aiAvailable ? '' : ' disabled aria-disabled="true"';
-  const disabledTitle = aiAvailable ? '' : ` title="${_e(_aiStatus?.reason || 'No LLM provider configured')}"`;
-  const preview = _aiPreview
-    ? _aiPreviewHtml()
-    : aiAvailable
-      ? '<div class="logbook-empty">AI previews appear here.</div>'
-      : '<div class="logbook-empty">Manual writing still works. Configure a default or utility LLM provider to enable AI help.</div>';
-  return `
-    <div class="logbook-section-head logbook-ai-head">
-      <h5>AI help</h5>
-      ${aiAvailable ? `<span class="logbook-ai-model" title="${_e(_aiStatus.model || '')}">${_e(_aiStatus.model || 'AI ready')}</span>` : ''}
-    </div>
-    <div class="logbook-ai-control-box">
-      ${aiAvailable ? _aiUsageMeterHtml() : `<div class="logbook-ai-disabled">AI help is off: ${_e(_aiStatus?.reason || 'No LLM provider configured')}.</div>`}
-      <div class="logbook-ai-actions">${_aiModeGroupsHtml(disabled, disabledTitle)}</div>
-      ${aiAvailable ? _aiRunControlsHtml(disabled, disabledTitle) : ''}
-      ${_aiBusy ? '<div class="logbook-ai-status">Thinking...</div>' : ''}
-      ${_aiError ? `<div class="logbook-ai-error">${_e(_aiError)}</div>` : ''}
-    </div>
-    <section class="logbook-ai-results" aria-label="AI results">
-      <div class="logbook-section-head"><h5>Results</h5></div>
-      ${_aiRunReceiptHtml()}
-      <div id="logbook-ai-preview" class="logbook-ai-preview">${preview}</div>
-    </section>
-  `;
-}
-
-function _aiPreviewHtml() {
-  const p = _aiPreview || {};
-  const warning = p.warning ? `<div class="logbook-ai-warning">${_e(p.warning)}</div>` : '';
-  const questions = (p.questions || []).map(q => `<li>${_e(q)}</li>`).join('');
-  const data = (p.datapoint_suggestions || []).map(d => `
-    <div class="logbook-suggestion-row">
-      <strong>${_e(d.label || d.key || 'Data')}</strong>
-      <span>${_e(d.value_text || d.value_number || '')}${d.unit ? ` ${_e(d.unit)}` : ''}</span>
-    </div>
-  `).join('');
-  const people = (p.people_suggestions || []).map((person, index) => `
-    <div class="logbook-suggestion-row">
-      <strong>${_e(person.display_name || person.surface_text || 'Person')}</strong>
-      <span>${_e(_personSuggestionMeta(person))}</span>
-      <button type="button" class="cal-btn" data-add-ai-person="${index}">${_e(_personSuggestionActionLabel(person))}</button>
-    </div>
-  `).join('');
-  const locations = (p.location_suggestions || []).map((loc, index) => `
-    <div class="logbook-suggestion-row">
-      <strong>${_e(loc.display_name || loc.surface_text || 'Place')}</strong>
-      <span>${_e(loc.reason || 'Suggested from entry')}</span>
-      <button type="button" class="cal-btn" data-add-ai-location="${index}">Add</button>
-    </div>
-  `).join('');
-  const connections = (p.connection_suggestions || []).map(c => `
-    <div class="logbook-suggestion-row">
-      <strong>${_e(c.person_a || 'Person')} + ${_e(c.person_b || 'Person')}</strong>
-      <span>${_e(c.description || c.connection_type || 'Possible connection')}</span>
-    </div>
-  `).join('');
-  return `
-    ${warning}
-    ${p.preview_content ? `<div class="logbook-preview-block"><div class="logbook-subtitle">Preview</div><div class="logbook-rendered-text">${_renderLogbookText(p.preview_content)}</div></div>` : ''}
-    ${p.summary ? `<div class="logbook-preview-block"><div class="logbook-subtitle">Summary</div><p>${_e(p.summary)}</p></div>` : ''}
-    ${p.reflection ? `<div class="logbook-preview-block"><div class="logbook-subtitle">Reflection</div><p>${_e(p.reflection)}</p></div>` : ''}
-    ${questions ? `<div class="logbook-preview-block"><div class="logbook-subtitle">Questions</div><ul>${questions}</ul></div>` : ''}
-    ${p.mood_suggestion ? `<div class="logbook-preview-block"><div class="logbook-subtitle">Mood</div><p>${_e(p.mood_suggestion.label || '')} ${p.mood_suggestion.score ? `(${_e(p.mood_suggestion.score)})` : ''}</p><button type="button" class="cal-btn" id="logbook-apply-ai-mood">Use mood</button></div>` : ''}
-    ${data ? `<div class="logbook-preview-block"><div class="logbook-subtitle">Data suggestions</div>${data}<button type="button" class="cal-btn" id="logbook-add-ai-data">Add data</button></div>` : ''}
-    ${people ? `<div class="logbook-preview-block"><div class="logbook-subtitle">People suggestions</div>${people}</div>` : ''}
-    ${locations ? `<div class="logbook-preview-block"><div class="logbook-subtitle">Place suggestions</div>${locations}</div>` : ''}
-    ${connections ? `<div class="logbook-preview-block"><div class="logbook-subtitle">Connection suggestions</div>${connections}</div>` : ''}
-    <div class="logbook-preview-actions">
-      ${p.preview_content ? '<button type="button" class="cal-btn cal-btn-primary" id="logbook-apply-ai">Apply</button>' : ''}
-      <button type="button" class="cal-btn" id="logbook-copy-ai">Copy</button>
-      <button type="button" class="cal-btn" id="logbook-clear-ai">Cancel</button>
-    </div>
-  `;
+  return _renderAIPanelHtml({
+    actual: _aiActualUsageData(),
+    aiStatus: _aiStatus,
+    busy: _aiBusy,
+    entryContent: _entry?.content || '',
+    error: _aiError,
+    escapeHtml: _e,
+    estimate: _aiEstimateData(),
+    estimateBusy: _aiEstimateBusy,
+    estimateEntryTokens: _estimateEntryTokens,
+    formatCompactTokens: _formatCompactTokens,
+    formatMoneyDisplay: _formatMoneyDisplay,
+    icon: _aiIcon,
+    personSuggestionActionLabel: _personSuggestionActionLabel,
+    personSuggestionMeta: _personSuggestionMeta,
+    preview: _aiPreview,
+    renderLogbookText: _renderLogbookText,
+    selectedMode: _aiSelectedMode,
+    usage: _aiUsageData(),
+  });
 }
 
 async function _toggleHistory() {
@@ -2281,28 +2077,24 @@ function _bindLocationsPanelEvents() {
 }
 
 function _bindAIEvents(root = document) {
-  root.querySelectorAll('[data-ai-mode]').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const mode = btn.dataset.aiMode || 'structure_day';
-      _selectAIMode(mode);
-    });
+  _bindAIPanelEvents(root, {
+    addData: _addAIData,
+    applyContent: _applyAIContent,
+    applyMood: _applyAIMood,
+    bindEntityLinks: _bindEntityLinkEvents,
+    bindSuggestions: _bindAISuggestionEvents,
+    clearAI: () => {
+      _aiPreview = null;
+      _aiError = '';
+      _renderAIAffectedPanels();
+    },
+    copyAI: _copyAI,
+    extractFacts: _extractFacts,
+    onError: _showError,
+    runAI: _runAI,
+    selectedMode: () => _aiSelectedMode,
+    selectMode: _selectAIMode,
   });
-  root.querySelector('#logbook-run-ai')?.addEventListener('click', () => {
-    if (_aiSelectedMode === 'extract_facts') _extractFacts().catch(_showError);
-    else _runAI(_aiSelectedMode).catch(_showError);
-  });
-  root.querySelector('#logbook-extract-facts')?.addEventListener('click', () => _extractFacts().catch(_showError));
-  root.querySelector('#logbook-apply-ai')?.addEventListener('click', () => _applyAIContent());
-  root.querySelector('#logbook-copy-ai')?.addEventListener('click', () => _copyAI());
-  root.querySelector('#logbook-clear-ai')?.addEventListener('click', () => {
-    _aiPreview = null;
-    _aiError = '';
-    _renderAIAffectedPanels();
-  });
-  root.querySelector('#logbook-apply-ai-mood')?.addEventListener('click', () => _applyAIMood());
-  root.querySelector('#logbook-add-ai-data')?.addEventListener('click', () => _addAIData());
-  _bindAISuggestionEvents(root);
-  _bindEntityLinkEvents(root);
 }
 
 function _bindAISuggestionEvents(root = document) {
