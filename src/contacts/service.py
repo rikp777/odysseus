@@ -53,10 +53,14 @@ def save_settings(settings: Dict) -> None:
 
 def get_carddav_config() -> Dict[str, str]:
     settings = load_settings()
+    password = settings.get("carddav_password", os.environ.get("CARDDAV_PASSWORD", ""))
+    if password and "carddav_password" in settings:
+        from src.secret_storage import decrypt
+        password = decrypt(password)
     return {
         "url": settings.get("carddav_url", os.environ.get("CARDDAV_URL", "")),
         "username": settings.get("carddav_username", os.environ.get("CARDDAV_USERNAME", "")),
-        "password": settings.get("carddav_password", os.environ.get("CARDDAV_PASSWORD", "")),
+        "password": password,
     }
 
 
@@ -74,7 +78,11 @@ def update_carddav_config(data: Dict) -> Dict[str, bool]:
             if key == "carddav_url" and str(data[key] or "").strip():
                 settings[key] = validate_carddav_url(data[key])
             else:
-                settings[key] = data[key]
+                value = data[key]
+                if key == "carddav_password" and value:
+                    from src.secret_storage import encrypt
+                    value = encrypt(str(value))
+                settings[key] = value
     save_settings(settings)
     invalidate_cache()
     return {"success": True}
@@ -118,11 +126,13 @@ def normalize_contact(contact: Dict) -> Dict:
     name = str(contact.get("name") or "").strip()
     if not name and emails:
         name = emails[0].split("@")[0]
+    address = str(contact.get("address") or "").strip()
     return {
         "uid": str(contact.get("uid") or uuid.uuid4()),
         "name": name,
         "emails": emails,
         "phones": phones,
+        "address": address,
     }
 
 
@@ -180,7 +190,7 @@ def parse_vcards(text: str) -> List[Dict]:
     for block in re.split(r"BEGIN:VCARD", text or ""):
         if not block.strip():
             continue
-        contact = {"name": "", "emails": [], "phones": [], "uid": ""}
+        contact = {"name": "", "emails": [], "phones": [], "uid": "", "address": ""}
         for raw_line in block.split("\n"):
             line = raw_line.strip()
             name_part = re.sub(r"^[A-Za-z0-9-]+\.", "", line, count=1)
@@ -194,6 +204,10 @@ def parse_vcards(text: str) -> List[Dict]:
                 phone = _vunesc(name_part.split(":", 1)[1])
                 if phone and phone not in contact["phones"]:
                     contact["phones"].append(phone)
+            elif name_part.startswith("ADR") and ":" in name_part:
+                raw = name_part.split(":", 1)[1]
+                parts = [_vunesc(part).strip() for part in raw.split(";")]
+                contact["address"] = ", ".join(part for part in parts if part)
             elif name_part.startswith("UID:"):
                 contact["uid"] = _vunesc(name_part[4:])
         if contact["name"] or contact["emails"]:
@@ -218,6 +232,7 @@ def build_vcard(
     uid: Optional[str] = None,
     emails: Optional[List[str]] = None,
     phones: Optional[List[str]] = None,
+    address: Optional[str] = None,
 ) -> str:
     uid = uid or str(uuid.uuid4())
     email_list = [e.strip() for e in (emails if emails is not None else ([email] if email else [])) if e and e.strip()]
@@ -236,6 +251,9 @@ def build_vcard(
         lines.append(f"EMAIL;PREF=1:{_vesc(item)}" if index == 0 else f"EMAIL:{_vesc(item)}")
     for phone in phone_list:
         lines.append(f"TEL:{_vesc(phone)}")
+    addr = (address or "").strip()
+    if addr:
+        lines.append(f"ADR:;;{_vesc(addr)};;;;")
     lines.append("END:VCARD")
     return "\r\n".join(lines) + "\r\n"
 
@@ -364,14 +382,14 @@ def _resolve_resource_url(uid: str) -> str:
     return lookup() or _vcard_url(uid)
 
 
-def create_contact(name: str, email: str) -> bool:
+def create_contact(name: str, email: str, address: str = "") -> bool:
     cfg = get_carddav_config()
     if not carddav_configured(cfg):
         contacts = load_local_contacts()
         email_l = (email or "").strip().lower()
         if email_l and any(email_l in [e.lower() for e in c.get("emails", [])] for c in contacts):
             return True
-        contacts.append(normalize_contact({"name": name, "emails": [email]}))
+        contacts.append(normalize_contact({"name": name, "emails": [email], "address": address}))
         save_local_contacts(contacts)
         return True
 
@@ -380,7 +398,7 @@ def create_contact(name: str, email: str) -> bool:
         url = carddav_base_url(cfg) + "/" + contact_uid + ".vcf"
         response = httpx.put(
             url,
-            data=build_vcard(name, email, contact_uid).encode("utf-8"),
+            data=build_vcard(name, email, contact_uid, address=address).encode("utf-8"),
             headers={"Content-Type": "text/vcard; charset=utf-8"},
             auth=(cfg["username"], cfg["password"]) if cfg.get("username") else None,
             timeout=10,
@@ -406,7 +424,7 @@ def add_contact(name: str, email: str) -> Dict:
     return {"success": create_contact(name, email)}
 
 
-def update_contact(uid: str, name: str, emails: List[str], phones: List[str]) -> bool:
+def update_contact(uid: str, name: str, emails: List[str], phones: List[str], address: str = "") -> bool:
     cfg = get_carddav_config()
     if not carddav_configured(cfg):
         contacts = load_local_contacts()
@@ -414,19 +432,20 @@ def update_contact(uid: str, name: str, emails: List[str], phones: List[str]) ->
         out = []
         for contact in contacts:
             if contact.get("uid") == uid:
-                out.append(normalize_contact({"uid": uid, "name": name, "emails": emails, "phones": phones}))
+                addr = address if address else contact.get("address", "")
+                out.append(normalize_contact({"uid": uid, "name": name, "emails": emails, "phones": phones, "address": addr}))
                 found = True
             else:
                 out.append(contact)
         if not found:
-            out.append(normalize_contact({"uid": uid, "name": name, "emails": emails, "phones": phones}))
+            out.append(normalize_contact({"uid": uid, "name": name, "emails": emails, "phones": phones, "address": address}))
         save_local_contacts(out)
         return True
 
     try:
         response = httpx.put(
             _resolve_resource_url(uid),
-            data=build_vcard(name, uid=uid, emails=emails, phones=phones).encode("utf-8"),
+            data=build_vcard(name, uid=uid, emails=emails, phones=phones, address=address).encode("utf-8"),
             headers={"Content-Type": "text/vcard; charset=utf-8"},
             auth=(cfg["username"], cfg["password"]) if cfg.get("username") else None,
             timeout=10,
@@ -606,8 +625,8 @@ def import_csv_contacts(text: str) -> Dict:
 
 
 def import_contacts(data: Dict) -> Dict:
-    text = data.get("vcf") or data.get("text") or ""
-    csv_text = data.get("csv") or ""
+    text = str(data.get("vcf") or data.get("text") or "")
+    csv_text = str(data.get("csv") or "")
     if text.strip():
         if "BEGIN:VCARD" not in text.upper():
             return {"success": False, "error": "No vCard data found"}
@@ -627,6 +646,7 @@ def contacts_to_vcf(contacts: List[Dict]) -> str:
             uid=contact.get("uid") or str(uuid.uuid4()),
             emails=contact.get("emails") or [],
             phones=contact.get("phones") or [],
+            address=contact.get("address") or "",
         )
         for contact in contacts
     )
@@ -646,4 +666,3 @@ def contacts_to_csv(contacts: List[Dict]) -> str:
                 phones[index] if index < len(phones) else "",
             ])
     return out.getvalue()
-

@@ -84,6 +84,13 @@ def test_direct_billing_intent_argument_rules():
     assert "provider" not in provider_breakdown.args
 
 
+def test_explicit_web_search_promotes_to_agent():
+    assert message_needs_tools("use web search and find a recipe for chocolate chip cookies")
+    assert message_needs_tools("do a web search for the best chocolate chip cookies")
+    assert message_needs_tools("search the web for current RTX 3090 prices")
+    assert classify_tool_intent("use web search and find a recipe").category == "web"
+
+
 def test_explanatory_calendar_questions_stay_plain_chat():
     assert not message_needs_tools("How do I add an entry to my calendar?")
     assert not message_needs_tools("What about the built-in Odysseus calendar, is that linked to email?")
