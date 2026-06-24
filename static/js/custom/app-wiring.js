@@ -53,6 +53,19 @@ function bindLogbookLaunchers() {
   });
 }
 
+function installQuickCaptureShortcut() {
+  document.addEventListener('keydown', event => {
+    // Alt+L — open logbook from anywhere (skip if typing in an input/textarea/contenteditable)
+    if (!event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+    if (event.key !== 'l' && event.key !== 'L') return;
+    const tag = document.activeElement?.tagName?.toLowerCase();
+    const editable = document.activeElement?.isContentEditable;
+    if (tag === 'input' || tag === 'textarea' || tag === 'select' || editable) return;
+    event.preventDefault();
+    logbookModule?.openLogbook?.();
+  });
+}
+
 function installCustomRouteOpeners() {
   const openers = {
     '/logbook/atlas': () => logbookAtlasModule?.openAtlas?.(),
@@ -105,6 +118,7 @@ export function installCustomAppWiring() {
   installed = true;
 
   bindLogbookLaunchers();
+  installQuickCaptureShortcut();
   installCustomRouteOpeners();
   installCustomVisibilityHooks();
   setTimeout(() => {

@@ -36,7 +36,7 @@ import {
   bindAIPanelEvents as _bindAIPanelEvents,
   renderAIPanelHtml as _renderAIPanelHtml,
 } from './logbook/ai-panel.js';
-import { MODAL_ID, MOODS, QUICK_DATA, SAVE_DELAY } from './logbook/constants.js';
+import { LOGBOOK_TEMPLATES, MODAL_ID, MOODS, QUICK_DATA, SAVE_DELAY } from './logbook/constants.js';
 import {
   currentEntitiesFromContent as _currentEntitiesFromContentForLists,
   entityListSignature as _entityListSignature,
@@ -1112,6 +1112,12 @@ function _writeMoreMenuHtml({ richActive, historyDisabled } = {}) {
           <button type="button" class="cal-btn ${_historyOpen ? 'active' : ''}" id="logbook-history-toggle"${historyDisabled}>History</button>
         </div>
       </div>
+      <div class="logbook-more-group">
+        <div class="logbook-more-label">Templates</div>
+        <div class="logbook-more-row logbook-templates-row">
+          ${LOGBOOK_TEMPLATES.map(t => `<button type="button" class="cal-btn logbook-template-btn" data-logbook-template="${_e(t.key)}" title="Insert ${_e(t.label)} template">${_e(t.label)}</button>`).join('')}
+        </div>
+      </div>
     </div>
   `;
 }
@@ -1508,6 +1514,18 @@ function _backToWrite() {
   editor?.focus();
 }
 
+function _applyTemplate(key) {
+  const tpl = LOGBOOK_TEMPLATES.find(t => t.key === key);
+  if (!tpl || !_entry) return;
+  const existing = (_entry.content || '').trim();
+  _entry.content = existing ? `${existing}\n\n---\n\n${tpl.content}` : tpl.content;
+  _writeToolsOpen = false;
+  _render();
+  const editor = document.getElementById(_editorMode === 'raw' ? 'logbook-content' : 'logbook-rich-content');
+  editor?.focus();
+  _scheduleSave();
+}
+
 async function _toggleHistory() {
   _syncEntryFromEditor();
   _writeToolsOpen = false;
@@ -1642,6 +1660,10 @@ function _bindBodyEvents() {
       const next = document.getElementById(_editorMode === 'raw' ? 'logbook-content' : 'logbook-rich-content');
       next?.focus();
     });
+  });
+
+  document.querySelectorAll('[data-logbook-template]').forEach(btn => {
+    btn.addEventListener('click', () => _applyTemplate(btn.dataset.logbookTemplate));
   });
 
   document.querySelectorAll('[data-logbook-format]').forEach(btn => {

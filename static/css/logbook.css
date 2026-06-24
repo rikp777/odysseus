@@ -461,6 +461,15 @@
   min-height: 30px;
 }
 
+.logbook-templates-row {
+  gap: 6px;
+}
+
+.logbook-template-btn {
+  font-size: 12px;
+  padding: 3px 10px;
+}
+
 .logbook-write-toolbar-row {
   display: flex;
   flex-wrap: wrap;

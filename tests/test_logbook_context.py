@@ -61,3 +61,19 @@ def test_list_range_uses_shared_logbook_lookup_helpers(monkeypatch):
     assert result["entries"][0]["people"] == ["Nora"]
     assert result["entries"][0]["places"] == ["Gym"]
     assert result["entries"][0]["datapoints"][0]["key"] == "sleep_quality"
+
+
+def test_run_tool_review_returns_ok(monkeypatch):
+    SessionLocal = _session_factory(monkeypatch)
+
+    result = logbook_context.run_tool("owner-1", {"action": "review", "period": "week"})
+    assert result["ok"] is True
+    assert "Review" in result["output"]
+
+
+def test_run_tool_followups_returns_ok(monkeypatch):
+    SessionLocal = _session_factory(monkeypatch)
+
+    result = logbook_context.run_tool("owner-1", {"action": "followups"})
+    assert result["ok"] is True
+    assert "Follow-ups" in result["output"]

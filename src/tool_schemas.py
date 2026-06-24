@@ -604,14 +604,14 @@ FUNCTION_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "manage_logbook",
-            "description": "Read the user's owner-scoped Daily Logbook entries, people, places, mood, datapoints, person/place details, reconnect hints, and accepted/suggested connections. Use for questions about what happened on a date, this/last week or month, timelines, when a person/place was mentioned, who a logbook person is, who the user has not mentioned lately, who to message/reach out/check in with, what a place is, moods or datapoints over time, and diary/journal/logbook recall. This tool is read-only; do not create or edit logbook entries from chat.",
+            "description": "Read the user's owner-scoped Daily Logbook entries, people, places, mood, datapoints, person/place details, reconnect hints, and connections. Use for: (1) date/range lookup — what happened on a date, this/last week or month, timelines; (2) person/place lookup — when someone was mentioned, who they are, what a place is; (3) mood/wellbeing trends — mood, energy, stress, sleep over time; (4) review summaries — 'review'/'weekly_review'/'monthly_review' return stats, scores, insights, highlights; (5) follow-ups — 'followups' returns people to check in with. This tool is read-only; do not create or edit logbook entries from chat.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "action": {
                         "type": "string",
-                        "enum": ["get_day", "list_range", "timeline", "search", "people", "places", "locations", "directories", "person_detail", "place_detail", "location_detail", "connections"],
-                        "description": "Read action to perform"
+                        "enum": ["get_day", "list_range", "timeline", "search", "people", "places", "locations", "directories", "person_detail", "place_detail", "location_detail", "connections", "review", "weekly_review", "monthly_review", "followups"],
+                        "description": "Read action to perform. 'review' / 'weekly_review' / 'monthly_review' return an aggregated summary (stats, scores, insights, highlights, top people/places). 'followups' returns people the user should check in with."
                     },
                     "date": {"type": "string", "description": "Date for get_day. Accepts YYYY-MM-DD, today, yesterday, tomorrow, last monday, etc."},
                     "start": {"type": "string", "description": "Range start. Accepts YYYY-MM-DD, this week, last week, this month, or last month."},
@@ -627,6 +627,9 @@ FUNCTION_TOOL_SCHEMAS = [
                     "mood": {"type": "string", "description": "Filter by mood label."},
                     "datapoint_key": {"type": "string", "description": "Filter by datapoint key such as sleep, energy, workout, gratitude."},
                     "status": {"type": "string", "enum": ["accepted", "suggested", "hidden"], "description": "Connection status filter. Defaults to accepted."},
+                    "period": {"type": "string", "enum": ["week", "month"], "description": "Period for review action. Defaults to week."},
+                    "anchor": {"type": "string", "description": "Anchor date for review (YYYY-MM-DD or 'today'). Defaults to current week/month."},
+                    "include_suppressed": {"type": "boolean", "description": "Include snoozed/dismissed follow-ups (followups action). Default false."},
                     "limit": {"type": "integer", "description": "Maximum rows to return."}
                 },
                 "required": ["action"]

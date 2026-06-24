@@ -1725,6 +1725,8 @@ def _format_logbook_entry(entry: Dict[str, Any], *, full: bool = False) -> str:
 def _format_logbook_tool_output(result: Dict[str, Any]) -> str:
     if not result.get("ok", True):
         return result.get("error") or "Logbook lookup failed."
+    if "output" in result:
+        return result["output"]
     if "entry" in result:
         entry = result.get("entry")
         return _format_logbook_entry(entry, full=True) if entry else "No Daily Logbook entry found for that day."

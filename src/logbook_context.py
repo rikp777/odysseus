@@ -601,4 +601,82 @@ def run_tool(owner: Optional[str], args: Dict[str, Any]) -> Dict[str, Any]:
             person_id=args.get("person_id") or "",
             limit=limit,
         )
+    if action in {"review", "weekly_review", "monthly_review"}:
+        return _review(owner, args, action)
+    if action in {"followups", "followup_list"}:
+        return _followups(owner, args, limit)
     return {"ok": False, "error": f"Unknown logbook action: {action}", "exit_code": 1}
+
+
+def _review(owner: str, args: Dict[str, Any], action: str) -> Dict[str, Any]:
+    period = args.get("period") or ("month" if action == "monthly_review" else "week")
+    from src.logbook.review import build_review_payload
+    with SessionLocal() as db:
+        payload = build_review_payload(
+            db, owner,
+            period=period,
+            anchor=args.get("anchor") or args.get("date"),
+            start=args.get("start"),
+            end=args.get("end"),
+        )
+    r = payload.get("range", {})
+    stats = payload.get("stats", {})
+    scores = payload.get("scores", {})
+    lines: List[str] = [
+        f"## {period.title()} Review  {r.get('start')} – {r.get('end')}",
+        f"Entries: {stats.get('entry_count', 0)}  Days written: {stats.get('days_with_entries', 0)}/{r.get('days')}  "
+        f"People: {stats.get('people_count', 0)}  Places: {stats.get('place_count', 0)}  Datapoints: {stats.get('datapoint_count', 0)}",
+    ]
+    for key in ("mood", "energy", "stress"):
+        s = scores.get(key, {})
+        if s.get("count"):
+            lines.append(f"{key.title()}: avg {s['avg']:.1f}/5  (n={s['count']})")
+    if payload.get("moods"):
+        lines.append("Moods: " + ", ".join(f"{m['label']} ×{m['count']}" for m in payload["moods"]))
+    if payload.get("datapoints"):
+        dp_parts = []
+        for k, v in payload["datapoints"].items():
+            avg = v.get("avg")
+            if avg is not None:
+                dp_parts.append(f"{k} avg={avg:.1f}")
+        if dp_parts:
+            lines.append("Datapoints: " + ", ".join(dp_parts))
+    if payload.get("top_people"):
+        lines.append("Top people: " + ", ".join(f"{p['display_name']} (×{p['mention_count']})" for p in payload["top_people"]))
+    if payload.get("top_places"):
+        lines.append("Top places: " + ", ".join(f"{p['display_name']} (×{p['mention_count']})" for p in payload["top_places"]))
+    if payload.get("reconnect_candidates"):
+        rc = [p.get("display_name") or p.get("name", "") for p in payload["reconnect_candidates"]]
+        lines.append("Reconnect: " + ", ".join(rc))
+    if payload.get("insights"):
+        lines.append("\n### Insights")
+        for ins in payload["insights"]:
+            lines.append(f"- **{ins.get('title', '')}**: {ins.get('body', '')}")
+    if payload.get("highlights"):
+        lines.append("\n### Highlights")
+        for h in payload["highlights"]:
+            lines.append(f"- [{h.get('date')}] {h.get('snippet', '')}")
+    return {"ok": True, "output": "\n".join(lines), "payload": payload}
+
+
+def _followups(owner: str, args: Dict[str, Any], limit: int) -> Dict[str, Any]:
+    include_suppressed = str(args.get("include_suppressed") or "").lower() in ("1", "true", "yes")
+    from src.logbook.followups import build_followup_payload
+    with SessionLocal() as db:
+        payload = build_followup_payload(db, owner, include_suppressed=include_suppressed, limit=limit)
+    items = payload.get("items", [])
+    counts = payload.get("counts", {})
+    lines: List[str] = [
+        f"## Follow-ups  (active: {counts.get('active', 0)}, snoozed: {counts.get('snoozed', 0)}, dismissed: {counts.get('dismissed', 0)})",
+    ]
+    if not items:
+        lines.append("No active follow-ups right now.")
+    for item in items:
+        name = item.get("display_name") or item.get("name", "?")
+        level = item.get("level", "")
+        days = item.get("days_since_mentioned")
+        reason = item.get("reason", "")
+        tag = f"[{level.upper()}]" if level else ""
+        days_str = f" — {days}d since last mention" if days else ""
+        lines.append(f"- {tag} **{name}**{days_str}: {reason}")
+    return {"ok": True, "output": "\n".join(lines), "payload": payload}
