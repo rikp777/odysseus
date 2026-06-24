@@ -23,7 +23,7 @@ from src.endpoint_resolver import normalize_base as _normalize_base, build_chat_
 from src.session_search import search_session_messages
 from src.prompt_security import untrusted_context_message
 from core.exceptions import SessionNotFoundError
-from src.auth_helpers import get_current_user
+from src.auth_helpers import effective_user, get_current_user
 from routes.session_routes import _verify_session_owner
 from routes.document_helpers import _owner_session_filter
 from core.database import SessionLocal, get_session_mode, set_session_mode
@@ -127,7 +127,8 @@ def _clear_orphaned_session_endpoint(sess, owner: str | None = None) -> bool:
         sess.model = ""
         sess.headers = {}
         return True
-    except Exception:
+    except Exception as e:
+        logger.warning("Failed to clear orphaned session endpoint", exc_info=e)
         db.rollback()
         return False
     finally:
@@ -185,7 +186,8 @@ def _endpoint_cache_contains_model(endpoint, model: str) -> bool:
         return True
     try:
         models = json.loads(raw) if isinstance(raw, str) else raw
-    except Exception:
+    except Exception as e:
+        logger.warning("Failed to parse cached models list, treating as containing model", exc_info=e)
         return True
     if not isinstance(models, list) or not models:
         return True
@@ -277,7 +279,8 @@ def _recover_empty_session_model(sess, session_id: str, owner: str | None = None
                 is_chatgpt_subscription = False
         try:
             cached = json.loads(ep.cached_models) if isinstance(ep.cached_models, str) else (ep.cached_models or [])
-        except Exception:
+        except Exception as e:
+            logger.warning("Failed to parse cached_models for endpoint %r", getattr(ep, "id", "?"), exc_info=e)
             cached = []
         try:
             visible = _visible_chat_models(
@@ -462,7 +465,7 @@ def setup_chat_routes(
             sess = session_manager.get_session(session)
         except KeyError:
             raise HTTPException(404, f"Session '{session}' not found")
-        owner = get_current_user(request)
+        owner = effective_user(request)
         if _clear_orphaned_session_endpoint(sess, owner=owner):
             raise HTTPException(400, "Selected model endpoint was removed. Pick another model in Settings.")
 
@@ -719,7 +722,7 @@ def setup_chat_routes(
             # but BEFORE loading. Prevents cross-user session hijack.
             _verify_session_owner(request, session)
             sess = session_manager.get_session(session)
-            owner = get_current_user(request)
+            owner = effective_user(request)
             if _clear_orphaned_session_endpoint(sess, owner=owner):
                 raise HTTPException(400, "Selected model endpoint was removed. Pick another model in Settings.")
             # Issue #587: picker shows a model from the endpoint cache but
@@ -751,7 +754,7 @@ def setup_chat_routes(
         _enforce_chat_privileges(request, sess)
 
         # Ensure session has auth headers
-        resolve_session_auth(sess, session, owner=get_current_user(request))
+        resolve_session_auth(sess, session, owner=effective_user(request))
 
         # Check for research_pending BEFORE mode persist overwrites it
         do_research = str(use_research).lower() == "true"
@@ -766,8 +769,8 @@ def setup_chat_routes(
         elif attachments:
             try:
                 att_ids = [str(x) for x in json.loads(attachments)]
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("Failed to parse attachments JSON, ignoring attachments", exc_info=e)
 
         no_memory = str(form_data.get("no_memory", "")).lower() == "true"
         pre_context_tool_policy = build_effective_tool_policy(
@@ -946,7 +949,11 @@ def setup_chat_routes(
         from src.settings import get_setting
         _global_disabled = get_setting("disabled_tools", [])
         if _global_disabled and isinstance(_global_disabled, list):
-            disabled_tools.update(_global_disabled)
+            explicit_web_allowed = allow_web_search is not None and str(allow_web_search).lower() == "true"
+            if explicit_web_allowed:
+                disabled_tools.update(t for t in _global_disabled if t not in {"web_search", "web_fetch"})
+            else:
+                disabled_tools.update(_global_disabled)
 
         # Light auto-escalation: the user is in chat mode and just expressed a
         # manager-tool intent such as notes/calendar/email/settings. Grant those
@@ -1430,6 +1437,10 @@ def setup_chat_routes(
                         _max_rounds = _DEFAULT_ROUNDS
                     _max_rounds = max(1, min(_max_rounds, 200))
 
+                    _forced_tools = None
+                    if allow_web_search is not None and str(allow_web_search).lower() == "true":
+                        _forced_tools = {"web_search", "web_fetch"}
+
                     async for chunk in stream_agent_loop(
                         sess.endpoint_url,
                         sess.model,
@@ -1451,6 +1462,7 @@ def setup_chat_routes(
                         plan_mode=plan_mode,
                         approved_plan=approved_plan or None,
                         workspace=workspace or None,
+                        forced_tools=_forced_tools,
                     ):
                         if chunk.startswith("data: ") and not chunk.startswith("data: [DONE]"):
                             try:
@@ -1665,7 +1677,7 @@ def setup_chat_routes(
         if not q or not q.strip():
             return []
 
-        _user = get_current_user(request)
+        _user = effective_user(request)
         return [
             result.to_dict()
             for result in search_session_messages(
