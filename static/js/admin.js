@@ -34,6 +34,31 @@ function _modelIntelligenceChipHtml(score) {
   return `<span class="adm-model-intel" title="Estimated intelligence level: ${esc(label)} (${score}/100)">${esc(label)}</span>`;
 }
 
+function _modelValueBadgeHtml(isValue) {
+  if (!isValue) return '';
+  return `<span class="adm-model-value" title="High capability-to-cost ratio">⚡ Value</span>`;
+}
+
+function _computeValueSet(models) {
+  const scored = models
+    .map(m => {
+      const price = modelPriceSortValue(m.pricing);
+      if (!price || price <= 0) return null;
+      const intel = modelIntelligenceScore(m);
+      if (intel < 30) return null;
+      return { id: m.id, ratio: intel / price };
+    })
+    .filter(Boolean)
+    .sort((a, b) => b.ratio - a.ratio);
+  const valueSet = new Set();
+  if (scored.length >= 4) {
+    scored.slice(0, Math.min(Math.ceil(scored.length * 0.25), 8)).forEach(x => valueSet.add(x.id));
+  } else if (scored.length > 0) {
+    valueSet.add(scored[0].id);
+  }
+  return valueSet;
+}
+
 function _sortEndpointModelRows(panel, mode) {
   const list = panel ? panel.querySelector('.mcp-tools-list') : null;
   if (!list) return;
@@ -740,7 +765,9 @@ async function loadEndpoints() {
                 <a href="#" data-ep-select-all="${epId}">All</a>
                 <a href="#" data-ep-select-none="${epId}">None</a>
               </span>
-            </div>${warningHtml}${sortControl ? `<div class="adm-model-filter-row">${sortControl}</div>` : ''}${showSearch ? `<input type="search" class="mcp-tools-search" placeholder="Search ${sortedModels.length} models..." data-ep-search="${epId}">` : ''}<div class="mcp-tools-list">` + sortedModels.map((m, idx) => {
+            </div>${warningHtml}${sortControl ? `<div class="adm-model-filter-row">${sortControl}</div>` : ''}${showSearch ? `<input type="search" class="mcp-tools-search" placeholder="Search ${sortedModels.length} models..." data-ep-search="${epId}">` : ''}<div class="mcp-tools-list">` + (() => {
+              const valueSet = _computeValueSet(sortedModels);
+              return sortedModels.map((m, idx) => {
               const priceValue = modelPriceSortValue(m.pricing);
               const intelligence = modelIntelligenceScore(m);
               return `<label title="${esc(m.id)}" data-ep-model-row data-search="${esc((m.display + ' ' + m.id).toLowerCase())}" data-name="${esc(m.display || m.id)}" data-index="${idx}" data-price="${priceValue == null ? '' : String(priceValue)}" data-intelligence="${intelligence}" class="adm-model-row">
@@ -749,8 +776,9 @@ async function loadEndpoints() {
                 <span class="adm-model-name">${esc(m.display)}</span>
                 ${_modelIntelligenceChipHtml(intelligence)}
                 ${_modelPricingChipHtml(m.pricing)}
+                ${_modelValueBadgeHtml(valueSet.has(m.id))}
               </label>`;
-            }).join('') + '</div>';
+            }).join('');})() + '</div>';
             const filterRows = (q) => {
               const needle = q.trim().toLowerCase();
               panel.querySelectorAll('[data-ep-model-row]').forEach(row => {
