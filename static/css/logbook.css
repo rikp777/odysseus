@@ -1262,6 +1262,56 @@
   width: 100%;
   height: auto;
   overflow: visible;
+  cursor: crosshair;
+}
+
+[data-chart-dot].lct-active {
+  r: 6;
+  stroke-width: 2;
+  filter: drop-shadow(0 0 4px currentColor);
+}
+
+#logbook-chart-tip {
+  position: fixed;
+  z-index: 9999;
+  pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 7px 11px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 4px 20px color-mix(in srgb, var(--bg) 50%, transparent);
+  font-size: 12px;
+  min-width: 90px;
+  opacity: 0;
+  transform: translateY(4px);
+  transition: opacity 0.1s ease, transform 0.1s ease;
+}
+
+#logbook-chart-tip.lct-visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.lct-series {
+  font-size: 10px;
+  font-weight: 600;
+  opacity: 0.5;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.lct-val {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--fg);
+}
+
+.lct-date {
+  font-size: 10px;
+  opacity: 0.45;
 }
 
 .logbook-dp-chart-row {

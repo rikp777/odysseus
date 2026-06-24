@@ -1324,9 +1324,10 @@ function _moodHistoryHtml() {
     return days.map((date, i) => {
       const v = byDate[date]?.[key];
       if (v == null) return '';
-      const label = key === 'mood' ? (MOODS.find(m => m.score === v)?.label || v) : v;
+      const label = key === 'mood' ? (MOODS.find(m => m.score === v)?.label || v) : String(v);
       const isToday = date === today;
-      return `<circle cx="${xPos(i).toFixed(1)}" cy="${yPos(v).toFixed(1)}" r="${isToday ? 5 : 3.5}" fill="${color}" stroke="var(--panel)" stroke-width="1.5"><title>${date}: ${label}</title></circle>`;
+      const series = key[0].toUpperCase() + key.slice(1);
+      return `<circle cx="${xPos(i).toFixed(1)}" cy="${yPos(v).toFixed(1)}" r="${isToday ? 5 : 3.5}" fill="${color}" stroke="var(--panel)" stroke-width="1.5" data-chart-dot data-chart-date="${date}" data-chart-val="${_e(label)}" data-chart-series="${_e(series)}"></circle>`;
     }).join('');
   }
 
@@ -1440,7 +1441,7 @@ function _dataHistoryHtml() {
       const num = parseFloat(raw);
       if (isNaN(num)) return '';
       const isToday = date === today;
-      return `<circle cx="${xPos(i).toFixed(1)}" cy="${yPos(num).toFixed(1)}" r="${isToday ? 4.5 : 3}" fill="${color}" stroke="var(--panel)" stroke-width="1.2"><title>${date}: ${raw}</title></circle>`;
+      return `<circle cx="${xPos(i).toFixed(1)}" cy="${yPos(num).toFixed(1)}" r="${isToday ? 4.5 : 3}" fill="${color}" stroke="var(--panel)" stroke-width="1.2" data-chart-dot data-chart-date="${date}" data-chart-val="${_e(raw)}" data-chart-series="${_e(label)}"></circle>`;
     }).join('');
 
     const fmt = v => (v % 1 === 0 ? String(v) : v.toFixed(1));
@@ -1814,7 +1815,87 @@ function _bindHistoryEvents() {
   });
 }
 
+function _installChartTooltip(root) {
+  const TIP_ID = 'logbook-chart-tip';
+  if (document.getElementById(TIP_ID)) return;
+
+  const tip = document.createElement('div');
+  tip.id = TIP_ID;
+  document.body.appendChild(tip);
+
+  // SVG mouse coords — converts clientX/Y to SVG viewBox units
+  function toSvgPt(svg, clientX, clientY) {
+    const pt = svg.createSVGPoint();
+    pt.x = clientX; pt.y = clientY;
+    try { return pt.matrixTransform(svg.getScreenCTM().inverse()); }
+    catch (_) { return null; }
+  }
+
+  // Weight X strongly; only tie-break by Y.
+  // X_MAX is half a day-step in 800-wide viewBox with 14 points: 764/13/2 ≈ 29
+  const X_MAX = 38;
+
+  function nearestDot(svg, sp) {
+    let best = null, bestScore = Infinity;
+    svg.querySelectorAll('[data-chart-dot]').forEach(dot => {
+      const dx = Math.abs(parseFloat(dot.getAttribute('cx')) - sp.x);
+      if (dx > X_MAX) return;
+      const dy = Math.abs(parseFloat(dot.getAttribute('cy')) - sp.y);
+      const score = dx * 5 + dy; // X matters 5× more
+      if (score < bestScore) { bestScore = score; best = dot; }
+    });
+    return best;
+  }
+
+  let lastDot = null;
+
+  root.addEventListener('mousemove', e => {
+    const svg = e.target.closest('.logbook-mood-chart-svg,.logbook-data-chart-svg');
+    if (!svg) { tip.classList.remove('lct-visible'); lastDot = null; return; }
+
+    const sp = toSvgPt(svg, e.clientX, e.clientY);
+    if (!sp) return;
+
+    const dot = nearestDot(svg, sp);
+    if (!dot) { tip.classList.remove('lct-visible'); lastDot = null; return; }
+
+    // Highlight active dot
+    if (lastDot && lastDot !== dot) lastDot.classList.remove('lct-active');
+    dot.classList.add('lct-active');
+    lastDot = dot;
+
+    // Position tip: right of cursor, flip left if near right edge
+    const tipW = tip.offsetWidth || 110;
+    const tipH = tip.offsetHeight || 44;
+    const margin = 14;
+    let left = e.clientX + margin;
+    let top = e.clientY - tipH / 2;
+    if (left + tipW > window.innerWidth - 8) left = e.clientX - tipW - margin;
+    if (top < 8) top = 8;
+    if (top + tipH > window.innerHeight - 8) top = window.innerHeight - tipH - 8;
+
+    tip.style.left = left + 'px';
+    tip.style.top = top + 'px';
+    tip.classList.add('lct-visible');
+
+    const date = dot.dataset.chartDate || '';
+    const val = dot.dataset.chartVal || '';
+    const series = dot.dataset.chartSeries || '';
+    tip.innerHTML = `<span class="lct-series">${_e(series)}</span><span class="lct-val">${_e(val)}</span><span class="lct-date">${_e(date)}</span>`;
+  });
+
+  root.addEventListener('mouseout', e => {
+    const svg = e.target.closest?.('.logbook-mood-chart-svg,.logbook-data-chart-svg');
+    if (!svg) return;
+    if (!svg.contains(e.relatedTarget)) {
+      tip.classList.remove('lct-visible');
+      if (lastDot) { lastDot.classList.remove('lct-active'); lastDot = null; }
+    }
+  });
+}
+
 function _bindChromeEvents(root = document) {
+  _installChartTooltip(root);
   root.querySelector('#logbook-close')?.addEventListener('click', closeLogbook);
   root.querySelector('#logbook-prev-day')?.addEventListener('click', () => _loadDate(_dateAdd(_date, -1)).catch(_showError));
   root.querySelector('#logbook-next-day')?.addEventListener('click', () => _loadDate(_dateAdd(_date, 1)).catch(_showError));
