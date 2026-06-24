@@ -1256,11 +1256,21 @@
   white-space: nowrap;
 }
 
-.logbook-mood-chart-svg {
+.logbook-mood-chart-svg,
+.logbook-data-chart-svg {
   display: block;
   width: 100%;
   height: auto;
   overflow: visible;
+}
+
+.logbook-dp-chart-row {
+  align-items: center;
+  min-height: 36px;
+}
+
+.logbook-dp-chart-row .logbook-dp-hist-label {
+  align-self: center;
 }
 
 .logbook-dp-history {

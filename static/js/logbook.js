@@ -1374,23 +1374,94 @@ function _dataHistoryHtml() {
   if (!_dataHistory) return '';
   const keys = Object.keys(_dataHistory);
   if (!keys.length) return '';
-  const today = _today();
 
-  const strips = keys.map(key => {
+  const today = _today();
+  const days = [];
+  for (let i = 13; i >= 0; i--) days.push(_dateAdd(today, -i));
+  const n = days.length - 1;
+
+  const PALETTE = ['var(--accent)', '#f59e0b', '#66bb6a', '#e57373', '#a78bfa', '#38bdf8', '#f472b6', '#4ade80', '#fb923c'];
+  let paletteIdx = 0;
+
+  const rows = keys.map(key => {
     const track = _dataHistory[key];
-    const slots = (track.values || []).map(({ date, value }) => {
-      const isToday = date === today;
-      return `<span class="logbook-dp-hist-slot${isToday ? ' today' : ''}${value ? ' has-val' : ''}" title="${_e(date)}">${value ? _e(value) : '·'}</span>`;
+    const label = track.label || key;
+
+    // Map date → value string
+    const valByDate = {};
+    (track.values || []).forEach(({ date, value }) => { if (date && value != null) valByDate[date] = String(value); });
+
+    // Determine if numeric (at least 2 parseable numbers)
+    const numericPoints = days.filter(d => valByDate[d] != null && !isNaN(parseFloat(valByDate[d])));
+
+    if (numericPoints.length < 2) {
+      // Text strip fallback
+      const slots = days.map(date => {
+        const val = valByDate[date];
+        const isToday = date === today;
+        return `<span class="logbook-dp-hist-slot${isToday ? ' today' : ''}${val ? ' has-val' : ''}" title="${_e(date)}">${val ? _e(val) : '·'}</span>`;
+      });
+      return `<div class="logbook-dp-hist-row">
+        <span class="logbook-dp-hist-label">${_e(label)}</span>
+        <div class="logbook-dp-hist-slots">${slots.join('')}</div>
+      </div>`;
+    }
+
+    // Numeric sparkline
+    const color = PALETTE[paletteIdx % PALETTE.length];
+    paletteIdx++;
+
+    const nums = numericPoints.map(d => parseFloat(valByDate[d]));
+    const minV = Math.min(...nums);
+    const maxV = Math.max(...nums);
+    const range = maxV - minV || 1;
+
+    const VW = 800, VH = 44;
+    const PL = 28, PR = 6, PT = 5, PB = 5;
+    const plotW = VW - PL - PR;
+    const plotH = VH - PT - PB;
+
+    const xPos = i => PL + (i / n) * plotW;
+    const yPos = v => PT + (1 - (v - minV) / range) * plotH;
+
+    let path = '', open = false;
+    days.forEach((date, i) => {
+      const raw = valByDate[date];
+      const num = raw != null ? parseFloat(raw) : NaN;
+      if (isNaN(num)) { open = false; return; }
+      const x = xPos(i).toFixed(1), y = yPos(num).toFixed(1);
+      path += open ? ` L${x},${y}` : `M${x},${y}`;
+      open = true;
     });
-    return `<div class="logbook-dp-hist-row">
-      <span class="logbook-dp-hist-label">${_e(track.label || key)}</span>
-      <div class="logbook-dp-hist-slots">${slots.join('')}</div>
+
+    const dots = days.map((date, i) => {
+      const raw = valByDate[date];
+      if (raw == null) return '';
+      const num = parseFloat(raw);
+      if (isNaN(num)) return '';
+      const isToday = date === today;
+      return `<circle cx="${xPos(i).toFixed(1)}" cy="${yPos(num).toFixed(1)}" r="${isToday ? 4.5 : 3}" fill="${color}" stroke="var(--panel)" stroke-width="1.2"><title>${date}: ${raw}</title></circle>`;
+    }).join('');
+
+    const fmt = v => (v % 1 === 0 ? String(v) : v.toFixed(1));
+    const yAxisMax = `<text x="${PL - 3}" y="${yPos(maxV).toFixed(1)}" text-anchor="end" dominant-baseline="middle" font-size="9" fill="var(--fg)" opacity="0.4">${fmt(maxV)}</text>`;
+    const yAxisMin = minV !== maxV ? `<text x="${PL - 3}" y="${yPos(minV).toFixed(1)}" text-anchor="end" dominant-baseline="middle" font-size="9" fill="var(--fg)" opacity="0.4">${fmt(minV)}</text>` : '';
+    const midY = yPos((minV + maxV) / 2).toFixed(1);
+
+    return `<div class="logbook-dp-hist-row logbook-dp-chart-row">
+      <span class="logbook-dp-hist-label">${_e(label)}</span>
+      <svg viewBox="0 0 ${VW} ${VH}" width="100%" class="logbook-data-chart-svg" aria-label="${_e(label)} chart">
+        <line x1="${PL}" y1="${midY}" x2="${VW - PR}" y2="${midY}" stroke="var(--border)" stroke-width="0.8" opacity="0.4"/>
+        ${yAxisMax}${yAxisMin}
+        <path d="${path}" fill="none" stroke="${color}" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+        ${dots}
+      </svg>
     </div>`;
   });
 
   return `<div class="logbook-dp-history">
     <div class="logbook-dp-hist-head">Last 14 days</div>
-    ${strips.join('')}
+    ${rows.join('')}
   </div>`;
 }
 
