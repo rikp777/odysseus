@@ -38,6 +38,7 @@ import {
   renderAIPanelHtml as _renderAIPanelHtml,
 } from './logbook/ai-panel.js';
 import { LOGBOOK_TEMPLATES, MODAL_ID, MOODS, QUICK_DATA, SAVE_DELAY } from './logbook/constants.js';
+import { build14DayWindow, renderChartLegend, renderLineChart } from './logbook/charts.js';
 import {
   currentEntitiesFromContent as _currentEntitiesFromContentForLists,
   entityListSignature as _entityListSignature,
@@ -1279,142 +1280,77 @@ function _historyHtml({ includeClose = false } = {}) {
   `;
 }
 
-const _MOOD_SCORE_LABEL = { 1: 'Bad', 2: 'Meh', 3: 'Okay', 4: 'Good', 5: 'Great' };
+const _MOOD_SERIES_DEFS = [
+  { key: 'mood',    label: 'Mood',    color: 'var(--accent)', getLabel: (_, v) => MOODS.find(m => m.score === v)?.label || String(v) },
+  { key: 'energy',  label: 'Energy',  color: '#f59e0b',       getLabel: (_, v) => String(v) },
+  { key: 'stress',  label: 'Stress',  color: 'var(--red)',    getLabel: (_, v) => String(v) },
+  { key: 'sleep',   label: 'Sleep',   color: '#66bb6a',       getLabel: (_, v) => String(v) },
+  { key: 'focus',   label: 'Focus',   color: '#a78bfa',       getLabel: (_, v) => String(v) },
+  { key: 'anxiety', label: 'Anxiety', color: '#fb923c',       getLabel: (_, v) => String(v) },
+];
 
 function _moodHistoryHtml() {
-  const today = _today();
-  const days = [];
-  for (let i = 13; i >= 0; i--) days.push(_dateAdd(today, -i));
+  const { days, today } = build14DayWindow(_today, _dateAdd);
+  const daySet = new Set(days);
 
   const byDate = {};
   for (const entry of _entries) {
     const d = entry.entry_date;
-    if (!d || !days.includes(d)) continue;
-    const mood    = entry.mood_score    != null ? Number(entry.mood_score)    : null;
-    const energy  = entry.energy_score  != null ? Number(entry.energy_score)  : null;
-    const stress  = entry.stress_score  != null ? Number(entry.stress_score)  : null;
-    const sleep   = entry.sleep_score   != null ? Number(entry.sleep_score)   : null;
-    const focus   = entry.focus_score   != null ? Number(entry.focus_score)   : null;
-    const anxiety = entry.anxiety_score != null ? Number(entry.anxiety_score) : null;
-    if (mood != null || energy != null || stress != null || sleep != null || focus != null || anxiety != null)
-      byDate[d] = { mood, energy, stress, sleep, focus, anxiety };
+    if (!d || !daySet.has(d)) continue;
+    const row = {};
+    for (const { key } of _MOOD_SERIES_DEFS) {
+      const raw = entry[key + '_score'];
+      row[key] = raw != null ? Number(raw) : null;
+    }
+    if (Object.values(row).some(v => v != null)) byDate[d] = row;
   }
 
   if (!Object.keys(byDate).length) return '';
 
-  const hasMood    = days.some(d => byDate[d]?.mood    != null);
-  const hasEnergy  = days.some(d => byDate[d]?.energy  != null);
-  const hasStress  = days.some(d => byDate[d]?.stress  != null);
-  const hasSleep   = days.some(d => byDate[d]?.sleep   != null);
-  const hasFocus   = days.some(d => byDate[d]?.focus   != null);
-  const hasAnxiety = days.some(d => byDate[d]?.anxiety != null);
-  if (!hasMood && !hasEnergy && !hasStress && !hasSleep && !hasFocus && !hasAnxiety) return '';
+  const activeSeries = _MOOD_SERIES_DEFS
+    .filter(({ key }) => days.some(d => byDate[d]?.[key] != null))
+    .map(({ key, label, color, getLabel }) => ({
+      label, color, getLabel,
+      getVal: date => byDate[date]?.[key] ?? null,
+    }));
 
-  // Wide viewBox so SVG fills container width at a reasonable height.
-  // No height attribute — CSS height:auto lets aspect ratio drive height.
-  const VW = 800, VH = 80;
-  const PL = 28, PR = 8, PT = 10, PB = 22;
-  const plotW = VW - PL - PR;
-  const plotH = VH - PT - PB;
-  const n = days.length - 1;
+  if (!activeSeries.length) return '';
 
-  const xPos = i => PL + (i / n) * plotW;
-  const yPos = v => PT + (1 - (v - 1) / 4) * plotH;
-
-  function buildPath(key) {
-    let d = '', open = false;
-    days.forEach((date, i) => {
-      const v = byDate[date]?.[key];
-      if (v == null) { open = false; return; }
-      const x = xPos(i).toFixed(1), y = yPos(v).toFixed(1);
-      d += open ? ` L${x},${y}` : `M${x},${y}`;
-      open = true;
-    });
-    return d;
-  }
-
-  function buildDots(key, color) {
-    return days.map((date, i) => {
-      const v = byDate[date]?.[key];
-      if (v == null) return '';
-      const label = key === 'mood' ? (MOODS.find(m => m.score === v)?.label || v) : String(v);
-      const isToday = date === today;
-      const series = key[0].toUpperCase() + key.slice(1);
-      return `<circle cx="${xPos(i).toFixed(1)}" cy="${yPos(v).toFixed(1)}" r="${isToday ? 5 : 3.5}" fill="${color}" stroke="var(--panel)" stroke-width="1.5" data-chart-dot data-chart-date="${date}" data-chart-val="${_e(label)}" data-chart-series="${_e(series)}"></circle>`;
-    }).join('');
-  }
-
-  // Y gridlines + labels (1=Bad, 3=Okay, 5=Great)
-  const Y_LABELS = { 1: 'Bad', 3: 'OK', 5: 'Great' };
-  const grid = [1,2,3,4,5].map(v => {
-    const y = yPos(v).toFixed(1);
-    const label = Y_LABELS[v] ? `<text x="${PL - 4}" y="${y}" text-anchor="end" dominant-baseline="middle" font-size="9" fill="var(--fg)" opacity="0.38">${Y_LABELS[v]}</text>` : '';
-    return `<line x1="${PL}" y1="${y}" x2="${VW - PR}" y2="${y}" stroke="var(--border)" stroke-width="${v % 2 === 1 ? 1 : 0.5}" opacity="${v % 2 === 1 ? 0.5 : 0.25}"/>${label}`;
-  }).join('');
-
-  // X labels — Mon/Thu + first/last
-  const DOW = ['Su','Mo','Tu','We','Th','Fr','Sa'];
-  const xLabels = days.map((d, i) => {
-    const dow = new Date(d + 'T00:00:00').getDay();
-    if (dow !== 1 && dow !== 4 && i !== 0 && i !== n) return '';
-    const dayNum = d.slice(8); // DD from YYYY-MM-DD
-    return `<text x="${xPos(i).toFixed(1)}" y="${VH - 3}" text-anchor="middle" font-size="9" fill="var(--fg)" opacity="0.38">${DOW[dow]} ${dayNum}</text>`;
-  }).join('');
-
-  const SERIES = [
-    { key: 'mood',    label: 'Mood',    color: 'var(--accent)', has: hasMood },
-    { key: 'energy',  label: 'Energy',  color: '#f59e0b',       has: hasEnergy },
-    { key: 'stress',  label: 'Stress',  color: 'var(--red)',    has: hasStress },
-    { key: 'sleep',   label: 'Sleep',   color: '#66bb6a',       has: hasSleep },
-    { key: 'focus',   label: 'Focus',   color: '#a78bfa',       has: hasFocus },
-    { key: 'anxiety', label: 'Anxiety', color: '#fb923c',       has: hasAnxiety },
-  ];
-
-  let paths = '', dots = '';
-  SERIES.filter(s => s.has).forEach(({ key, color }) => {
-    paths += `<path d="${buildPath(key)}" fill="none" stroke="${color}" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>`;
-    dots  += buildDots(key, color);
+  const svg = renderLineChart({
+    days, today, series: activeSeries,
+    yMin: 1, yMax: 5,
+    yTicks: [1, 2, 3, 4, 5],
+    yTickLabels: { 1: 'Bad', 3: 'OK', 5: 'Great' },
+    svgClass: 'logbook-mood-chart-svg',
+    ariaLabel: 'Mood chart',
   });
 
-  const legendItems = SERIES
-    .filter(s => s.has)
-    .map(({ label, color }) => `<span class="lmcl-item"><svg width="16" height="4" style="overflow:visible"><line x1="0" y1="2" x2="16" y2="2" stroke="${color}" stroke-width="2.5" stroke-linecap="round"/></svg>${label}</span>`)
-    .join('');
-
   return `<div class="logbook-mood-chart">
-    <div class="logbook-mood-chart-head"><span class="logbook-dp-hist-head">Last 14 days</span><span class="logbook-mood-chart-legend">${legendItems}</span></div>
-    <svg viewBox="0 0 ${VW} ${VH}" width="100%" class="logbook-mood-chart-svg" aria-label="Mood chart">
-      ${grid}${paths}${dots}${xLabels}
-    </svg>
+    <div class="logbook-mood-chart-head"><span class="logbook-dp-hist-head">Last 14 days</span><span class="logbook-mood-chart-legend">${renderChartLegend(activeSeries)}</span></div>
+    ${svg}
   </div>`;
 }
+
+const _DATA_PALETTE = ['var(--accent)', '#f59e0b', '#66bb6a', '#e57373', '#a78bfa', '#38bdf8', '#f472b6', '#4ade80', '#fb923c'];
 
 function _dataHistoryHtml() {
   if (!_dataHistory) return '';
   const keys = Object.keys(_dataHistory);
   if (!keys.length) return '';
 
-  const today = _today();
-  const days = [];
-  for (let i = 13; i >= 0; i--) days.push(_dateAdd(today, -i));
-  const n = days.length - 1;
-
-  const PALETTE = ['var(--accent)', '#f59e0b', '#66bb6a', '#e57373', '#a78bfa', '#38bdf8', '#f472b6', '#4ade80', '#fb923c'];
+  const { days, today } = build14DayWindow(_today, _dateAdd);
   let paletteIdx = 0;
 
   const rows = keys.map(key => {
     const track = _dataHistory[key];
     const label = track.label || key;
 
-    // Map date → value string
     const valByDate = {};
     (track.values || []).forEach(({ date, value }) => { if (date && value != null) valByDate[date] = String(value); });
 
-    // Determine if numeric (at least 2 parseable numbers)
     const numericPoints = days.filter(d => valByDate[d] != null && !isNaN(parseFloat(valByDate[d])));
 
     if (numericPoints.length < 2) {
-      // Text strip fallback
       const slots = days.map(date => {
         const val = valByDate[date];
         const isToday = date === today;
@@ -1426,55 +1362,35 @@ function _dataHistoryHtml() {
       </div>`;
     }
 
-    // Numeric sparkline
-    const color = PALETTE[paletteIdx % PALETTE.length];
-    paletteIdx++;
-
+    const color = _DATA_PALETTE[paletteIdx++ % _DATA_PALETTE.length];
     const nums = numericPoints.map(d => parseFloat(valByDate[d]));
     const minV = Math.min(...nums);
     const maxV = Math.max(...nums);
-    const range = maxV - minV || 1;
-
-    const VW = 800, VH = 44;
-    const PL = 28, PR = 6, PT = 5, PB = 5;
-    const plotW = VW - PL - PR;
-    const plotH = VH - PT - PB;
-
-    const xPos = i => PL + (i / n) * plotW;
-    const yPos = v => PT + (1 - (v - minV) / range) * plotH;
-
-    let path = '', open = false;
-    days.forEach((date, i) => {
-      const raw = valByDate[date];
-      const num = raw != null ? parseFloat(raw) : NaN;
-      if (isNaN(num)) { open = false; return; }
-      const x = xPos(i).toFixed(1), y = yPos(num).toFixed(1);
-      path += open ? ` L${x},${y}` : `M${x},${y}`;
-      open = true;
-    });
-
-    const dots = days.map((date, i) => {
-      const raw = valByDate[date];
-      if (raw == null) return '';
-      const num = parseFloat(raw);
-      if (isNaN(num)) return '';
-      const isToday = date === today;
-      return `<circle cx="${xPos(i).toFixed(1)}" cy="${yPos(num).toFixed(1)}" r="${isToday ? 4.5 : 3}" fill="${color}" stroke="var(--panel)" stroke-width="1.2" data-chart-dot data-chart-date="${date}" data-chart-val="${_e(raw)}" data-chart-series="${_e(label)}"></circle>`;
-    }).join('');
-
     const fmt = v => (v % 1 === 0 ? String(v) : v.toFixed(1));
-    const yAxisMax = `<text x="${PL - 3}" y="${yPos(maxV).toFixed(1)}" text-anchor="end" dominant-baseline="middle" font-size="9" fill="var(--fg)" opacity="0.4">${fmt(maxV)}</text>`;
-    const yAxisMin = minV !== maxV ? `<text x="${PL - 3}" y="${yPos(minV).toFixed(1)}" text-anchor="end" dominant-baseline="middle" font-size="9" fill="var(--fg)" opacity="0.4">${fmt(minV)}</text>` : '';
-    const midY = yPos((minV + maxV) / 2).toFixed(1);
+
+    const svg = renderLineChart({
+      days, today,
+      series: [{
+        label,
+        color,
+        getVal: date => { const r = valByDate[date]; return r != null && !isNaN(parseFloat(r)) ? parseFloat(r) : null; },
+        getLabel: (date, v) => valByDate[date] || String(v),
+        rNormal: 3, rToday: 4.5,
+      }],
+      yMin: minV, yMax: maxV,
+      yTicks: [minV, maxV],
+      yTickLabels: { [minV]: fmt(minV), [maxV]: fmt(maxV) },
+      vw: 800, vh: 44, pl: 28, pr: 6, pt: 5, pb: 5,
+      svgClass: 'logbook-data-chart-svg',
+      ariaLabel: `${label} chart`,
+      showXLabels: false,
+      showGrid: false,
+      midLineY: (minV + maxV) / 2,
+    });
 
     return `<div class="logbook-dp-hist-row logbook-dp-chart-row">
       <span class="logbook-dp-hist-label">${_e(label)}</span>
-      <svg viewBox="0 0 ${VW} ${VH}" width="100%" class="logbook-data-chart-svg" aria-label="${_e(label)} chart">
-        <line x1="${PL}" y1="${midY}" x2="${VW - PR}" y2="${midY}" stroke="var(--border)" stroke-width="0.8" opacity="0.4"/>
-        ${yAxisMax}${yAxisMin}
-        <path d="${path}" fill="none" stroke="${color}" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
-        ${dots}
-      </svg>
+      ${svg}
     </div>`;
   });
 
