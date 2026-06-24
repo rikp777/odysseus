@@ -1173,6 +1173,7 @@ function _editorHtml() {
       <div class="logbook-chip-row">${moodChips}</div>
       ${_scoreButtons('energy_score', 'Energy')}
       ${_scoreButtons('stress_score', 'Stress')}
+      ${_moodHistoryHtml()}
     </section>
     <section class="logbook-data-section" data-mobile-section="data">
       <div class="logbook-section-head">
@@ -1270,6 +1271,54 @@ function _historyHtml({ includeClose = false } = {}) {
       ${rows || (!_historyBusy ? '<div class="logbook-empty">No saved versions yet.</div>' : '')}
     </section>
   `;
+}
+
+const _MOOD_SCORE_LABEL = { 1: 'Bad', 2: 'Meh', 3: 'Okay', 4: 'Good', 5: 'Great' };
+
+function _moodHistoryHtml() {
+  const today = _today();
+  const days = [];
+  for (let i = 13; i >= 0; i--) days.push(_dateAdd(today, -i));
+
+  // Build date → {mood, energy, stress} from _entries
+  const byDate = {};
+  for (const entry of _entries) {
+    const d = entry.entry_date;
+    if (!d || !days.includes(d)) continue;
+    const moodLabel = entry.mood_label ? (entry.mood_label.charAt(0).toUpperCase() + entry.mood_label.slice(1)) : null;
+    const energy = entry.energy_score != null ? String(entry.energy_score) : null;
+    const stress = entry.stress_score != null ? String(entry.stress_score) : null;
+    if (moodLabel || energy || stress) byDate[d] = { moodLabel, energy, stress };
+  }
+
+  if (!Object.keys(byDate).length) return '';
+
+  const hasMood = days.some(d => byDate[d]?.moodLabel);
+  const hasEnergy = days.some(d => byDate[d]?.energy);
+  const hasStress = days.some(d => byDate[d]?.stress);
+  if (!hasMood && !hasEnergy && !hasStress) return '';
+
+  const makeStrip = (label, getter) => {
+    const slots = days.map(date => {
+      const val = getter(byDate[date]);
+      const isToday = date === today;
+      return `<span class="logbook-dp-hist-slot${isToday ? ' today' : ''}${val ? ' has-val' : ''}" title="${_e(date)}">${val ? _e(val) : '·'}</span>`;
+    });
+    return `<div class="logbook-dp-hist-row">
+      <span class="logbook-dp-hist-label">${_e(label)}</span>
+      <div class="logbook-dp-hist-slots">${slots.join('')}</div>
+    </div>`;
+  };
+
+  const strips = [];
+  if (hasMood) strips.push(makeStrip('Mood', d => d?.moodLabel || null));
+  if (hasEnergy) strips.push(makeStrip('Energy', d => d?.energy || null));
+  if (hasStress) strips.push(makeStrip('Stress', d => d?.stress || null));
+
+  return `<div class="logbook-dp-history">
+    <div class="logbook-dp-hist-head">Last 14 days</div>
+    ${strips.join('')}
+  </div>`;
 }
 
 function _dataHistoryHtml() {
