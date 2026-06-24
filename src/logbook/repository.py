@@ -528,6 +528,9 @@ def entry_snapshot(entry: LogbookEntry) -> Dict[str, Any]:
         "mood_score": entry.mood_score,
         "energy_score": entry.energy_score,
         "stress_score": entry.stress_score,
+        "sleep_score": entry.sleep_score,
+        "focus_score": entry.focus_score,
+        "anxiety_score": entry.anxiety_score,
         "ai_reflection": entry.ai_reflection,
         "datapoints": datapoint_snapshots(entry),
     }
@@ -542,6 +545,9 @@ def _snapshot_has_content(snapshot: Dict[str, Any]) -> bool:
         snapshot.get("mood_score") is not None,
         snapshot.get("energy_score") is not None,
         snapshot.get("stress_score") is not None,
+        snapshot.get("sleep_score") is not None,
+        snapshot.get("focus_score") is not None,
+        snapshot.get("anxiety_score") is not None,
         snapshot.get("ai_reflection"),
         bool(snapshot.get("datapoints")),
     ])
@@ -562,7 +568,7 @@ def entry_will_change(entry: LogbookEntry, body: BaseModel) -> bool:
             return True
     if "mood_label" in data and ((data.get("mood_label") or "").strip() or None) != entry.mood_label:
         return True
-    for field in ("mood_score", "energy_score", "stress_score"):
+    for field in ("mood_score", "energy_score", "stress_score", "sleep_score", "focus_score", "anxiety_score"):
         if field in data and clamp_score(data.get(field)) != getattr(entry, field, None):
             return True
     if body.datapoints is not None:
@@ -596,6 +602,9 @@ def create_entry_revision(
         mood_score=snapshot["mood_score"],
         energy_score=snapshot["energy_score"],
         stress_score=snapshot["stress_score"],
+        sleep_score=snapshot["sleep_score"],
+        focus_score=snapshot["focus_score"],
+        anxiety_score=snapshot["anxiety_score"],
         ai_reflection=snapshot["ai_reflection"],
         datapoints_json=json.dumps(snapshot["datapoints"], ensure_ascii=False),
     )
@@ -636,6 +645,9 @@ def restore_entry_revision(db, owner: str, entry: LogbookEntry, revision: Logboo
     entry.mood_score = clamp_score(revision.mood_score)
     entry.energy_score = clamp_score(revision.energy_score)
     entry.stress_score = clamp_score(revision.stress_score)
+    entry.sleep_score = clamp_score(revision.sleep_score)
+    entry.focus_score = clamp_score(revision.focus_score)
+    entry.anxiety_score = clamp_score(revision.anxiety_score)
     entry.ai_reflection = revision.ai_reflection
     raw_datapoints = json_load(revision.datapoints_json, [])
     datapoints = [
@@ -1113,6 +1125,12 @@ def apply_entry_fields(entry: LogbookEntry, body: BaseModel) -> bool:
         entry.energy_score = clamp_score(data.get("energy_score"))
     if "stress_score" in data:
         entry.stress_score = clamp_score(data.get("stress_score"))
+    if "sleep_score" in data:
+        entry.sleep_score = clamp_score(data.get("sleep_score"))
+    if "focus_score" in data:
+        entry.focus_score = clamp_score(data.get("focus_score"))
+    if "anxiety_score" in data:
+        entry.anxiety_score = clamp_score(data.get("anxiety_score"))
     if "ai_reflection" in data:
         entry.ai_reflection = data.get("ai_reflection")
     return content_changed

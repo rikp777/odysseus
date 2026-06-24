@@ -1127,6 +1127,9 @@ def _migrate_logbook_schema():
             "mood_score": "INTEGER",
             "energy_score": "INTEGER",
             "stress_score": "INTEGER",
+            "sleep_score": "INTEGER",
+            "focus_score": "INTEGER",
+            "anxiety_score": "INTEGER",
             "ai_reflection": "TEXT",
             "created_at": "DATETIME",
             "updated_at": "DATETIME",
@@ -1246,6 +1249,9 @@ def _migrate_logbook_schema():
             "mood_score": "INTEGER",
             "energy_score": "INTEGER",
             "stress_score": "INTEGER",
+            "sleep_score": "INTEGER",
+            "focus_score": "INTEGER",
+            "anxiety_score": "INTEGER",
             "ai_reflection": "TEXT",
             "datapoints_json": "TEXT",
             "created_at": "DATETIME",
@@ -1308,6 +1314,9 @@ def _migrate_logbook_schema():
                     mood_score INTEGER,
                     energy_score INTEGER,
                     stress_score INTEGER,
+                    sleep_score INTEGER,
+                    focus_score INTEGER,
+                    anxiety_score INTEGER,
                     ai_reflection TEXT,
                     datapoints_json TEXT,
                     created_at DATETIME,
@@ -1909,6 +1918,9 @@ class LogbookEntry(TimestampMixin, Base):
     mood_score    = Column(Integer, nullable=True)
     energy_score  = Column(Integer, nullable=True)
     stress_score  = Column(Integer, nullable=True)
+    sleep_score   = Column(Integer, nullable=True)
+    focus_score   = Column(Integer, nullable=True)
+    anxiety_score = Column(Integer, nullable=True)
     ai_reflection = Column(Text, nullable=True)
 
     datapoints = relationship("LogbookDataPoint", back_populates="entry", cascade="all, delete-orphan", order_by="LogbookDataPoint.sort_order")
@@ -1939,6 +1951,9 @@ class LogbookEntryRevision(Base):
     mood_score      = Column(Integer, nullable=True)
     energy_score    = Column(Integer, nullable=True)
     stress_score    = Column(Integer, nullable=True)
+    sleep_score     = Column(Integer, nullable=True)
+    focus_score     = Column(Integer, nullable=True)
+    anxiety_score   = Column(Integer, nullable=True)
     ai_reflection   = Column(Text, nullable=True)
     datapoints_json = Column(Text, nullable=True)
     created_at      = Column(DateTime, default=utcnow_naive, nullable=False)

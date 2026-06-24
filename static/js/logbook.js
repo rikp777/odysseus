@@ -193,6 +193,9 @@ function _entryPayload() {
     mood_score: _entry?.mood_score ?? null,
     energy_score: _entry?.energy_score ?? null,
     stress_score: _entry?.stress_score ?? null,
+    sleep_score: _entry?.sleep_score ?? null,
+    focus_score: _entry?.focus_score ?? null,
+    anxiety_score: _entry?.anxiety_score ?? null,
     datapoints,
   };
 }
@@ -1173,6 +1176,9 @@ function _editorHtml() {
       <div class="logbook-chip-row">${moodChips}</div>
       ${_scoreButtons('energy_score', 'Energy')}
       ${_scoreButtons('stress_score', 'Stress')}
+      ${_scoreButtons('sleep_score', 'Sleep quality')}
+      ${_scoreButtons('focus_score', 'Focus')}
+      ${_scoreButtons('anxiety_score', 'Anxiety')}
       ${_moodHistoryHtml()}
     </section>
     <section class="logbook-data-section" data-mobile-section="data">
@@ -1284,18 +1290,25 @@ function _moodHistoryHtml() {
   for (const entry of _entries) {
     const d = entry.entry_date;
     if (!d || !days.includes(d)) continue;
-    const mood = entry.mood_score != null ? Number(entry.mood_score) : null;
-    const energy = entry.energy_score != null ? Number(entry.energy_score) : null;
-    const stress = entry.stress_score != null ? Number(entry.stress_score) : null;
-    if (mood != null || energy != null || stress != null) byDate[d] = { mood, energy, stress };
+    const mood    = entry.mood_score    != null ? Number(entry.mood_score)    : null;
+    const energy  = entry.energy_score  != null ? Number(entry.energy_score)  : null;
+    const stress  = entry.stress_score  != null ? Number(entry.stress_score)  : null;
+    const sleep   = entry.sleep_score   != null ? Number(entry.sleep_score)   : null;
+    const focus   = entry.focus_score   != null ? Number(entry.focus_score)   : null;
+    const anxiety = entry.anxiety_score != null ? Number(entry.anxiety_score) : null;
+    if (mood != null || energy != null || stress != null || sleep != null || focus != null || anxiety != null)
+      byDate[d] = { mood, energy, stress, sleep, focus, anxiety };
   }
 
   if (!Object.keys(byDate).length) return '';
 
-  const hasMood   = days.some(d => byDate[d]?.mood != null);
-  const hasEnergy = days.some(d => byDate[d]?.energy != null);
-  const hasStress = days.some(d => byDate[d]?.stress != null);
-  if (!hasMood && !hasEnergy && !hasStress) return '';
+  const hasMood    = days.some(d => byDate[d]?.mood    != null);
+  const hasEnergy  = days.some(d => byDate[d]?.energy  != null);
+  const hasStress  = days.some(d => byDate[d]?.stress  != null);
+  const hasSleep   = days.some(d => byDate[d]?.sleep   != null);
+  const hasFocus   = days.some(d => byDate[d]?.focus   != null);
+  const hasAnxiety = days.some(d => byDate[d]?.anxiety != null);
+  if (!hasMood && !hasEnergy && !hasStress && !hasSleep && !hasFocus && !hasAnxiety) return '';
 
   // Wide viewBox so SVG fills container width at a reasonable height.
   // No height attribute — CSS height:auto lets aspect ratio drive height.
@@ -1348,20 +1361,25 @@ function _moodHistoryHtml() {
     return `<text x="${xPos(i).toFixed(1)}" y="${VH - 3}" text-anchor="middle" font-size="9" fill="var(--fg)" opacity="0.38">${DOW[dow]} ${dayNum}</text>`;
   }).join('');
 
-  const MOOD_C   = 'var(--accent)';
-  const ENERGY_C = '#f59e0b';
-  const STRESS_C = 'var(--red)';
+  const SERIES = [
+    { key: 'mood',    label: 'Mood',    color: 'var(--accent)', has: hasMood },
+    { key: 'energy',  label: 'Energy',  color: '#f59e0b',       has: hasEnergy },
+    { key: 'stress',  label: 'Stress',  color: 'var(--red)',    has: hasStress },
+    { key: 'sleep',   label: 'Sleep',   color: '#66bb6a',       has: hasSleep },
+    { key: 'focus',   label: 'Focus',   color: '#a78bfa',       has: hasFocus },
+    { key: 'anxiety', label: 'Anxiety', color: '#fb923c',       has: hasAnxiety },
+  ];
 
   let paths = '', dots = '';
-  if (hasMood)   { paths += `<path d="${buildPath('mood')}" fill="none" stroke="${MOOD_C}" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>`; dots += buildDots('mood', MOOD_C); }
-  if (hasEnergy) { paths += `<path d="${buildPath('energy')}" fill="none" stroke="${ENERGY_C}" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>`; dots += buildDots('energy', ENERGY_C); }
-  if (hasStress) { paths += `<path d="${buildPath('stress')}" fill="none" stroke="${STRESS_C}" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>`; dots += buildDots('stress', STRESS_C); }
+  SERIES.filter(s => s.has).forEach(({ key, color }) => {
+    paths += `<path d="${buildPath(key)}" fill="none" stroke="${color}" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>`;
+    dots  += buildDots(key, color);
+  });
 
-  const legendItems = [
-    hasMood   && `<span class="lmcl-item"><svg width="16" height="4" style="overflow:visible"><line x1="0" y1="2" x2="16" y2="2" stroke="${MOOD_C}" stroke-width="2.5" stroke-linecap="round"/></svg>Mood</span>`,
-    hasEnergy && `<span class="lmcl-item"><svg width="16" height="4" style="overflow:visible"><line x1="0" y1="2" x2="16" y2="2" stroke="${ENERGY_C}" stroke-width="2.5" stroke-linecap="round"/></svg>Energy</span>`,
-    hasStress && `<span class="lmcl-item"><svg width="16" height="4" style="overflow:visible"><line x1="0" y1="2" x2="16" y2="2" stroke="${STRESS_C}" stroke-width="2.5" stroke-linecap="round"/></svg>Stress</span>`,
-  ].filter(Boolean).join('');
+  const legendItems = SERIES
+    .filter(s => s.has)
+    .map(({ label, color }) => `<span class="lmcl-item"><svg width="16" height="4" style="overflow:visible"><line x1="0" y1="2" x2="16" y2="2" stroke="${color}" stroke-width="2.5" stroke-linecap="round"/></svg>${label}</span>`)
+    .join('');
 
   return `<div class="logbook-mood-chart">
     <div class="logbook-mood-chart-head"><span class="logbook-dp-hist-head">Last 14 days</span><span class="logbook-mood-chart-legend">${legendItems}</span></div>
@@ -1687,6 +1705,9 @@ function _entryHasEnhanceableDraft() {
     || _entry.mood_score != null
     || _entry.energy_score != null
     || _entry.stress_score != null
+    || _entry.sleep_score != null
+    || _entry.focus_score != null
+    || _entry.anxiety_score != null
     || datapoints.some(dp => (
       String(dp?.label || dp?.key || '').trim()
       || String(dp?.value_text || '').trim()

@@ -42,6 +42,9 @@ class LogbookEntryUpsert(BaseModel):
     mood_score: Optional[int] = None
     energy_score: Optional[int] = None
     stress_score: Optional[int] = None
+    sleep_score: Optional[int] = None
+    focus_score: Optional[int] = None
+    anxiety_score: Optional[int] = None
     datapoints: Optional[List[LogbookDataPointIn]] = None
 
 
@@ -53,6 +56,9 @@ class LogbookEntryUpdate(BaseModel):
     mood_score: Optional[int] = None
     energy_score: Optional[int] = None
     stress_score: Optional[int] = None
+    sleep_score: Optional[int] = None
+    focus_score: Optional[int] = None
+    anxiety_score: Optional[int] = None
     ai_reflection: Optional[str] = None
     datapoints: Optional[List[LogbookDataPointIn]] = None
 

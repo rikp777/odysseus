@@ -10,11 +10,16 @@ export const MOODS = [
 ];
 
 export const QUICK_DATA = [
-  ['sleep', 'Sleep'],
-  ['energy', 'Energy'],
-  ['stress', 'Stress'],
+  ['sleep_hours', 'Sleep h'],
   ['workout', 'Workout'],
   ['food', 'Food'],
+  ['water', 'Water'],
+  ['weight', 'Weight'],
+  ['steps', 'Steps'],
+  ['caffeine', 'Caffeine'],
+  ['alcohol', 'Alcohol'],
+  ['screen_time', 'Screen'],
+  ['reading', 'Reading'],
   ['pain', 'Pain'],
   ['work', 'Work'],
   ['social', 'Social'],
