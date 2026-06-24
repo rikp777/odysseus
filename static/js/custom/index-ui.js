@@ -40,11 +40,11 @@ function addBillingSpendPill(root) {
 }
 
 function addSidebarLogbookButtons(root) {
-  const calendar = byId(root, 'tool-calendar-btn');
-  if (!calendar) return;
+  const section = byId(root, 'logbook-section');
+  if (!section) return;
 
   if (!byId(root, 'tool-logbook-btn')) {
-    calendar.insertAdjacentHTML('afterend', `
+    section.insertAdjacentHTML('beforeend', `
       <div class="list-item" id="tool-logbook-btn">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
           stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
@@ -58,9 +58,8 @@ function addSidebarLogbookButtons(root) {
     `.trim());
   }
 
-  const logbook = byId(root, 'tool-logbook-btn') || calendar;
   if (!byId(root, 'tool-logbook-atlas-btn')) {
-    logbook.insertAdjacentHTML('afterend', `
+    section.insertAdjacentHTML('beforeend', `
       <div class="list-item" id="tool-logbook-atlas-btn">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
           stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
@@ -74,6 +73,8 @@ function addSidebarLogbookButtons(root) {
       </div>
     `.trim());
   }
+
+  section.style.display = '';
 }
 
 function addVisibilityRows(root) {

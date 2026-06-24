@@ -113,6 +113,33 @@ async function initCustomBillingSpend() {
   });
 }
 
+const _LOCAL_URL_PATTERNS = [/localhost/i, /127\.0\.0\.1/, /0\.0\.0\.0/, /:11434/, /:1234/, /:8080/, /:5000/];
+
+function _hasLocalEndpoint(items) {
+  return items.some(item => {
+    if (item.category === 'local') return true;
+    const url = item.url || '';
+    return _LOCAL_URL_PATTERNS.some(p => p.test(url));
+  });
+}
+
+function _setCookbookVisible(visible) {
+  const sidebarBtn = el('tool-cookbook-btn');
+  const railBtn = el('rail-cookbook');
+  if (sidebarBtn) sidebarBtn.style.display = visible ? '' : 'none';
+  if (railBtn) railBtn.style.display = visible ? '' : 'none';
+}
+
+async function syncCookbookVisibility() {
+  try {
+    const res = await fetch('/api/models', { credentials: 'same-origin' });
+    if (!res.ok) return;
+    const data = await res.json();
+    const items = Array.isArray(data) ? data : (data.items || []);
+    _setCookbookVisible(_hasLocalEndpoint(items));
+  } catch (_) {}
+}
+
 export function installCustomAppWiring() {
   if (installed) return;
   installed = true;
@@ -123,7 +150,11 @@ export function installCustomAppWiring() {
   installCustomVisibilityHooks();
   setTimeout(() => {
     initCustomBillingSpend().catch(() => {});
+    syncCookbookVisibility().catch(() => {});
   }, 0);
+
+  // Re-check when integrations change (user added/removed endpoints)
+  window.addEventListener('odysseus-integrations-changed', () => syncCookbookVisibility().catch(() => {}));
 }
 
 if (document.readyState === 'loading') {
