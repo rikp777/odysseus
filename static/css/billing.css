@@ -41,6 +41,10 @@
       opacity: 0.86;
     }
 
+    .billing-spend-pill.hidden {
+      display: none;
+    }
+
     .billing-spend-pill.billing-warning {
       border-color: color-mix(in srgb, var(--accent-error, var(--red)) 42%, var(--border));
       background: color-mix(in srgb, var(--accent-error, var(--red)) 10%, transparent);
