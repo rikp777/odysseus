@@ -1220,6 +1220,14 @@
   align-items: center;
 }
 
+.logbook-datapoint--suggested {
+  opacity: 0.6;
+}
+
+.logbook-datapoint--suggested:focus-within {
+  opacity: 1;
+}
+
 .logbook-datapoint input {
   width: 100%;
   min-width: 0;

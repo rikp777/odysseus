@@ -177,16 +177,22 @@ function _markDirty() {
   }, SAVE_DELAY);
 }
 
+function _dpHasValue(dp) {
+  return String(dp?.value_text || '').trim() !== '' || dp?.value_number != null || dp?.value_json != null;
+}
+
 function _entryPayload() {
-  const datapoints = (_entry?.datapoints || []).map((dp, index) => ({
-    key: _cleanKey(dp.key || dp.label),
-    label: dp.label || '',
-    value_text: dp.value_text || '',
-    value_number: dp.value_number === '' || dp.value_number == null ? null : Number(dp.value_number),
-    unit: dp.unit || '',
-    value_json: dp.value_json ?? null,
-    sort_order: index,
-  }));
+  const datapoints = (_entry?.datapoints || [])
+    .filter(dp => !dp._suggested || dp.id || _dpHasValue(dp))
+    .map((dp, index) => ({
+      key: _cleanKey(dp.key || dp.label),
+      label: dp.label || '',
+      value_text: dp.value_text || '',
+      value_number: dp.value_number === '' || dp.value_number == null ? null : Number(dp.value_number),
+      unit: dp.unit || '',
+      value_json: dp.value_json ?? null,
+      sort_order: index,
+    }));
   return {
     title: _entry?.title || 'Daily log',
     content: _entry?.content || '',
@@ -425,6 +431,34 @@ function _scheduleAIEstimateRefresh() {
   }, 700);
 }
 
+function _injectSuggestedDatapoints() {
+  if (!_entry || !_dataHistory) return;
+
+  // 4-day window strictly before _date
+  const windowStart = _dateAdd(_date, -4);
+  const windowEnd   = _date; // exclusive
+
+  if (!_entry.datapoints) _entry.datapoints = [];
+  const existingKeys = new Set(_entry.datapoints.map(dp => dp.key || _cleanKey(dp.label || '')).filter(Boolean));
+
+  for (const [key, track] of Object.entries(_dataHistory)) {
+    if (existingKeys.has(key)) continue;
+    const usedInWindow = (track.values || []).some(({ date }) => date >= windowStart && date < windowEnd);
+    if (!usedInWindow) continue;
+    _entry.datapoints.push({
+      key,
+      label: track.label || key,
+      value_text: '',
+      value_number: null,
+      unit: '',
+      value_json: null,
+      sort_order: _entry.datapoints.length,
+      _suggested: true,
+    });
+    existingKeys.add(key);
+  }
+}
+
 async function _loadDate(date) {
   if (_dirty) {
     try { await _saveNow({ silent: true }); } catch (_) {}
@@ -435,6 +469,7 @@ async function _loadDate(date) {
   _aiError = '';
   _aiEstimate = null;
   await Promise.all([_loadEntry(_date), _loadPeople(), _loadLocations(), _loadConnections(), _loadEntries(), _loadFollowups(), _loadReview(), _loadDataHistory(), _loadAIStatus(), _loadAIUsageSummary()]);
+  _injectSuggestedDatapoints();
   await _loadAIEstimate(_aiSelectedMode);
   _render();
 }
@@ -1404,7 +1439,7 @@ function _datapointsHtml() {
   const points = _entry?.datapoints || [];
   if (!points.length) return '<div class="logbook-empty">No datapoints.</div>';
   return points.map((dp, index) => `
-    <div class="logbook-datapoint" data-datapoint-index="${index}">
+    <div class="logbook-datapoint${dp._suggested ? ' logbook-datapoint--suggested' : ''}" data-datapoint-index="${index}"${dp._suggested ? ' title="Suggested from recent entries"' : ''}>
       <input class="logbook-dp-label" value="${_e(dp.label || dp.key || '')}" placeholder="Label">
       <input class="logbook-dp-value" value="${_e(dp.value_text || '')}" placeholder="Value">
       <input class="logbook-dp-number" type="number" step="any" value="${dp.value_number ?? ''}" placeholder="#">
@@ -2021,21 +2056,26 @@ function _bindBodyEvents() {
     const index = Number(row.dataset.datapointIndex);
     const dp = _entry.datapoints[index];
     if (!dp) return;
+    const _clearSuggested = () => { if (dp._suggested) { delete dp._suggested; row.classList.remove('logbook-datapoint--suggested'); } };
     row.querySelector('.logbook-dp-label')?.addEventListener('input', e => {
       dp.label = e.target.value;
       dp.key = _cleanKey(e.target.value);
+      _clearSuggested();
       _markDirty();
     });
     row.querySelector('.logbook-dp-value')?.addEventListener('input', e => {
       dp.value_text = e.target.value;
+      _clearSuggested();
       _markDirty();
     });
     row.querySelector('.logbook-dp-number')?.addEventListener('input', e => {
       dp.value_number = e.target.value;
+      _clearSuggested();
       _markDirty();
     });
     row.querySelector('.logbook-dp-unit')?.addEventListener('input', e => {
       dp.unit = e.target.value;
+      _clearSuggested();
       _markDirty();
     });
   });
