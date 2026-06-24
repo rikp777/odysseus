@@ -1280,44 +1280,95 @@ function _moodHistoryHtml() {
   const days = [];
   for (let i = 13; i >= 0; i--) days.push(_dateAdd(today, -i));
 
-  // Build date → {mood, energy, stress} from _entries
   const byDate = {};
   for (const entry of _entries) {
     const d = entry.entry_date;
     if (!d || !days.includes(d)) continue;
-    const moodLabel = entry.mood_label ? (entry.mood_label.charAt(0).toUpperCase() + entry.mood_label.slice(1)) : null;
-    const energy = entry.energy_score != null ? String(entry.energy_score) : null;
-    const stress = entry.stress_score != null ? String(entry.stress_score) : null;
-    if (moodLabel || energy || stress) byDate[d] = { moodLabel, energy, stress };
+    const mood = entry.mood_score != null ? Number(entry.mood_score) : null;
+    const energy = entry.energy_score != null ? Number(entry.energy_score) : null;
+    const stress = entry.stress_score != null ? Number(entry.stress_score) : null;
+    if (mood != null || energy != null || stress != null) byDate[d] = { mood, energy, stress };
   }
 
   if (!Object.keys(byDate).length) return '';
 
-  const hasMood = days.some(d => byDate[d]?.moodLabel);
-  const hasEnergy = days.some(d => byDate[d]?.energy);
-  const hasStress = days.some(d => byDate[d]?.stress);
+  const hasMood   = days.some(d => byDate[d]?.mood != null);
+  const hasEnergy = days.some(d => byDate[d]?.energy != null);
+  const hasStress = days.some(d => byDate[d]?.stress != null);
   if (!hasMood && !hasEnergy && !hasStress) return '';
 
-  const makeStrip = (label, getter) => {
-    const slots = days.map(date => {
-      const val = getter(byDate[date]);
-      const isToday = date === today;
-      return `<span class="logbook-dp-hist-slot${isToday ? ' today' : ''}${val ? ' has-val' : ''}" title="${_e(date)}">${val ? _e(val) : '·'}</span>`;
+  const VW = 300, VH = 82;
+  const PL = 14, PR = 6, PT = 8, PB = 18;
+  const plotW = VW - PL - PR;
+  const plotH = VH - PT - PB;
+  const n = days.length - 1;
+
+  const xPos = i => PL + (i / n) * plotW;
+  const yPos = v => PT + (1 - (v - 1) / 4) * plotH;
+
+  function buildPath(key) {
+    let d = '', open = false;
+    days.forEach((date, i) => {
+      const v = byDate[date]?.[key];
+      if (v == null) { open = false; return; }
+      const x = xPos(i).toFixed(1), y = yPos(v).toFixed(1);
+      d += open ? ` L${x},${y}` : `M${x},${y}`;
+      open = true;
     });
-    return `<div class="logbook-dp-hist-row">
-      <span class="logbook-dp-hist-label">${_e(label)}</span>
-      <div class="logbook-dp-hist-slots">${slots.join('')}</div>
-    </div>`;
-  };
+    return d;
+  }
 
-  const strips = [];
-  if (hasMood) strips.push(makeStrip('Mood', d => d?.moodLabel || null));
-  if (hasEnergy) strips.push(makeStrip('Energy', d => d?.energy || null));
-  if (hasStress) strips.push(makeStrip('Stress', d => d?.stress || null));
+  function buildDots(key, color) {
+    return days.map((date, i) => {
+      const v = byDate[date]?.[key];
+      if (v == null) return '';
+      const label = key === 'mood' ? (MOODS.find(m => m.score === v)?.label || v) : v;
+      const isToday = date === today;
+      return `<circle cx="${xPos(i).toFixed(1)}" cy="${yPos(v).toFixed(1)}" r="${isToday ? 3.5 : 2.5}" fill="${color}" stroke="var(--panel)" stroke-width="1.2"><title>${date}: ${label}</title></circle>`;
+    }).join('');
+  }
 
-  return `<div class="logbook-dp-history">
-    <div class="logbook-dp-hist-head">Last 14 days</div>
-    ${strips.join('')}
+  // Y gridlines at 1–5
+  const grid = [1,2,3,4,5].map(v => {
+    const y = yPos(v).toFixed(1);
+    return `<line x1="${PL}" y1="${y}" x2="${VW - PR}" y2="${y}" stroke="var(--border)" stroke-width="0.6" opacity="0.6"/>`;
+  }).join('');
+
+  // Y labels
+  const yLabels = ['1','','3','','5'].map((l, i) => {
+    if (!l) return '';
+    const v = i + 1;
+    return `<text x="${PL - 3}" y="${yPos(v).toFixed(1)}" text-anchor="end" dominant-baseline="middle" font-size="7" fill="var(--fg)" opacity="0.38">${l}</text>`;
+  }).join('');
+
+  // X labels — show Mon/Thu anchors
+  const DOW = ['Su','Mo','Tu','We','Th','Fr','Sa'];
+  const xLabels = days.map((d, i) => {
+    const dow = new Date(d + 'T00:00:00').getDay();
+    if (dow !== 1 && dow !== 4 && i !== 0 && i !== n) return '';
+    return `<text x="${xPos(i).toFixed(1)}" y="${VH - 3}" text-anchor="middle" font-size="7" fill="var(--fg)" opacity="0.38">${DOW[dow]}</text>`;
+  }).join('');
+
+  const MOOD_C   = 'var(--accent)';
+  const ENERGY_C = '#f59e0b';
+  const STRESS_C = 'var(--red)';
+
+  let paths = '', dots = '';
+  if (hasMood)   { paths += `<path d="${buildPath('mood')}" fill="none" stroke="${MOOD_C}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>`; dots += buildDots('mood', MOOD_C); }
+  if (hasEnergy) { paths += `<path d="${buildPath('energy')}" fill="none" stroke="${ENERGY_C}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>`; dots += buildDots('energy', ENERGY_C); }
+  if (hasStress) { paths += `<path d="${buildPath('stress')}" fill="none" stroke="${STRESS_C}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>`; dots += buildDots('stress', STRESS_C); }
+
+  const legendItems = [
+    hasMood   && `<span class="lmcl-item"><svg width="12" height="3" style="overflow:visible"><line x1="0" y1="1.5" x2="12" y2="1.5" stroke="${MOOD_C}" stroke-width="2" stroke-linecap="round"/></svg>Mood</span>`,
+    hasEnergy && `<span class="lmcl-item"><svg width="12" height="3" style="overflow:visible"><line x1="0" y1="1.5" x2="12" y2="1.5" stroke="${ENERGY_C}" stroke-width="2" stroke-linecap="round"/></svg>Energy</span>`,
+    hasStress && `<span class="lmcl-item"><svg width="12" height="3" style="overflow:visible"><line x1="0" y1="1.5" x2="12" y2="1.5" stroke="${STRESS_C}" stroke-width="2" stroke-linecap="round"/></svg>Stress</span>`,
+  ].filter(Boolean).join('');
+
+  return `<div class="logbook-mood-chart">
+    <div class="logbook-mood-chart-head"><span class="logbook-dp-hist-head">Last 14 days</span><span class="logbook-mood-chart-legend">${legendItems}</span></div>
+    <svg viewBox="0 0 ${VW} ${VH}" width="100%" height="${VH}" class="logbook-mood-chart-svg" aria-label="Mood chart">
+      ${grid}${yLabels}${paths}${dots}${xLabels}
+    </svg>
   </div>`;
 }
 

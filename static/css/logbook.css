@@ -1214,6 +1214,39 @@
   box-sizing: border-box;
 }
 
+.logbook-mood-chart {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+}
+
+.logbook-mood-chart-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.logbook-mood-chart-legend {
+  display: flex;
+  gap: 10px;
+}
+
+.lmcl-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  opacity: 0.6;
+  white-space: nowrap;
+}
+
+.logbook-mood-chart-svg {
+  display: block;
+  overflow: visible;
+}
+
 .logbook-dp-history {
   margin-top: 14px;
   padding-top: 12px;
