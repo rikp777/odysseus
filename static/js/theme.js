@@ -29,6 +29,7 @@ export const THEMES = {
                             inputBg: '#2f2f2f', brandColor: '#ffffff', brandMixTo: '#ffffff' } },
   claude:     { bg:'#262624', fg:'#f5f4f0', panel:'#30302e', border:'#4a4a47', red:'#c6613f' },
   cute:       { bg:'#fff0f5', fg:'#d4608a', panel:'#fff8fa', border:'#f0c0d0', red:'#ff6b9d' },
+  memex:      { bg:'#12131d', fg:'#9aa4cc', panel:'#0b0c16', border:'#222540', red:'#7c83d9' },
 };
 
 const DEFAULT_THEME = 'dark';
@@ -51,6 +52,7 @@ const THEME_DEFAULT_PATTERN = {
   midnight:   'rain',
   paper:      'dots',
   cyberpunk:  'synapse',
+  memex:      'constellations',
   retrowave:  'embers',
   forest:     'petals',
   ocean:      'constellations',

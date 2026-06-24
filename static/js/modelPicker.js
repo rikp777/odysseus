@@ -5,7 +5,8 @@ import { providerLogo } from './providers.js';
 import uiModule from './ui.js';
 import settingsModule from './settings.js';
 import { sortModelObjects } from './modelSort.js';
-import { formatModelPrice as _formatModelPrice } from './modelPricing.js';
+import { formatModelPrice as _formatModelPrice, modelPriceSortValue } from './modelPricing.js';
+import { modelIntelligenceScore } from './modelRanking.js';
 
 const API_BASE = window.location.origin;
 
@@ -362,6 +363,26 @@ function _initModelPickerDropdown() {
     const byId = new Map();
     all.forEach(m => { if (!byId.has(m.mid)) byId.set(m.mid, m); });
 
+    // ── Value badge: top-quartile intelligence-per-dollar ratio ──
+    const _valueSet = new Set();
+    const _valueScored = all
+      .filter(m => m.pricing)
+      .map(m => {
+        const price = modelPriceSortValue(m.pricing);
+        if (!price || price <= 0) return null;
+        const intel = modelIntelligenceScore(m.mid);
+        if (intel < 30) return null; // skip utility/embedding models
+        return { mid: m.mid, ratio: intel / price };
+      })
+      .filter(Boolean)
+      .sort((a, b) => b.ratio - a.ratio);
+    if (_valueScored.length >= 4) {
+      const cutoff = Math.ceil(_valueScored.length * 0.25);
+      _valueScored.slice(0, Math.min(cutoff, 8)).forEach(x => _valueSet.add(x.mid));
+    } else if (_valueScored.length > 0) {
+      _valueSet.add(_valueScored[0].mid);
+    }
+
     const favs = _loadFavorites();
 
     function _addSection(label) {
@@ -407,6 +428,13 @@ function _initModelPickerDropdown() {
         epSpan.className = 'model-switch-ep';
         epSpan.textContent = _epDisplay;
         subLine.appendChild(epSpan);
+      }
+      if (_valueSet.has(m.mid)) {
+        const valBadge = document.createElement('span');
+        valBadge.className = 'mp-value-badge';
+        valBadge.textContent = '⚡ Value';
+        valBadge.title = 'High capability-to-cost ratio';
+        subLine.appendChild(valBadge);
       }
       if (subLine.children.length) main.appendChild(subLine);
       row.appendChild(main);
