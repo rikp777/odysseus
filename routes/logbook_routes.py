@@ -219,10 +219,10 @@ def setup_logbook_routes() -> APIRouter:
                 key_meta[key] = {'label': dp.label or key, 'unit': dp.unit or ''}
             if key not in key_dates:
                 key_dates[key] = {}
-            val = dp.value_text or (str(dp.value_number) if dp.value_number is not None else None)
+            val = dp.value_text or (str(int(dp.value_number) if dp.value_number == int(dp.value_number) else dp.value_number) if dp.value_number is not None else None)
             if val is not None:
                 date_str = entry_date_val if isinstance(entry_date_val, str) else entry_date_val.isoformat()
-                key_dates[key][date_str] = val + (f' {dp.unit}' if dp.unit else '')
+                key_dates[key][date_str] = val
 
         dates = [(start_date + timedelta(days=i)).isoformat() for i in range(days)]
         history = {}
