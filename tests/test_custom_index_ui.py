@@ -92,6 +92,71 @@ def test_custom_route_metadata_stays_out_of_upstream_index():
     assert "__odysseusCustomRouteMetadata" in metadata
 
 
+def test_sidenav_has_workspace_and_ai_sections_not_tools_section():
+    html = _index_html()
+    assert 'id="workspace-section"' in html
+    assert 'id="ai-section"' in html
+    assert 'id="logbook-section"' in html
+    assert 'id="tools-section"' not in html
+
+
+def test_sidenav_logbook_section_starts_hidden():
+    html = _index_html()
+    idx = html.index('id="logbook-section"')
+    # The opening div tag containing logbook-section must carry display:none
+    tag_start = html.rindex('<', 0, idx)
+    tag_end = html.index('>', idx)
+    tag = html[tag_start:tag_end + 1]
+    assert 'display:none' in tag
+
+
+def test_theme_button_in_user_bar_not_in_workspace_section():
+    html = _index_html()
+    theme_idx = html.index('id="tool-theme-btn"')
+    # user-bar comes after workspace-section/ai-section in DOM
+    ai_section_end = html.index('</div>', html.index('id="ai-section"'))
+    user_bar_idx = html.index('id="sidebar-user-bar"')
+    assert theme_idx > user_bar_idx or theme_idx > ai_section_end
+    # Must NOT appear inside workspace-section
+    ws_start = html.index('id="workspace-section"')
+    ws_end = html.index('id="ai-section"')
+    assert theme_idx < ws_start or theme_idx > ws_end
+
+
+def test_cookbook_btn_in_ai_section():
+    html = _index_html()
+    ai_start = html.index('id="ai-section"')
+    logbook_start = html.index('id="logbook-section"')
+    cookbook_idx = html.index('id="tool-cookbook-btn"')
+    assert ai_start < cookbook_idx < logbook_start
+
+
+def test_billing_pill_hidden_class_has_css_rule():
+    css = (ROOT / "static" / "css" / "billing.css").read_text(encoding="utf-8")
+    assert ".billing-spend-pill.hidden" in css
+    # Rule must contain display:none
+    idx = css.index(".billing-spend-pill.hidden")
+    block_end = css.index("}", idx)
+    block = css[idx:block_end]
+    assert "display" in block and "none" in block
+
+
+def test_app_wiring_has_cookbook_auto_hide():
+    wiring = (ROOT / "static" / "js" / "custom" / "app-wiring.js").read_text(encoding="utf-8")
+    assert "syncCookbookVisibility" in wiring
+    assert "_hasLocalEndpoint" in wiring
+    assert "odysseus-integrations-changed" in wiring
+    assert "rail-cookbook" in wiring
+
+
+def test_index_ui_injects_logbook_into_section_not_after_calendar():
+    ui = (ROOT / "static" / "js" / "custom" / "index-ui.js").read_text(encoding="utf-8")
+    # Must target logbook-section
+    assert "logbook-section" in ui
+    # Must NOT use calendar-btn as insertion anchor
+    assert "tool-calendar-btn" not in ui
+
+
 def test_custom_frontend_assets_are_registered_from_custom_folder():
     html = _index_html()
     rendered = _index_html(render_custom_assets=True)
