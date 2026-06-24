@@ -6,7 +6,7 @@ import re
 from datetime import date, datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 
-from sqlalchemy import func, or_
+from sqlalchemy import or_
 from sqlalchemy.orm import selectinload
 
 from core.database import (
@@ -19,7 +19,14 @@ from core.database import (
     LogbookPersonConnection,
     SessionLocal,
 )
-from src.logbook.utils import reconnect_suggestion
+from src.logbook import repository as logbook_repo
+from src.logbook.utils import (
+    aliases as _aliases,
+    clean_key as _clean_key,
+    entry_snippet as _entry_snippet,
+    json_load as _json_load,
+    reconnect_suggestion,
+)
 
 
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
@@ -138,35 +145,6 @@ def _parse_range(start: Optional[str], end: Optional[str]) -> Tuple[Optional[str
     return _date_str(s) if s else None, _date_str(e) if e else None
 
 
-def _json_load(value: Optional[str], fallback: Any) -> Any:
-    if not value:
-        return fallback
-    try:
-        import json
-        return json.loads(value)
-    except Exception:
-        return fallback
-
-
-def _aliases(row: Any) -> List[str]:
-    raw = _json_load(getattr(row, "aliases", None), [])
-    return [str(x).strip() for x in raw if str(x).strip()] if isinstance(raw, list) else []
-
-
-def _person_stats(db, owner: str) -> Dict[str, Dict[str, Any]]:
-    rows = db.query(
-        LogbookMention.person_id,
-        func.count(LogbookMention.id),
-        func.max(LogbookEntry.entry_date),
-    ).join(LogbookEntry, LogbookMention.entry_id == LogbookEntry.id).filter(
-        LogbookEntry.owner == owner,
-    ).group_by(LogbookMention.person_id).all()
-    return {
-        person_id: {"mention_count": int(count or 0), "last_mentioned": last_date}
-        for person_id, count, last_date in rows
-    }
-
-
 def _person_context(row: LogbookPerson, stats: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     contact = _json_load(getattr(row, "contact_snapshot_json", None), None)
     data = {
@@ -189,10 +167,6 @@ def _person_context(row: LogbookPerson, stats: Optional[Dict[str, Any]] = None) 
     return data
 
 
-def _canonical(value: str) -> str:
-    return re.sub(r"[^a-z0-9]+", " ", (value or "").strip().lower()).strip()
-
-
 def _search_terms(value: str) -> List[str]:
     terms: List[str] = []
     for term in re.findall(r"[a-z0-9][a-z0-9_-]{1,}", (value or "").lower()):
@@ -201,19 +175,6 @@ def _search_terms(value: str) -> List[str]:
         if term not in terms:
             terms.append(term)
     return terms[:8]
-
-
-def _snippet(value: str, limit: int = 260) -> str:
-    text = re.sub(r"\s+", " ", (value or "").strip())
-    return text if len(text) <= limit else text[: limit - 3].rstrip() + "..."
-
-
-def _entry_query(db, owner: str):
-    return db.query(LogbookEntry).options(
-        selectinload(LogbookEntry.datapoints),
-        selectinload(LogbookEntry.mentions).selectinload(LogbookMention.person),
-        selectinload(LogbookEntry.location_mentions).selectinload(LogbookLocationMention.location),
-    ).filter(LogbookEntry.owner == owner)
 
 
 def _entry_people(entry: LogbookEntry) -> List[str]:
@@ -234,9 +195,9 @@ def _entry_people_context(entry: LogbookEntry) -> List[str]:
         if getattr(person, "relationship_label", None):
             bits.append(str(person.relationship_label))
         if getattr(person, "llm_context", None):
-            bits.append(_snippet(str(person.llm_context), 180))
+            bits.append(_entry_snippet(str(person.llm_context), 180))
         elif getattr(person, "notes", None):
-            bits.append(_snippet(str(person.notes), 140))
+            bits.append(_entry_snippet(str(person.notes), 140))
         if bits:
             rows[person.id] = f"{person.display_name}: " + " | ".join(bits)
     return [rows[key] for key in sorted(rows, key=lambda item: rows[item].lower())]
@@ -262,9 +223,9 @@ def _entry_locations_context(entry: LogbookEntry) -> List[str]:
         if getattr(location, "address", None):
             bits.append(str(location.address))
         if getattr(location, "llm_context", None):
-            bits.append(_snippet(str(location.llm_context), 180))
+            bits.append(_entry_snippet(str(location.llm_context), 180))
         elif getattr(location, "notes", None):
-            bits.append(_snippet(str(location.notes), 140))
+            bits.append(_entry_snippet(str(location.notes), 140))
         if bits:
             rows[location.id] = f"{location.display_name}: " + " | ".join(bits)
     return [rows[key] for key in sorted(rows, key=lambda item: rows[item].lower())]
@@ -291,7 +252,7 @@ def entry_to_context(entry: LogbookEntry, *, full: bool = False) -> Dict[str, An
         "title": entry.title or "Daily log",
         "summary": entry.summary,
         "content": content if full else None,
-        "snippet": _snippet(content, 900 if full else 260),
+        "snippet": _entry_snippet(content, 900 if full else 260),
         "mood": {
             "label": entry.mood_label,
             "score": entry.mood_score,
@@ -308,25 +269,13 @@ def entry_to_context(entry: LogbookEntry, *, full: bool = False) -> Dict[str, An
 
 
 def _find_person_id(db, owner: str, value: str) -> Optional[str]:
-    term = _canonical(value)
-    if not term:
-        return None
-    for person in db.query(LogbookPerson).filter(LogbookPerson.owner == owner).all():
-        names = [person.display_name, person.canonical_name, *_aliases(person)]
-        if any(_canonical(n) == term for n in names):
-            return person.id
-    return None
+    person = logbook_repo.find_person(db, owner, value)
+    return person.id if person else None
 
 
 def _find_location_id(db, owner: str, value: str) -> Optional[str]:
-    term = _canonical(value)
-    if not term:
-        return None
-    for location in db.query(LogbookLocation).filter(LogbookLocation.owner == owner).all():
-        names = [location.display_name, location.canonical_name, *_aliases(location)]
-        if any(_canonical(n) == term for n in names):
-            return location.id
-    return None
+    location = logbook_repo.find_location(db, owner, value, include_hidden=True)
+    return location.id if location else None
 
 
 def _apply_filters(query, *, q: str = "", person_id: str = "", location_id: str = "",
@@ -345,7 +294,7 @@ def _apply_filters(query, *, q: str = "", person_id: str = "", location_id: str 
     if location_id:
         query = query.join(LogbookLocationMention, LogbookLocationMention.entry_id == LogbookEntry.id).filter(LogbookLocationMention.location_id == location_id)
     if datapoint_key:
-        key = _canonical(datapoint_key).replace(" ", "_")
+        key = _clean_key(datapoint_key)
         query = query.join(LogbookDataPoint, LogbookDataPoint.entry_id == LogbookEntry.id).filter(LogbookDataPoint.key == key)
     if person_id or location_id or datapoint_key:
         query = query.distinct()
@@ -358,7 +307,7 @@ def get_day(owner: str, day: str) -> Dict[str, Any]:
         return {"ok": False, "error": "date must be YYYY-MM-DD or a simple relative date"}
     db = SessionLocal()
     try:
-        entry = _entry_query(db, owner).filter(LogbookEntry.entry_date == _date_str(parsed)).first()
+        entry = logbook_repo.entry_query(db, owner).filter(LogbookEntry.entry_date == _date_str(parsed)).first()
         return {"ok": True, "entry": entry_to_context(entry, full=True) if entry else None}
     finally:
         db.close()
@@ -380,7 +329,7 @@ def list_range(owner: str, *, start: Optional[str] = None, end: Optional[str] = 
             person_id = _find_person_id(db, owner, person) or ""
         if place and not location_id:
             location_id = _find_location_id(db, owner, place) or ""
-        query = _entry_query(db, owner)
+        query = logbook_repo.entry_query(db, owner)
         if s:
             query = query.filter(LogbookEntry.entry_date >= s)
         if e:
@@ -415,7 +364,7 @@ def search(owner: str, query: str, *, limit: int = 10) -> Dict[str, Any]:
                 LogbookEntry.summary.ilike(like),
             ))
         entries = (
-            _entry_query(db, owner)
+            logbook_repo.entry_query(db, owner)
             .filter(or_(*filters))
             .order_by(LogbookEntry.entry_date.desc(), LogbookEntry.updated_at.desc())
             .limit(limit)
@@ -429,9 +378,9 @@ def search(owner: str, query: str, *, limit: int = 10) -> Dict[str, Any]:
 def directories(owner: str) -> Dict[str, Any]:
     db = SessionLocal()
     try:
-        people_rows = db.query(LogbookPerson).filter(LogbookPerson.owner == owner).order_by(LogbookPerson.display_name.asc()).all()
-        location_rows = db.query(LogbookLocation).filter(LogbookLocation.owner == owner).order_by(LogbookLocation.display_name.asc()).all()
-        stats = _person_stats(db, owner)
+        people_rows = logbook_repo.person_query(db, owner).order_by(LogbookPerson.display_name.asc()).all()
+        location_rows = logbook_repo.location_query(db, owner, include_hidden=True).order_by(LogbookLocation.display_name.asc()).all()
+        stats = logbook_repo.person_stats(db, owner)
         return {
             "ok": True,
             "people": [_person_context(p, stats.get(p.id, {})) for p in people_rows],
@@ -461,19 +410,12 @@ def person_detail(owner: str, *, person: str = "", person_id: str = "", limit: i
             person_id = _find_person_id(db, owner, person) or ""
         if not person_id:
             return {"ok": False, "error": "Person not found"}
-        row = db.query(LogbookPerson).filter(LogbookPerson.owner == owner, LogbookPerson.id == person_id).first()
+        row = logbook_repo.person_query(db, owner).filter(LogbookPerson.id == person_id).first()
         if not row:
             return {"ok": False, "error": "Person not found"}
-        entries = (
-            _entry_query(db, owner)
-            .join(LogbookMention, LogbookMention.entry_id == LogbookEntry.id)
-            .filter(LogbookMention.person_id == row.id)
-            .order_by(LogbookEntry.entry_date.desc(), LogbookEntry.updated_at.desc())
-            .limit(limit)
-            .all()
-        )
+        entries = logbook_repo.entries_for_person(db, owner, row.id, limit=limit)
         contact = _json_load(getattr(row, "contact_snapshot_json", None), None)
-        stats = _person_stats(db, owner).get(row.id, {})
+        stats = logbook_repo.person_stats(db, owner).get(row.id, {})
         person_data = _person_context(row, stats)
         if isinstance(contact, dict):
             person_data["linked_contact"] = contact
@@ -494,17 +436,10 @@ def location_detail(owner: str, *, place: str = "", location_id: str = "", limit
             location_id = _find_location_id(db, owner, place) or ""
         if not location_id:
             return {"ok": False, "error": "Location not found"}
-        row = db.query(LogbookLocation).filter(LogbookLocation.owner == owner, LogbookLocation.id == location_id).first()
+        row = logbook_repo.location_query(db, owner, include_hidden=True).filter(LogbookLocation.id == location_id).first()
         if not row:
             return {"ok": False, "error": "Location not found"}
-        entries = (
-            _entry_query(db, owner)
-            .join(LogbookLocationMention, LogbookLocationMention.entry_id == LogbookEntry.id)
-            .filter(LogbookLocationMention.location_id == row.id)
-            .order_by(LogbookEntry.entry_date.desc(), LogbookEntry.updated_at.desc())
-            .limit(limit)
-            .all()
-        )
+        entries = logbook_repo.entries_for_location(db, owner, row.id, limit=limit)
         return {
             "ok": True,
             "place": {

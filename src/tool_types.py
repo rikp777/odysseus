@@ -4,11 +4,11 @@ from __future__ import annotations
 
 from collections import namedtuple
 
+from src.constants import MAX_OUTPUT_CHARS, MAX_READ_CHARS
+
 MAX_AGENT_ROUNDS = 50
 SHELL_TIMEOUT = 60
 PYTHON_TIMEOUT = 30
-MAX_OUTPUT_CHARS = 10_000
-MAX_READ_CHARS = 20_000
 
 # Tool types that trigger execution.
 TOOL_TAGS = {"bash", "python", "web_search", "web_fetch", "read_file", "write_file", "edit_file",

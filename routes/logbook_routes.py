@@ -23,6 +23,7 @@ from src.auth_helpers import effective_user, require_user
 from src.logbook import geocoding as logbook_geocoding
 from src.logbook.map_tiles import map_tile_config
 from src.logbook import repository as logbook_repo
+from src.logbook import review as logbook_review
 from src.logbook import serializers as logbook_serializers
 from src.logbook import utils as logbook_utils
 from routes.logbook_ai_routes import register_logbook_ai_routes
@@ -159,6 +160,28 @@ def setup_logbook_routes() -> APIRouter:
                 query = query.distinct()
             entries = query.order_by(LogbookEntry.entry_date.desc(), LogbookEntry.updated_at.desc()).all()
             return {"entries": [logbook_serializers.entry_to_dict(entry, full=False) for entry in entries]}
+        finally:
+            db.close()
+
+    @router.get("/review")
+    def review(
+        request: Request,
+        period: str = "week",
+        date: Optional[str] = None,
+        start: Optional[str] = None,
+        end: Optional[str] = None,
+    ):
+        owner = _owner(request)
+        db = SessionLocal()
+        try:
+            return logbook_review.build_review_payload(
+                db,
+                owner,
+                period=period,
+                anchor=date,
+                start=start,
+                end=end,
+            )
         finally:
             db.close()
 

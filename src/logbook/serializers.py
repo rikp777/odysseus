@@ -32,6 +32,8 @@ def person_to_dict(person: LogbookPerson) -> Dict[str, Any]:
         "contact_uid": getattr(person, "contact_uid", None),
         "contact_source": getattr(person, "contact_source", None),
         "contact_snapshot": contact_snapshot if isinstance(contact_snapshot, dict) else None,
+        "followup_snoozed_until": getattr(person, "followup_snoozed_until", None),
+        "followup_dismissed_at": getattr(person, "followup_dismissed_at", None),
         "created_at": person.created_at.isoformat() if person.created_at else None,
         "updated_at": person.updated_at.isoformat() if person.updated_at else None,
     }

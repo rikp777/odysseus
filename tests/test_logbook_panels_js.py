@@ -72,7 +72,11 @@ def test_logbook_panel_rendering_keeps_rows_and_suggestions_stable():
         const icon = (kind, size) => `<i data-kind="${kind}" data-size="${size}"></i>`;
         const peopleHtml = renderPeoplePanelHtml({
           entry: { people: [{ display_name: 'Jeanine' }] },
-          aiPreview: { people_suggestions: [{ display_name: 'Alex', reason: 'mentioned' }] },
+          aiPreview: { people_suggestions: [
+            { display_name: 'Alex', reason: 'mentioned' },
+            { display_name: 'Sam', reason: 'already handled' }
+          ] },
+          dismissedSuggestions: ['person:1'],
           people: [{ id: 'jeanine', display_name: 'Jeanine', mention_count: 1, last_mentioned: '2026-06-08' }],
           activePersonId: 'jeanine',
           escapeHtml,
@@ -84,7 +88,11 @@ def test_logbook_panel_rendering_keeps_rows_and_suggestions_stable():
         });
         const locationsHtml = renderLocationsPanelHtml({
           entry: { locations: [{ display_name: 'Gym' }] },
-          aiPreview: { location_suggestions: [{ display_name: 'Office', reason: 'visited' }] },
+          aiPreview: { location_suggestions: [
+            { display_name: 'Office', reason: 'visited' },
+            { display_name: 'Park', reason: 'already handled' }
+          ] },
+          dismissedSuggestions: new Set(['location:1']),
           locations: [
             { id: 'gym', display_name: 'Gym', mention_count: 1, last_mentioned: '2026-06-08' },
             { id: 'old', display_name: 'Old Office', mention_count: 1, hidden: true }
@@ -97,9 +105,13 @@ def test_logbook_panel_rendering_keeps_rows_and_suggestions_stable():
         console.log(JSON.stringify({
           peopleHasToday: peopleHtml.includes('Jeanine'),
           peopleHasSuggestionAction: peopleHtml.includes('data-add-ai-person="0">Link</button>'),
+          peopleMarksHandledSuggestion: peopleHtml.includes('data-ai-suggestion-key="person:1"') && peopleHtml.includes('logbook-suggestion-row handled') && peopleHtml.includes('Sam'),
+          peopleDisablesHandledAction: peopleHtml.includes('disabled aria-disabled="true">Handled</button>'),
           peopleHasActiveRow: peopleHtml.includes('logbook-directory-row active'),
           peopleHasInjectedPreviews: peopleHtml.includes('<facts></facts>') && peopleHtml.includes('<connections></connections>'),
           locationHasSuggestion: locationsHtml.includes('data-add-ai-location="0">Add</button>'),
+          locationMarksHandledSuggestion: locationsHtml.includes('data-ai-suggestion-key="location:1"') && locationsHtml.includes('Park'),
+          locationDisablesHandledAction: locationsHtml.includes('disabled aria-disabled="true">Handled</button>'),
           locationHasActiveRow: locationsHtml.includes('logbook-directory-row active'),
           locationHidesHidden: !locationsHtml.includes('Old Office')
         }));
@@ -109,9 +121,13 @@ def test_logbook_panel_rendering_keeps_rows_and_suggestions_stable():
     assert values == {
         "peopleHasToday": True,
         "peopleHasSuggestionAction": True,
+        "peopleMarksHandledSuggestion": True,
+        "peopleDisablesHandledAction": True,
         "peopleHasActiveRow": True,
         "peopleHasInjectedPreviews": True,
         "locationHasSuggestion": True,
+        "locationMarksHandledSuggestion": True,
+        "locationDisablesHandledAction": True,
         "locationHasActiveRow": True,
         "locationHidesHidden": True,
     }

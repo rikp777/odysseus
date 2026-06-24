@@ -1,25 +1,25 @@
 export const AI_MODE_GROUPS = [
   {
-    label: 'Write',
+    label: 'Refine',
     items: [
-      { mode: 'structure_day', label: 'Draft', detail: 'Shape today', icon: 'book', primary: true },
+      { mode: 'structure_day', label: 'Rewrite', detail: 'Shape the entry', icon: 'book' },
       { mode: 'clean_spelling', label: 'Spelling', detail: 'Keep voice', icon: 'bold' },
       { mode: 'ask_questions', label: 'Questions', detail: 'Find gaps', icon: 'quote' },
     ],
   },
   {
-    label: 'Review',
+    label: 'Reflect',
     items: [
       { mode: 'summarize', label: 'Summary', detail: 'Short recap', icon: 'list' },
       { mode: 'reflect', label: 'Reflect', detail: 'Gentle note', icon: 'quote' },
     ],
   },
   {
-    label: 'Extract',
+    label: 'Remember',
     items: [
-      { mode: 'extract_people', label: 'People', detail: 'Mentions', icon: 'person' },
-      { mode: 'extract_locations', label: 'Places', detail: 'Locations', icon: 'location' },
-      { mode: 'extract_all', label: 'Detect', detail: 'Links and data', icon: 'link' },
+      { mode: 'extract_all', label: 'Detect', detail: 'People, places, meals', icon: 'link', primary: true },
+      { mode: 'extract_people', label: 'People', detail: 'Mentioned people', icon: 'person' },
+      { mode: 'extract_locations', label: 'Places', detail: 'Mentioned places', icon: 'location' },
       { mode: 'extract_facts', label: 'Facts', detail: 'Saved entry', icon: 'food', facts: true },
     ],
   },
@@ -131,8 +131,8 @@ function runControlsHtml(context, disabled, disabledTitle) {
   const { escapeHtml, modeGroups, selectedMode } = context;
   const selected = aiModeMeta(selectedMode, modeGroups);
   const isFactsMode = selectedMode === 'extract_facts';
-  const label = isFactsMode ? 'Run fact extraction' : 'Run AI help';
-  const detail = isFactsMode ? 'Uses the saved entry' : `${selected.label} | ${selected.detail}`;
+  const label = isFactsMode ? 'Extract saved facts' : 'Run enhancement';
+  const detail = isFactsMode ? 'Uses the saved entry' : selected.detail;
   return `
     <div class="logbook-ai-runbar">
       <div class="logbook-ai-runbar-copy">
@@ -171,6 +171,34 @@ function runReceiptHtml(context) {
   `;
 }
 
+function dismissedSuggestionSet(value) {
+  if (value instanceof Set) return value;
+  return new Set(Array.isArray(value) ? value : []);
+}
+
+function isDismissed(context, key) {
+  return context.dismissedSuggestions?.has?.(key);
+}
+
+function dismissButtonHtml(key, escapeHtml) {
+  return `<button type="button" class="cal-btn logbook-ai-dismiss" data-dismiss-ai-suggestion="${escapeHtml(key)}">Dismiss</button>`;
+}
+
+function previewBlockHtml({ title, key, body, actions = '', context }) {
+  if (!body || isDismissed(context, key)) return '';
+  const { escapeHtml } = context;
+  return `
+    <div class="logbook-preview-block" data-ai-suggestion-key="${escapeHtml(key)}">
+      <div class="logbook-preview-block-head">
+        <div class="logbook-subtitle">${escapeHtml(title)}</div>
+        ${dismissButtonHtml(key, escapeHtml)}
+      </div>
+      ${body}
+      ${actions ? `<div class="logbook-preview-actions">${actions}</div>` : ''}
+    </div>
+  `;
+}
+
 function previewHtml(context) {
   const {
     escapeHtml,
@@ -182,45 +210,123 @@ function previewHtml(context) {
   const p = preview || {};
   const warning = p.warning ? `<div class="logbook-ai-warning">${escapeHtml(p.warning)}</div>` : '';
   const questions = (p.questions || []).map(q => `<li>${escapeHtml(q)}</li>`).join('');
-  const data = (p.datapoint_suggestions || []).map(d => `
-    <div class="logbook-suggestion-row">
+  const dataItems = (p.datapoint_suggestions || [])
+    .map((item, index) => ({ item, index, key: `data:${index}` }))
+    .filter(({ key }) => !isDismissed(context, key));
+  const data = dataItems.map(({ item: d, index, key }) => `
+    <div class="logbook-suggestion-row" data-ai-suggestion-key="${escapeHtml(key)}">
       <strong>${escapeHtml(d.label || d.key || 'Data')}</strong>
       <span>${escapeHtml(d.value_text || d.value_number || '')}${d.unit ? ` ${escapeHtml(d.unit)}` : ''}</span>
+      <div class="logbook-suggestion-actions">
+        <button type="button" class="cal-btn" data-add-ai-data-index="${index}">Add</button>
+        ${dismissButtonHtml(key, escapeHtml)}
+      </div>
     </div>
   `).join('');
-  const people = (p.people_suggestions || []).map((person, index) => `
-    <div class="logbook-suggestion-row">
+  const people = (p.people_suggestions || []).map((person, index) => ({ person, index, key: `person:${index}` }))
+    .filter(({ key }) => !isDismissed(context, key))
+    .map(({ person, index, key }) => `
+    <div class="logbook-suggestion-row" data-ai-suggestion-key="${escapeHtml(key)}">
       <strong>${escapeHtml(person.display_name || person.surface_text || 'Person')}</strong>
       <span>${escapeHtml(personSuggestionMeta(person))}</span>
-      <button type="button" class="cal-btn" data-add-ai-person="${index}">${escapeHtml(personSuggestionActionLabel(person))}</button>
+      <div class="logbook-suggestion-actions">
+        <button type="button" class="cal-btn" data-add-ai-person="${index}">${escapeHtml(personSuggestionActionLabel(person))}</button>
+        ${dismissButtonHtml(key, escapeHtml)}
+      </div>
     </div>
   `).join('');
-  const locations = (p.location_suggestions || []).map((loc, index) => `
-    <div class="logbook-suggestion-row">
+  const locations = (p.location_suggestions || []).map((loc, index) => ({ loc, index, key: `location:${index}` }))
+    .filter(({ key }) => !isDismissed(context, key))
+    .map(({ loc, index, key }) => `
+    <div class="logbook-suggestion-row" data-ai-suggestion-key="${escapeHtml(key)}">
       <strong>${escapeHtml(loc.display_name || loc.surface_text || 'Place')}</strong>
       <span>${escapeHtml(loc.reason || 'Suggested from entry')}</span>
-      <button type="button" class="cal-btn" data-add-ai-location="${index}">Add</button>
+      <div class="logbook-suggestion-actions">
+        <button type="button" class="cal-btn" data-add-ai-location="${index}">Add</button>
+        ${dismissButtonHtml(key, escapeHtml)}
+      </div>
     </div>
   `).join('');
-  const connections = (p.connection_suggestions || []).map(c => `
-    <div class="logbook-suggestion-row">
+  const connections = (p.connection_suggestions || []).map((c, index) => ({ c, index, key: `connection:${index}` }))
+    .filter(({ key }) => !isDismissed(context, key))
+    .map(({ c, key }) => `
+    <div class="logbook-suggestion-row" data-ai-suggestion-key="${escapeHtml(key)}">
       <strong>${escapeHtml(c.person_a || 'Person')} + ${escapeHtml(c.person_b || 'Person')}</strong>
       <span>${escapeHtml(c.description || c.connection_type || 'Possible connection')}</span>
+      <div class="logbook-suggestion-actions">${dismissButtonHtml(key, escapeHtml)}</div>
     </div>
   `).join('');
+  const blocks = [
+    previewBlockHtml({
+      title: 'Preview',
+      key: 'content',
+      body: p.preview_content ? `<div class="logbook-rendered-text">${renderLogbookText(p.preview_content)}</div>` : '',
+      actions: p.preview_content ? '<button type="button" class="cal-btn cal-btn-primary" id="logbook-apply-ai">Apply rewrite</button>' : '',
+      context,
+    }),
+    previewBlockHtml({
+      title: 'Summary',
+      key: 'summary',
+      body: p.summary ? `<p>${escapeHtml(p.summary)}</p>` : '',
+      context,
+    }),
+    previewBlockHtml({
+      title: 'Reflection',
+      key: 'reflection',
+      body: p.reflection ? `<p>${escapeHtml(p.reflection)}</p>` : '',
+      context,
+    }),
+    previewBlockHtml({
+      title: 'Questions',
+      key: 'questions',
+      body: questions ? `<ul>${questions}</ul>` : '',
+      context,
+    }),
+    previewBlockHtml({
+      title: 'Mood',
+      key: 'mood',
+      body: p.mood_suggestion ? `<p>${escapeHtml(p.mood_suggestion.label || '')} ${p.mood_suggestion.score ? `(${escapeHtml(p.mood_suggestion.score)})` : ''}</p>` : '',
+      actions: p.mood_suggestion ? '<button type="button" class="cal-btn" id="logbook-apply-ai-mood">Use mood</button>' : '',
+      context,
+    }),
+    previewBlockHtml({
+      title: 'Data suggestions',
+      key: 'data',
+      body: data,
+      actions: dataItems.length > 1 ? '<button type="button" class="cal-btn" id="logbook-add-ai-data">Add remaining data</button>' : '',
+      context,
+    }),
+    previewBlockHtml({
+      title: 'People suggestions',
+      key: 'people',
+      body: people,
+      context,
+    }),
+    previewBlockHtml({
+      title: 'Place suggestions',
+      key: 'locations',
+      body: locations,
+      context,
+    }),
+    previewBlockHtml({
+      title: 'Connection suggestions',
+      key: 'connections',
+      body: connections,
+      context,
+    }),
+  ].filter(Boolean);
+  const restore = context.dismissedSuggestions.size
+    ? '<button type="button" class="cal-btn" id="logbook-restore-ai-suggestions">Restore dismissed</button>'
+    : '';
+  const empty = !blocks.length
+    ? '<div class="logbook-empty">All suggestions are hidden.</div>'
+    : '';
   return `
     ${warning}
-    ${p.preview_content ? `<div class="logbook-preview-block"><div class="logbook-subtitle">Preview</div><div class="logbook-rendered-text">${renderLogbookText(p.preview_content)}</div></div>` : ''}
-    ${p.summary ? `<div class="logbook-preview-block"><div class="logbook-subtitle">Summary</div><p>${escapeHtml(p.summary)}</p></div>` : ''}
-    ${p.reflection ? `<div class="logbook-preview-block"><div class="logbook-subtitle">Reflection</div><p>${escapeHtml(p.reflection)}</p></div>` : ''}
-    ${questions ? `<div class="logbook-preview-block"><div class="logbook-subtitle">Questions</div><ul>${questions}</ul></div>` : ''}
-    ${p.mood_suggestion ? `<div class="logbook-preview-block"><div class="logbook-subtitle">Mood</div><p>${escapeHtml(p.mood_suggestion.label || '')} ${p.mood_suggestion.score ? `(${escapeHtml(p.mood_suggestion.score)})` : ''}</p><button type="button" class="cal-btn" id="logbook-apply-ai-mood">Use mood</button></div>` : ''}
-    ${data ? `<div class="logbook-preview-block"><div class="logbook-subtitle">Data suggestions</div>${data}<button type="button" class="cal-btn" id="logbook-add-ai-data">Add data</button></div>` : ''}
-    ${people ? `<div class="logbook-preview-block"><div class="logbook-subtitle">People suggestions</div>${people}</div>` : ''}
-    ${locations ? `<div class="logbook-preview-block"><div class="logbook-subtitle">Place suggestions</div>${locations}</div>` : ''}
-    ${connections ? `<div class="logbook-preview-block"><div class="logbook-subtitle">Connection suggestions</div>${connections}</div>` : ''}
+    ${blocks.join('')}
+    ${empty}
     <div class="logbook-preview-actions">
-      ${p.preview_content ? '<button type="button" class="cal-btn cal-btn-primary" id="logbook-apply-ai">Apply</button>' : ''}
+      ${restore}
       <button type="button" class="cal-btn" id="logbook-copy-ai">Copy</button>
       <button type="button" class="cal-btn" id="logbook-clear-ai">Cancel</button>
     </div>
@@ -232,6 +338,7 @@ export function renderAIPanelHtml(options = {}) {
     actual: options.actual || null,
     aiStatus: options.aiStatus || null,
     busy: Boolean(options.busy),
+    dismissedSuggestions: dismissedSuggestionSet(options.dismissedSuggestions),
     entryContent: options.entryContent || '',
     error: options.error || '',
     escapeHtml: options.escapeHtml || fallbackEscapeHtml,
@@ -246,7 +353,8 @@ export function renderAIPanelHtml(options = {}) {
     personSuggestionMeta: options.personSuggestionMeta || (() => ''),
     preview: options.preview || null,
     renderLogbookText: options.renderLogbookText || fallbackEscapeHtml,
-    selectedMode: options.selectedMode || 'structure_day',
+    selectedMode: options.selectedMode || 'extract_all',
+    showBackButton: options.showBackButton !== false,
     usage: options.usage || {},
   };
   const aiAvailable = context.aiStatus?.available === true;
@@ -255,15 +363,21 @@ export function renderAIPanelHtml(options = {}) {
   const preview = context.preview
     ? previewHtml(context)
     : aiAvailable
-      ? '<div class="logbook-empty">AI previews appear here.</div>'
-      : '<div class="logbook-empty">Manual writing still works. Configure a default or utility LLM provider to enable AI help.</div>';
+      ? '<div class="logbook-empty">Run Detect to turn this entry into people, places, meals, mood, and data suggestions.</div>'
+      : '<div class="logbook-empty">Manual writing stays available. Configure a default or utility LLM provider to enable enhancement.</div>';
+  const modelBadge = aiAvailable
+    ? `<span class="logbook-ai-model" title="${context.escapeHtml(context.aiStatus.model || '')}">${context.escapeHtml(context.aiStatus.model || 'AI ready')}</span>`
+    : '';
+  const backButton = context.showBackButton
+    ? '<button type="button" class="cal-btn" id="logbook-back-to-write">Back to Write</button>'
+    : '';
   return `
     <div class="logbook-section-head logbook-ai-head">
-      <h5>AI help</h5>
-      ${aiAvailable ? `<span class="logbook-ai-model" title="${context.escapeHtml(context.aiStatus.model || '')}">${context.escapeHtml(context.aiStatus.model || 'AI ready')}</span>` : ''}
+      <h5>Enhance</h5>
+      <div class="logbook-ai-head-actions">${modelBadge}${backButton}</div>
     </div>
     <div class="logbook-ai-control-box">
-      ${aiAvailable ? usageMeterHtml(context) : `<div class="logbook-ai-disabled">AI help is off: ${context.escapeHtml(context.aiStatus?.reason || 'No LLM provider configured')}.</div>`}
+      ${aiAvailable ? usageMeterHtml(context) : `<div class="logbook-ai-disabled">Enhancement is off: ${context.escapeHtml(context.aiStatus?.reason || 'No LLM provider configured')}.</div>`}
       <div class="logbook-ai-actions">${modeGroupsHtml(context, disabled, disabledTitle)}</div>
       ${aiAvailable ? runControlsHtml(context, disabled, disabledTitle) : ''}
       ${context.busy ? '<div class="logbook-ai-status">Thinking...</div>' : ''}
@@ -291,12 +405,12 @@ export function bindAIPanelEvents(root = document, handlers = {}) {
   const selectedMode = () => (
     typeof handlers.selectedMode === 'function'
       ? handlers.selectedMode()
-      : (handlers.selectedMode || 'structure_day')
+      : (handlers.selectedMode || 'extract_all')
   );
 
   root.querySelectorAll('[data-ai-mode]').forEach(btn => {
     btn.addEventListener('click', () => {
-      const mode = btn.dataset.aiMode || 'structure_day';
+      const mode = btn.dataset.aiMode || 'extract_all';
       handlers.selectMode?.(mode);
     });
   });
@@ -305,12 +419,20 @@ export function bindAIPanelEvents(root = document, handlers = {}) {
     if (mode === 'extract_facts') runHandler(() => handlers.extractFacts?.(), onError);
     else runHandler(() => handlers.runAI?.(mode), onError);
   });
+  root.querySelector('#logbook-back-to-write')?.addEventListener('click', () => handlers.backToWrite?.());
   root.querySelector('#logbook-extract-facts')?.addEventListener('click', () => runHandler(() => handlers.extractFacts?.(), onError));
   root.querySelector('#logbook-apply-ai')?.addEventListener('click', () => handlers.applyContent?.());
   root.querySelector('#logbook-copy-ai')?.addEventListener('click', () => handlers.copyAI?.());
   root.querySelector('#logbook-clear-ai')?.addEventListener('click', () => handlers.clearAI?.());
   root.querySelector('#logbook-apply-ai-mood')?.addEventListener('click', () => handlers.applyMood?.());
   root.querySelector('#logbook-add-ai-data')?.addEventListener('click', () => handlers.addData?.());
+  root.querySelectorAll('[data-add-ai-data-index]').forEach(btn => {
+    btn.addEventListener('click', () => handlers.addData?.(Number(btn.dataset.addAiDataIndex)));
+  });
+  root.querySelectorAll('[data-dismiss-ai-suggestion]').forEach(btn => {
+    btn.addEventListener('click', () => handlers.dismissAISuggestion?.(btn.dataset.dismissAiSuggestion || ''));
+  });
+  root.querySelector('#logbook-restore-ai-suggestions')?.addEventListener('click', () => handlers.restoreAISuggestions?.());
   handlers.bindSuggestions?.(root);
   handlers.bindEntityLinks?.(root);
 }

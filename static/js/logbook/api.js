@@ -30,6 +30,16 @@ export function listEntries(params) {
   return jsonFetch(`${API_BASE}/api/logbook/entries?${params.toString()}`);
 }
 
+export function getReview(params = new URLSearchParams()) {
+  const query = params.toString();
+  return jsonFetch(`${API_BASE}/api/logbook/review${query ? `?${query}` : ''}`);
+}
+
+export function listFollowups(params = new URLSearchParams()) {
+  const query = params.toString();
+  return jsonFetch(`${API_BASE}/api/logbook/followups${query ? `?${query}` : ''}`);
+}
+
 export function listPeople() {
   return jsonFetch(`${API_BASE}/api/logbook/people`);
 }
@@ -54,6 +64,13 @@ export function createPerson(payload) {
 export function updatePerson(personId, payload) {
   return jsonFetch(`${API_BASE}/api/logbook/people/${encodeURIComponent(personId)}`, {
     method: 'PUT',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function updatePersonFollowup(personId, payload) {
+  return jsonFetch(`${API_BASE}/api/logbook/people/${encodeURIComponent(personId)}/followup`, {
+    method: 'POST',
     body: JSON.stringify(payload),
   });
 }

@@ -10,6 +10,11 @@ function defaultIcon() {
   return '';
 }
 
+function handledSuggestionSet(value) {
+  if (value instanceof Set) return value;
+  return new Set(Array.isArray(value) ? value : []);
+}
+
 export function directoryMeta(item, aliases = '') {
   const count = Number(item?.mention_count || 0);
   const bits = [];
@@ -123,6 +128,7 @@ export function renderLocationRowsHtml({
 export function renderPeoplePanelHtml({
   entry = {},
   aiPreview = {},
+  dismissedSuggestions = [],
   people = [],
   search = '',
   sort = 'recent',
@@ -135,17 +141,25 @@ export function renderPeoplePanelHtml({
   renderConnectionsPreview = noopHtml,
 } = {}) {
   const e = escapeHtml;
+  const handledSuggestions = handledSuggestionSet(dismissedSuggestions);
   const todayPeople = entry?.people || [];
   const today = todayPeople.length
     ? todayPeople.map(person => `<span class="logbook-person-chip">${icon('person', 12)}${e(person.display_name)}</span>`).join('')
     : '<div class="logbook-empty">No people mentioned today.</div>';
-  const suggestions = (aiPreview?.people_suggestions || []).map((person, index) => `
-    <div class="logbook-suggestion-row">
+  const suggestions = (aiPreview?.people_suggestions || []).map((person, index) => {
+    const key = `person:${index}`;
+    const handled = handledSuggestions.has(key);
+    const action = handled
+      ? '<button type="button" class="cal-btn" disabled aria-disabled="true">Handled</button>'
+      : `<button type="button" class="cal-btn" data-add-ai-person="${index}">${e(personSuggestionActionLabel(person))}</button>`;
+    return `
+    <div class="logbook-suggestion-row${handled ? ' handled' : ''}" data-ai-suggestion-key="${e(key)}">
       <strong>${e(person.display_name || person.surface_text || 'Person')}</strong>
       <span>${e(personSuggestionMeta(person))}</span>
-      <button type="button" class="cal-btn" data-add-ai-person="${index}">${e(personSuggestionActionLabel(person))}</button>
+      <div class="logbook-suggestion-actions">${action}</div>
     </div>
-  `).join('');
+  `;
+  }).join('');
   return `
     <div class="logbook-section-head"><h5>People</h5></div>
     <div class="logbook-chip-wrap">${today}</div>
@@ -175,6 +189,7 @@ export function renderPeoplePanelHtml({
 export function renderLocationsPanelHtml({
   entry = {},
   aiPreview = {},
+  dismissedSuggestions = [],
   locations = [],
   search = '',
   sort = 'recent',
@@ -183,17 +198,25 @@ export function renderLocationsPanelHtml({
   icon = defaultIcon,
 } = {}) {
   const e = escapeHtml;
+  const handledSuggestions = handledSuggestionSet(dismissedSuggestions);
   const todayLocations = entry?.locations || [];
   const today = todayLocations.length
     ? todayLocations.map(location => `<span class="logbook-person-chip">${icon('location', 12)}${e(location.display_name)}</span>`).join('')
     : '<div class="logbook-empty">No places mentioned today.</div>';
-  const suggestions = (aiPreview?.location_suggestions || []).map((location, index) => `
-    <div class="logbook-suggestion-row">
+  const suggestions = (aiPreview?.location_suggestions || []).map((location, index) => {
+    const key = `location:${index}`;
+    const handled = handledSuggestions.has(key);
+    const action = handled
+      ? '<button type="button" class="cal-btn" disabled aria-disabled="true">Handled</button>'
+      : `<button type="button" class="cal-btn" data-add-ai-location="${index}">Add</button>`;
+    return `
+    <div class="logbook-suggestion-row${handled ? ' handled' : ''}" data-ai-suggestion-key="${e(key)}">
       <strong>${e(location.display_name || location.surface_text || 'Place')}</strong>
       <span>${e(location.reason || 'Suggested from entry')}</span>
-      <button type="button" class="cal-btn" data-add-ai-location="${index}">Add</button>
+      <div class="logbook-suggestion-actions">${action}</div>
     </div>
-  `).join('');
+  `;
+  }).join('');
   return `
     <div class="logbook-section-head"><h5>Places</h5></div>
     <div class="logbook-chip-wrap">${today}</div>

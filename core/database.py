@@ -1154,6 +1154,8 @@ def _migrate_logbook_schema():
             "contact_uid": "TEXT",
             "contact_source": "TEXT",
             "contact_snapshot_json": "TEXT",
+            "followup_snoozed_until": "TEXT",
+            "followup_dismissed_at": "TEXT",
             "created_at": "DATETIME",
             "updated_at": "DATETIME",
         },
@@ -1980,6 +1982,8 @@ class LogbookPerson(TimestampMixin, Base):
     contact_uid    = Column(String, nullable=True, index=True)
     contact_source = Column(String, nullable=True)
     contact_snapshot_json = Column(Text, nullable=True)
+    followup_snoozed_until = Column(String, nullable=True)
+    followup_dismissed_at = Column(String, nullable=True)
 
     mentions = relationship("LogbookMention", back_populates="person", cascade="all, delete-orphan")
     facts = relationship("LogbookPersonFact", back_populates="person", cascade="all, delete-orphan")

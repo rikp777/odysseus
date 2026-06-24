@@ -30,7 +30,6 @@ def _request():
 
 
 def _patch_auth(monkeypatch):
-    monkeypatch.setattr(session_routes, "get_current_user", lambda request: None)
     monkeypatch.setattr(session_routes, "effective_user", lambda request: None)
 
 

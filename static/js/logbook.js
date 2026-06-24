@@ -16,14 +16,17 @@ import {
   getEntry,
   getEntryRevision,
   getLogbookAIUsage,
+  getReview,
   listConnections,
   listEntryRevisions,
   listEntries,
+  listFollowups,
   listLocations,
   listPeople,
   restoreEntryRevision,
   saveEntry,
   updateConnection,
+  updatePersonFollowup,
 } from './logbook/api.js';
 import {
   entityAutocompleteContext as _entityAutocompleteContext,
@@ -66,6 +69,7 @@ import {
   wrapRichSelection as _wrapRichSelection,
 } from './logbook/editor.js';
 import { iconBook as _iconBook, logbookIcon as _logbookIcon } from './logbook/icons.js';
+import { renderFollowupsHtml as _renderFollowupsHtml } from './logbook/followups-panel.js';
 import {
   bindDirectoryControls as _bindDirectoryControls,
   bindDirectoryRowActions as _bindDirectoryRowActions,
@@ -76,12 +80,25 @@ import {
   renderPeopleRowsHtml as _renderPeopleRowsHtml,
 } from './logbook/panels.js';
 import {
+  connectionCardHtml as _sharedConnectionCardHtml,
+  connectionTypeLabel as _connectionTypeLabel,
+  factTypeLabel as _factTypeLabel,
+  safePersonImage as _safePersonImage,
+} from './logbook/people-ui.js';
+import { renderReviewPanelHtml as _renderReviewPanelHtml } from './logbook/review-panel.js';
+import {
   cleanKey as _cleanKey,
   dateAdd as _dateAdd,
   dateLabel as _dateLabel,
   escapeHtml as _e,
   today as _today,
 } from './logbook/utils.js';
+import {
+  LOGBOOK_TABS as _LOGBOOK_TABS,
+  logbookTabLabel as _logbookTabLabel,
+  logbookTabTransition as _logbookTabTransition,
+  syncLogbookTabChrome as _syncLogbookTabChrome,
+} from './logbook/tabs.js';
 
 let _open = false;
 let _date = _today();
@@ -90,20 +107,31 @@ let _entries = [];
 let _people = [];
 let _locations = [];
 let _connections = [];
+let _followups = [];
+let _followupCounts = {};
+let _followupsBusy = false;
+let _followupsError = '';
 let _saveTimer = null;
 let _dirty = false;
 let _saving = false;
 let _saveStatus = 'Saved';
 let _activeTab = 'write';
+let _browseOpen = false;
+let _writeToolsOpen = false;
 let _aiPreview = null;
+let _aiDismissedSuggestions = new Set();
 let _aiBusy = false;
 let _aiError = '';
 let _aiStatus = { available: false, reason: 'Checking AI provider...' };
 let _aiEstimate = null;
 let _aiUsageSummary = null;
-let _aiSelectedMode = 'structure_day';
+let _aiSelectedMode = 'extract_all';
 let _aiEstimateBusy = false;
 let _aiEstimateTimer = null;
+let _review = null;
+let _reviewBusy = false;
+let _reviewError = '';
+let _reviewPeriod = 'week';
 let _search = '';
 let _filterPerson = '';
 let _filterLocation = '';
@@ -182,11 +210,12 @@ async function _saveNow({ silent = false } = {}) {
     _entitySignature = _entityListSignature(_entry.people || [], _entry.locations || []);
     _dirty = false;
     _setStatus('Saved');
-    await Promise.all([_loadPeople(), _loadLocations(), _loadConnections(), _loadEntries()]);
+    await Promise.all([_loadPeople(), _loadLocations(), _loadConnections(), _loadEntries(), _loadFollowups(), _loadReview()]);
     if (_historyOpen && _entry?.id) await _loadRevisions();
     _syncHistoryButtonState();
     _renderPeoplePanel();
     _renderLocationsPanel();
+    _renderReviewPanel();
     _renderNavigator();
     _renderHistoryPanel();
     _refreshEditorContent({ preserveFocus: true });
@@ -280,6 +309,40 @@ async function _loadConnections() {
   _connections = data.connections || [];
 }
 
+async function _loadFollowups({ render = false } = {}) {
+  _followupsBusy = true;
+  _followupsError = '';
+  if (render) _renderPeoplePanel();
+  try {
+    const data = await listFollowups();
+    _followups = data.items || [];
+    _followupCounts = data.counts || {};
+  } catch (err) {
+    _followups = [];
+    _followupCounts = {};
+    _followupsError = err?.message || 'Follow-ups could not be loaded';
+  } finally {
+    _followupsBusy = false;
+    if (render) _renderPeoplePanel();
+  }
+}
+
+async function _loadReview({ render = false } = {}) {
+  _reviewBusy = true;
+  _reviewError = '';
+  if (render) _renderReviewPanel();
+  try {
+    const params = new URLSearchParams({ period: _reviewPeriod, date: _date });
+    _review = await getReview(params);
+  } catch (err) {
+    _review = null;
+    _reviewError = err?.message || 'Review could not be loaded';
+  } finally {
+    _reviewBusy = false;
+    if (render) _renderReviewPanel();
+  }
+}
+
 async function _loadAIStatus() {
   try {
     _aiStatus = await getAIStatus();
@@ -353,9 +416,10 @@ async function _loadDate(date) {
   }
   _date = date;
   _aiPreview = null;
+  _aiDismissedSuggestions = new Set();
   _aiError = '';
   _aiEstimate = null;
-  await Promise.all([_loadEntry(_date), _loadPeople(), _loadLocations(), _loadConnections(), _loadEntries(), _loadAIStatus(), _loadAIUsageSummary()]);
+  await Promise.all([_loadEntry(_date), _loadPeople(), _loadLocations(), _loadConnections(), _loadEntries(), _loadFollowups(), _loadReview(), _loadAIStatus(), _loadAIUsageSummary()]);
   await _loadAIEstimate(_aiSelectedMode);
   _render();
 }
@@ -392,14 +456,6 @@ function _refreshEntityPanelsFromContent() {
   _renderPeoplePanel();
   _renderLocationsPanel();
   _renderNavigator();
-}
-
-function _safePersonImage(src) {
-  const value = String(src || '').trim();
-  if (!value) return '';
-  if (/^https?:\/\//i.test(value) || value.startsWith('/')) return value;
-  if (/^data:image\/(?:png|jpe?g|gif|webp);base64,/i.test(value)) return value;
-  return '';
 }
 
 function _personCardText(value, maxLength = 150) {
@@ -825,10 +881,6 @@ function _wireLogbookWindow(modal) {
   });
 }
 
-function _logbookTabLabel(tab) {
-  return tab === 'ai' ? 'AI' : tab[0].toUpperCase() + tab.slice(1);
-}
-
 function _ensureLogbookContent(modal) {
   if (modal.querySelector('.logbook-modal-content')) return false;
   modal.innerHTML = `
@@ -845,8 +897,8 @@ function _ensureLogbookContent(modal) {
         <button type="button" class="cal-btn cal-btn-primary" id="logbook-manual-save">Save</button>
         <button type="button" class="close-btn" id="logbook-close" title="Close" aria-label="Close">&#x2716;</button>
       </div>
-      <div class="logbook-mobile-tabs">
-        ${['write', 'mood', 'data', 'people', 'places', 'ai'].map(tab => `<button type="button" class="logbook-tab" data-logbook-tab="${tab}">${_logbookTabLabel(tab)}</button>`).join('')}
+      <div class="logbook-mobile-tabs" role="tablist" aria-label="Logbook sections">
+        ${_LOGBOOK_TABS.map(tab => `<button type="button" role="tab" class="logbook-tab" data-logbook-tab="${tab}">${_logbookTabLabel(tab)}</button>`).join('')}
       </div>
       <div class="modal-body logbook-body"></div>
     </div>
@@ -859,12 +911,15 @@ function _ensureLogbookContent(modal) {
 
 function _bodyHtml() {
   return `
-    <aside class="logbook-nav" data-mobile-section="write">
+    <aside class="logbook-nav" id="logbook-entry-browser" data-mobile-section="write">
       ${_navigatorHtml()}
     </aside>
     <main class="logbook-editor" data-mobile-section="write">
       ${_editorHtml()}
     </main>
+    <section class="logbook-panel logbook-review-panel" data-mobile-section="review">
+      ${_reviewHtml()}
+    </section>
     <aside class="logbook-side">
       <section class="logbook-panel" data-mobile-section="ai">
         ${_aiHtml()}
@@ -885,13 +940,11 @@ function _syncChromeState(modal = document.getElementById(MODAL_ID)) {
   const dateInput = modal.querySelector('#logbook-date-input');
   if (dateInput && dateInput.value !== _date) dateInput.value = _date;
   _setStatus(_saveStatus);
-  modal.querySelectorAll('[data-logbook-tab]').forEach(btn => {
-    const active = btn.dataset.logbookTab === _activeTab;
-    btn.classList.toggle('active', active);
-    btn.setAttribute('aria-selected', active ? 'true' : 'false');
+  _syncLogbookTabChrome(modal, {
+    activeTab: _activeTab,
+    browseOpen: _browseOpen,
+    writeToolsOpen: _writeToolsOpen,
   });
-  const body = modal.querySelector('.logbook-body');
-  if (body) body.dataset.activeTab = _activeTab;
 }
 
 function _refreshMoodControls() {
@@ -974,6 +1027,95 @@ function _navigatorHtml() {
   `;
 }
 
+function _formatButtonHtml(format, title, icon, { text = '', className = '' } = {}) {
+  const classes = ['logbook-format-button'];
+  if (text) classes.push('logbook-format-text');
+  if (className) classes.push(className);
+  const body = text ? _e(text) : _logbookIcon(icon, 13);
+  return `<button type="button" class="${classes.join(' ')}" data-logbook-format="${_e(format)}" title="${_e(title)}" aria-label="${_e(title)}">${body}</button>`;
+}
+
+function _linkSelectionButtonHtml(kind, title, icon, label = '') {
+  const labelHtml = label ? `<span>${_e(label)}</span>` : '';
+  return `<button type="button" data-logbook-link-selection="${_e(kind)}" title="${_e(title)}" aria-label="${_e(title)}">${_logbookIcon(icon, 13)}${labelHtml}</button>`;
+}
+
+function _dataSelectionButtonHtml(kind, title, icon, label = '') {
+  const labelHtml = label ? `<span>${_e(label)}</span>` : '';
+  return `<button type="button" data-logbook-data-selection="${_e(kind)}" title="${_e(title)}" aria-label="${_e(title)}">${_logbookIcon(icon, 13)}${labelHtml}</button>`;
+}
+
+function _unlinkSelectionButtonHtml({ label = '' } = {}) {
+  const labelHtml = label ? `<span>${_e(label)}</span>` : '';
+  return `<button type="button" data-logbook-unlink-selection title="Remove link from selected token or markdown link" aria-label="Remove link">${_logbookIcon('unlink', 13)}${labelHtml}</button>`;
+}
+
+function _toolbarSepHtml() {
+  return '<span class="logbook-toolbar-sep" aria-hidden="true"></span>';
+}
+
+function _compactFormatToolbarHtml() {
+  return `
+    <div class="logbook-link-toolbar logbook-inline-format-toolbar" role="toolbar" aria-label="Text formatting">
+      ${_formatButtonHtml('bold', 'Bold', 'bold')}
+      ${_formatButtonHtml('italic', 'Italic', 'italic')}
+      ${_formatButtonHtml('strike', 'Strikethrough', 'strike')}
+      ${_toolbarSepHtml()}
+      ${_formatButtonHtml('link', 'Link', 'link')}
+      ${_linkSelectionButtonHtml('person', 'Link selected text as person', 'person')}
+      ${_linkSelectionButtonHtml('location', 'Link selected text as place', 'location')}
+      ${_dataSelectionButtonHtml('food', 'Track selected text as meal', 'food')}
+      ${_unlinkSelectionButtonHtml()}
+    </div>
+  `;
+}
+
+function _advancedFormatToolbarHtml(className = '') {
+  const classes = ['logbook-link-toolbar', 'logbook-advanced-format-toolbar'];
+  if (className) classes.push(className);
+  return `
+    <div class="${classes.join(' ')}" role="toolbar" aria-label="Advanced text formatting">
+      ${_formatButtonHtml('h1', 'Heading 1', '', { text: 'H1' })}
+      ${_formatButtonHtml('h2', 'Heading 2', '', { text: 'H2' })}
+      ${_formatButtonHtml('h3', 'Heading 3', '', { text: 'H3' })}
+      ${_formatButtonHtml('quote', 'Quote', 'quote')}
+      ${_formatButtonHtml('ul', 'Bullet list', 'list')}
+      ${_formatButtonHtml('ol', 'Numbered list', 'orderedList')}
+      ${_toolbarSepHtml()}
+      ${_formatButtonHtml('code', 'Inline code', 'code')}
+      ${_formatButtonHtml('codeblock', 'Code block', 'codeBlock')}
+      ${_formatButtonHtml('hr', 'Horizontal rule', 'hr')}
+    </div>
+  `;
+}
+
+function _writeMoreMenuHtml({ richActive, historyDisabled } = {}) {
+  return `
+    <div id="logbook-write-more-menu" class="logbook-write-more-menu" role="menu" aria-label="More writing tools">
+      <div class="logbook-more-group">
+        <div class="logbook-more-label">Format</div>
+        ${_advancedFormatToolbarHtml('logbook-more-toolbar')}
+      </div>
+      <div class="logbook-more-group">
+        <div class="logbook-more-label">Editor</div>
+        <div class="logbook-more-row">
+          <div class="logbook-editor-toggle" role="group" aria-label="Editor mode">
+            <button type="button" class="${richActive ? 'active' : ''}" aria-pressed="${richActive ? 'true' : 'false'}" data-logbook-editor-mode="rich">Editor</button>
+            <button type="button" class="${!richActive ? 'active' : ''}" aria-pressed="${!richActive ? 'true' : 'false'}" data-logbook-editor-mode="raw">Markdown</button>
+          </div>
+          ${!richActive ? '<span class="logbook-editor-mode-badge">Markdown active</span>' : ''}
+        </div>
+      </div>
+      <div class="logbook-more-group">
+        <div class="logbook-more-label">Entry</div>
+        <div class="logbook-more-row">
+          <button type="button" class="cal-btn ${_historyOpen ? 'active' : ''}" id="logbook-history-toggle"${historyDisabled}>History</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
 function _editorHtml() {
   const mood = _entry?.mood_label || '';
   const moodChips = MOODS.map(item => `
@@ -991,41 +1133,24 @@ function _editorHtml() {
         </div>
       </div>
       <div class="logbook-editor-actions">
-        <button type="button" class="cal-btn ${_historyOpen ? 'active' : ''}" id="logbook-history-toggle"${historyDisabled}>History</button>
-        <div class="logbook-editor-toggle" role="group" aria-label="Editor mode">
-          <button type="button" class="${richActive ? 'active' : ''}" aria-pressed="${richActive ? 'true' : 'false'}" data-logbook-editor-mode="rich">Editor</button>
-          <button type="button" class="${!richActive ? 'active' : ''}" aria-pressed="${!richActive ? 'true' : 'false'}" data-logbook-editor-mode="raw">Raw</button>
+        <button type="button" class="cal-btn" id="logbook-toggle-browse" aria-expanded="${_browseOpen ? 'true' : 'false'}" aria-controls="logbook-entry-browser" title="Show recent days and filters">Days</button>
+        <button type="button" class="cal-btn cal-btn-primary" id="logbook-open-enhance" title="Save this entry and open enhancement tools">Enhance</button>
+        <div class="logbook-more-wrap">
+          <button type="button" class="cal-btn ${_writeToolsOpen ? 'active' : ''}" id="logbook-toggle-write-more" aria-expanded="${_writeToolsOpen ? 'true' : 'false'}" aria-controls="logbook-write-more-menu" aria-haspopup="menu" title="More writing tools">More</button>
+          ${_writeToolsOpen ? _writeMoreMenuHtml({ richActive, historyDisabled }) : ''}
         </div>
       </div>
     </div>
-    ${_historyOpen ? _historyHtml() : ''}
-    <div class="logbook-link-toolbar" role="toolbar" aria-label="Format selected text">
-      <button type="button" class="logbook-format-button" data-logbook-format="bold" title="Bold" aria-label="Bold">${_logbookIcon('bold', 13)}</button>
-      <button type="button" class="logbook-format-button" data-logbook-format="italic" title="Italic" aria-label="Italic">${_logbookIcon('italic', 13)}</button>
-      <button type="button" class="logbook-format-button" data-logbook-format="strike" title="Strikethrough" aria-label="Strikethrough">${_logbookIcon('strike', 13)}</button>
-      <span class="logbook-toolbar-sep" aria-hidden="true"></span>
-      <button type="button" class="logbook-format-button logbook-format-text" data-logbook-format="h1" title="Heading 1" aria-label="Heading 1">H1</button>
-      <button type="button" class="logbook-format-button logbook-format-text" data-logbook-format="h2" title="Heading 2" aria-label="Heading 2">H2</button>
-      <button type="button" class="logbook-format-button logbook-format-text" data-logbook-format="h3" title="Heading 3" aria-label="Heading 3">H3</button>
-      <button type="button" class="logbook-format-button" data-logbook-format="quote" title="Quote" aria-label="Quote">${_logbookIcon('quote', 13)}</button>
-      <button type="button" class="logbook-format-button" data-logbook-format="ul" title="Bullet list" aria-label="Bullet list">${_logbookIcon('list', 13)}</button>
-      <button type="button" class="logbook-format-button" data-logbook-format="ol" title="Numbered list" aria-label="Numbered list">${_logbookIcon('orderedList', 13)}</button>
-      <span class="logbook-toolbar-sep" aria-hidden="true"></span>
-      <button type="button" class="logbook-format-button" data-logbook-format="code" title="Inline code" aria-label="Inline code">${_logbookIcon('code', 13)}</button>
-      <button type="button" class="logbook-format-button" data-logbook-format="codeblock" title="Code block" aria-label="Code block">${_logbookIcon('codeBlock', 13)}</button>
-      <button type="button" class="logbook-format-button" data-logbook-format="hr" title="Horizontal rule" aria-label="Horizontal rule">${_logbookIcon('hr', 13)}</button>
-      <button type="button" class="logbook-format-button" data-logbook-format="link" title="Link" aria-label="Link">${_logbookIcon('link', 13)}</button>
-      <span class="logbook-toolbar-sep" aria-hidden="true"></span>
-      <button type="button" data-logbook-link-selection="person" title="Link selected text as person">${_logbookIcon('person', 13)}<span>Person</span></button>
-      <button type="button" data-logbook-link-selection="location" title="Link selected text as place">${_logbookIcon('location', 13)}<span>Place</span></button>
-      <button type="button" data-logbook-link-selection="food" title="Link selected text as food">${_logbookIcon('food', 13)}<span>Food</span></button>
-      <button type="button" data-logbook-unlink-selection title="Remove link from selected token or markdown link">${_logbookIcon('unlink', 13)}<span>Unlink</span></button>
-    </div>
     <section class="logbook-write-section" data-mobile-section="write">
-      <div id="logbook-rich-content" class="logbook-rich-content ${richActive ? '' : 'hidden'}" contenteditable="true" role="textbox" aria-multiline="true" aria-label="Logbook editor" data-placeholder="Write messy notes. Add people and places from the panels, or switch to Raw for markdown.">${_renderLogbookEditorText(_entry?.content || '')}</div>
-      <textarea id="logbook-content" class="logbook-content ${richActive ? 'hidden' : ''}" placeholder="Write messy notes. Example: tired, talked with [Jan](person:jan), rode through [Meerstad](place:meerstad), ate [breakfast](data:food).">${_e(_entry?.content || '')}</textarea>
+      <div class="logbook-write-toolbar-row">
+        ${_compactFormatToolbarHtml()}
+        ${!richActive ? '<span class="logbook-editor-mode-badge">Markdown</span>' : ''}
+      </div>
+      <div id="logbook-rich-content" class="logbook-rich-content ${richActive ? '' : 'hidden'}" contenteditable="true" role="textbox" aria-multiline="true" aria-label="Logbook editor" data-placeholder="Write messy notes. Mark people, places, meals, or links whenever needed.">${_renderLogbookEditorText(_entry?.content || '')}</div>
+      <textarea id="logbook-content" class="logbook-content ${richActive ? 'hidden' : ''}" placeholder="Write markdown. Example: tired, talked with [Jan](person:jan), rode through [Meerstad](place:meerstad).">${_e(_entry?.content || '')}</textarea>
       <div id="logbook-mention-menu" class="logbook-mention-menu hidden"></div>
     </section>
+    ${_historyOpen ? `<aside class="logbook-history-drawer" aria-label="Entry history">${_historyHtml({ includeClose: true })}</aside>` : ''}
     <section class="logbook-mood-section" data-mobile-section="mood">
       <h5>Mood</h5>
       <div class="logbook-chip-row">${moodChips}</div>
@@ -1060,9 +1185,22 @@ function _revisionSourceLabel(source) {
   return 'Saved version';
 }
 
-function _historyHtml() {
+function _historyHtml({ includeClose = false } = {}) {
+  const closeButton = includeClose
+    ? '<button type="button" class="cal-btn" id="logbook-close-history-drawer">Close</button>'
+    : '';
   if (!_entry?.id) {
-    return '<section id="logbook-history-panel" class="logbook-history-panel"><div class="logbook-empty">Save this day before history is available.</div></section>';
+    return `
+      <section id="logbook-history-panel" class="logbook-history-panel">
+        ${includeClose ? `
+        <div class="logbook-section-head">
+          <h5>History</h5>
+          ${closeButton}
+        </div>
+        ` : ''}
+        <div class="logbook-empty">Save this day before history is available.</div>
+      </section>
+    `;
   }
   const rows = _revisions.map(revision => `
     <div class="logbook-history-row ${_revisionPreview?.id === revision.id ? 'active' : ''}">
@@ -1102,7 +1240,10 @@ function _historyHtml() {
     <section id="logbook-history-panel" class="logbook-history-panel">
       <div class="logbook-section-head">
         <h5>History</h5>
-        <button type="button" class="cal-btn" id="logbook-refresh-history"${_historyBusy ? ' disabled' : ''}>Refresh</button>
+        <div class="logbook-history-actions">
+          <button type="button" class="cal-btn" id="logbook-refresh-history"${_historyBusy ? ' disabled' : ''}>Refresh</button>
+          ${closeButton}
+        </div>
       </div>
       ${_historyBusy ? '<div class="logbook-empty">Loading history...</div>' : ''}
       ${_revisionPreviewBusy ? '<div class="logbook-empty">Loading preview...</div>' : ''}
@@ -1132,7 +1273,7 @@ function _personSuggestionMeta(person) {
   if (person.relationship_label) bits.push(_connectionTypeLabel(person.relationship_label));
   if (Array.isArray(person.facts)) {
     person.facts.forEach(fact => {
-      const label = fact?.label || _connectionTypeLabel(fact?.fact_type || 'fact');
+      const label = fact?.label || _factTypeLabel(fact?.fact_type || 'fact');
       const value = fact?.value_text || '';
       if (value) bits.push(`${label}: ${value}`);
     });
@@ -1175,7 +1316,7 @@ function _personFactsPreviewHtml(person, { limit = 2 } = {}) {
   if (!facts.length) return '';
   const shown = facts.slice(0, limit);
   const chips = shown.map(fact => {
-    const label = fact.label || _connectionTypeLabel(fact.fact_type || 'fact');
+    const label = fact.label || _factTypeLabel(fact.fact_type || 'fact');
     const date = fact.last_seen_date || fact.source_entry_date || '';
     const title = [label, fact.value_text, date ? `last seen ${date}` : ''].filter(Boolean).join(' | ');
     return `<span class="logbook-person-fact-chip" title="${_e(title)}"><strong>${_e(label)}</strong><span>${_e(fact.value_text)}</span></span>`;
@@ -1185,9 +1326,10 @@ function _personFactsPreviewHtml(person, { limit = 2 } = {}) {
 }
 
 function _peopleHtml() {
-  return _renderPeoplePanelHtml({
+  return `${_followupsHtml()}${_renderPeoplePanelHtml({
     entry: _entry,
     aiPreview: _aiPreview,
+    dismissedSuggestions: _aiDismissedSuggestions,
     people: _people,
     search: _peopleSearch,
     sort: _peopleSort,
@@ -1198,7 +1340,7 @@ function _peopleHtml() {
     personSuggestionActionLabel: _personSuggestionActionLabel,
     renderFactsPreview: _personFactsPreviewHtml,
     renderConnectionsPreview: _personConnectionsPreviewHtml,
-  });
+  })}`;
 }
 
 function _peopleRowsHtml() {
@@ -1214,10 +1356,20 @@ function _peopleRowsHtml() {
   });
 }
 
+function _followupsHtml() {
+  return _renderFollowupsHtml({
+    followups: _followups,
+    counts: _followupCounts,
+    busy: _followupsBusy,
+    error: _followupsError,
+  });
+}
+
 function _locationsHtml() {
   return _renderLocationsPanelHtml({
     entry: _entry,
     aiPreview: _aiPreview,
+    dismissedSuggestions: _aiDismissedSuggestions,
     locations: _locations,
     search: _locationSearch,
     sort: _locationSort,
@@ -1262,60 +1414,13 @@ function _personConnectionsPreviewHtml(person, { limit = 3, compact = false } = 
   return `<span class="logbook-person-connections ${compact ? 'compact' : ''}">${rows}${extra ? `<span class="logbook-person-connection-more">+${extra}</span>` : ''}</span>`;
 }
 
-function _connectionTypeLabel(type) {
-  const value = String(type || 'connection').trim().toLowerCase();
-  const labels = {
-    co_mentioned: 'Co-mentioned',
-    family: 'Family',
-    friend: 'Friend',
-    work: 'Work',
-    training: 'Training',
-    conflict: 'Conflict',
-    unknown: 'Connection',
-  };
-  return labels[value] || value.replace(/_/g, ' ').replace(/\b\w/g, ch => ch.toUpperCase());
-}
-
-function _connectionPersonChip(person, fallback) {
-  const name = person?.display_name || fallback || 'Person';
-  const attrs = person?.id ? ` data-open-person="${_e(person.id)}" type="button"` : '';
-  const tag = person?.id ? 'button' : 'span';
-  return `<${tag} class="logbook-connection-person"${attrs}>${_logbookIcon('person', 12)}<span>${_e(name)}</span></${tag}>`;
-}
-
-function _connectionEvidenceHtml(ev) {
-  if (!ev?.snippet) return '';
-  const date = ev.entry_date ? `<span class="logbook-evidence-date">${_e(ev.entry_date)}</span>` : '';
-  return `<div class="logbook-evidence">${date}<span>${_e(ev.snippet)}</span></div>`;
-}
-
 function _connectionCardHtml(conn) {
-  const status = conn.status === 'accepted' ? 'accepted' : 'suggested';
-  const confidence = Math.max(0, Math.min(100, Number(conn.confidence || 0)));
-  const ev = Array.isArray(conn.evidence) && conn.evidence.length ? conn.evidence[conn.evidence.length - 1] : null;
-  const actions = status === 'suggested'
-    ? `<div class="logbook-connection-actions"><button type="button" class="cal-btn cal-btn-primary" data-accept-connection="${_e(conn.id)}">Accept</button><button type="button" class="cal-btn" data-hide-connection="${_e(conn.id)}">Hide</button></div>`
-    : `<span class="logbook-accepted">Accepted</span>`;
-  return `
-    <div class="logbook-connection ${status}">
-      <div class="logbook-connection-head">
-        <div class="logbook-connection-people">
-          ${_connectionPersonChip(conn.person_a, 'Person A')}
-          <span class="logbook-connection-plus">+</span>
-          ${_connectionPersonChip(conn.person_b, 'Person B')}
-        </div>
-        <span class="logbook-connection-status ${status}">${status === 'accepted' ? 'Accepted' : 'Review'}</span>
-      </div>
-      <div class="logbook-connection-badges">
-        <span class="logbook-connection-badge">${_e(_connectionTypeLabel(conn.connection_type))}</span>
-        <span class="logbook-connection-badge">${confidence}% confidence</span>
-        ${conn.strength ? `<span class="logbook-connection-badge">strength ${_e(conn.strength)}</span>` : ''}
-      </div>
-      ${conn.description ? `<div class="logbook-connection-reason">${_e(conn.description)}</div>` : ''}
-      ${_connectionEvidenceHtml(ev)}
-      ${actions}
-    </div>
-  `;
+  return _sharedConnectionCardHtml(conn, {
+    wrapActions: false,
+    actionsHtml: (item, status) => status === 'suggested'
+      ? `<div class="logbook-connection-actions"><button type="button" class="cal-btn cal-btn-primary" data-accept-connection="${_e(item.id)}">Accept</button><button type="button" class="cal-btn" data-hide-connection="${_e(item.id)}">Hide</button></div>`
+      : `<span class="logbook-accepted">Accepted</span>`,
+  });
 }
 
 function _connectionsHtml() {
@@ -1325,6 +1430,15 @@ function _connectionsHtml() {
     <div class="logbook-section-head"><h5>Connections</h5></div>
     <div id="logbook-connections">${rows || '<div class="logbook-empty">No connection suggestions yet.</div>'}</div>
   `;
+}
+
+function _reviewHtml() {
+  return _renderReviewPanelHtml({
+    review: _review,
+    busy: _reviewBusy,
+    error: _reviewError,
+    period: _reviewPeriod,
+  });
 }
 
 function _aiHtml() {
@@ -1344,16 +1458,68 @@ function _aiHtml() {
     personSuggestionActionLabel: _personSuggestionActionLabel,
     personSuggestionMeta: _personSuggestionMeta,
     preview: _aiPreview,
+    dismissedSuggestions: _aiDismissedSuggestions,
     renderLogbookText: _renderLogbookText,
     selectedMode: _aiSelectedMode,
+    showBackButton: true,
     usage: _aiUsageData(),
   });
 }
 
+function _entryHasEnhanceableDraft() {
+  if (!_entry) return false;
+  const datapoints = Array.isArray(_entry.datapoints) ? _entry.datapoints : [];
+  return Boolean(
+    String(_entry.content || '').trim()
+    || _entry.mood_label
+    || _entry.mood_score != null
+    || _entry.energy_score != null
+    || _entry.stress_score != null
+    || datapoints.some(dp => (
+      String(dp?.label || dp?.key || '').trim()
+      || String(dp?.value_text || '').trim()
+      || dp?.value_number != null
+      || String(dp?.unit || '').trim()
+      || dp?.value_json != null
+    ))
+  );
+}
+
+async function _openEnhance({ save = true } = {}) {
+  _syncEntryFromEditor();
+  if (save && _dirty && (_entry?.id || _entryHasEnhanceableDraft())) {
+    await _saveNow({ silent: true });
+  }
+  _browseOpen = false;
+  _writeToolsOpen = false;
+  _activeTab = 'ai';
+  _aiError = '';
+  await _loadAIStatus();
+  await Promise.all([_loadAIUsageSummary(), _loadAIEstimate(_aiSelectedMode)]);
+  _render();
+}
+
+function _backToWrite() {
+  _browseOpen = false;
+  _writeToolsOpen = false;
+  _activeTab = 'write';
+  _render();
+  const editor = document.getElementById(_editorMode === 'raw' ? 'logbook-content' : 'logbook-rich-content');
+  editor?.focus();
+}
+
 async function _toggleHistory() {
   _syncEntryFromEditor();
+  _writeToolsOpen = false;
   _historyOpen = !_historyOpen;
   if (_historyOpen) await _loadRevisions();
+  _render();
+}
+
+function _closeHistory() {
+  _historyOpen = false;
+  _revisionPreview = null;
+  _historyError = '';
   _render();
 }
 
@@ -1398,7 +1564,7 @@ async function _restoreRevision(revisionId) {
     _entitySignature = _entityListSignature(_entry.people || [], _entry.locations || []);
     _dirty = false;
     _setStatus('Saved');
-    await Promise.all([_loadPeople(), _loadLocations(), _loadConnections(), _loadEntries()]);
+    await Promise.all([_loadPeople(), _loadLocations(), _loadConnections(), _loadEntries(), _loadFollowups(), _loadReview()]);
     if (_historyOpen && _entry?.id) await _loadRevisions();
     _historyBusy = false;
     _revisionPreview = null;
@@ -1414,6 +1580,7 @@ async function _restoreRevision(revisionId) {
 
 function _bindHistoryEvents() {
   document.getElementById('logbook-history-toggle')?.addEventListener('click', () => _toggleHistory().catch(_showError));
+  document.getElementById('logbook-close-history-drawer')?.addEventListener('click', _closeHistory);
   document.getElementById('logbook-refresh-history')?.addEventListener('click', () => _refreshHistory().catch(_showError));
   document.getElementById('logbook-close-history-preview')?.addEventListener('click', _clearRevisionPreview);
   document.querySelectorAll('[data-preview-revision]').forEach(btn => {
@@ -1434,7 +1601,19 @@ function _bindChromeEvents(root = document) {
   root.querySelectorAll('[data-logbook-tab]').forEach(btn => {
     btn.addEventListener('click', () => {
       _syncEntryFromEditor();
-      _activeTab = btn.dataset.logbookTab || 'write';
+      const transition = _logbookTabTransition(btn.dataset.logbookTab || 'write', {
+        browseOpen: _browseOpen,
+        writeToolsOpen: _writeToolsOpen,
+        historyOpen: _historyOpen,
+      });
+      if (transition.action === 'enhance') {
+        _openEnhance().catch(_showError);
+        return;
+      }
+      _browseOpen = transition.browseOpen;
+      _writeToolsOpen = transition.writeToolsOpen;
+      _historyOpen = transition.historyOpen;
+      _activeTab = transition.activeTab;
       _syncChromeState(document.getElementById(MODAL_ID));
     });
   });
@@ -1442,6 +1621,17 @@ function _bindChromeEvents(root = document) {
 
 function _bindBodyEvents() {
   _bindHistoryEvents();
+  document.getElementById('logbook-open-enhance')?.addEventListener('click', () => _openEnhance().catch(_showError));
+  document.getElementById('logbook-toggle-browse')?.addEventListener('click', () => {
+    _browseOpen = !_browseOpen;
+    if (_browseOpen) _writeToolsOpen = false;
+    _syncChromeState(document.getElementById(MODAL_ID));
+  });
+  document.getElementById('logbook-toggle-write-more')?.addEventListener('click', () => {
+    _writeToolsOpen = !_writeToolsOpen;
+    if (_writeToolsOpen) _browseOpen = false;
+    _render();
+  });
 
   document.querySelectorAll('[data-logbook-editor-mode]').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -1461,6 +1651,10 @@ function _bindBodyEvents() {
   document.querySelectorAll('[data-logbook-link-selection]').forEach(btn => {
     btn.addEventListener('mousedown', event => event.preventDefault());
     btn.addEventListener('click', () => _linkSelectedText(btn.dataset.logbookLinkSelection || 'person'));
+  });
+  document.querySelectorAll('[data-logbook-data-selection]').forEach(btn => {
+    btn.addEventListener('mousedown', event => event.preventDefault());
+    btn.addEventListener('click', () => _trackSelectedDataText(btn.dataset.logbookDataSelection || 'food'));
   });
   document.querySelectorAll('[data-logbook-unlink-selection]').forEach(btn => {
     btn.addEventListener('mousedown', event => event.preventDefault());
@@ -1630,12 +1824,47 @@ function _bindBodyEvents() {
   _bindLocationRowEvents();
   _bindPeopleDirectoryEvents();
   _bindLocationDirectoryEvents();
+  _bindReviewEvents();
+  _bindFollowupEvents();
   _bindAIEvents();
   document.querySelectorAll('[data-accept-connection]').forEach(btn => {
     btn.addEventListener('click', () => _connectionAction(btn.dataset.acceptConnection, 'accept').catch(_showError));
   });
   document.querySelectorAll('[data-hide-connection]').forEach(btn => {
     btn.addEventListener('click', () => _connectionAction(btn.dataset.hideConnection, 'hide').catch(_showError));
+  });
+}
+
+function _bindReviewEvents(root = document) {
+  root.querySelectorAll('[data-logbook-review-period]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const next = btn.dataset.logbookReviewPeriod === 'month' ? 'month' : 'week';
+      if (_reviewPeriod === next) return;
+      _reviewPeriod = next;
+      _loadReview({ render: true }).catch(_showError);
+    });
+  });
+  root.querySelectorAll('.logbook-review-highlight[data-date], .logbook-review-evidence[data-date]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      _browseOpen = false;
+      _activeTab = 'write';
+      _loadDate(btn.dataset.date).catch(_showError);
+    });
+  });
+}
+
+function _bindFollowupEvents(root = document) {
+  root.querySelectorAll('[data-followup-open]').forEach(btn => {
+    btn.addEventListener('click', () => _openPerson(btn.dataset.followupOpen).catch(_showError));
+  });
+  root.querySelectorAll('[data-followup-snooze]').forEach(btn => {
+    btn.addEventListener('click', () => _followupAction(btn.dataset.followupSnooze, 'snooze').catch(_showError));
+  });
+  root.querySelectorAll('[data-followup-dismiss]').forEach(btn => {
+    btn.addEventListener('click', () => _followupAction(btn.dataset.followupDismiss, 'dismiss').catch(_showError));
+  });
+  root.querySelectorAll('[data-followup-restore]').forEach(btn => {
+    btn.addEventListener('click', () => _followupAction(btn.dataset.followupRestore, 'restore').catch(_showError));
   });
 }
 
@@ -1896,7 +2125,7 @@ function _selectionMenuItems({ tokenOnly = false } = {}) {
     [
       { linkKind: 'person', label: 'Person', icon: 'person' },
       { linkKind: 'location', label: 'Place', icon: 'location' },
-      { linkKind: 'food', label: 'Food', icon: 'food' },
+      { dataKind: 'food', label: 'Meal', icon: 'food' },
       { unlink: true, label: 'Unlink', icon: 'unlink' },
     ],
   ];
@@ -1910,7 +2139,9 @@ function _selectionMenuButtonHtml(item) {
     ? `data-logbook-context-format="${_e(item.format)}"`
     : item.linkKind
       ? `data-logbook-context-link="${_e(item.linkKind)}"`
-      : 'data-logbook-context-unlink="1"';
+      : item.dataKind
+        ? `data-logbook-context-data="${_e(item.dataKind)}"`
+        : 'data-logbook-context-unlink="1"';
   return `<button type="button" class="logbook-context-item" ${attrs}>${icon}<span>${_e(item.label)}</span></button>`;
 }
 
@@ -1926,8 +2157,9 @@ function _showSelectionContextMenu(x, y, options = {}) {
   menu.addEventListener('click', event => {
     const formatBtn = event.target.closest('[data-logbook-context-format]');
     const linkBtn = event.target.closest('[data-logbook-context-link]');
+    const dataBtn = event.target.closest('[data-logbook-context-data]');
     const unlinkBtn = event.target.closest('[data-logbook-context-unlink]');
-    if (!formatBtn && !linkBtn && !unlinkBtn) return;
+    if (!formatBtn && !linkBtn && !dataBtn && !unlinkBtn) return;
     event.preventDefault();
     event.stopPropagation();
 
@@ -1946,6 +2178,10 @@ function _showSelectionContextMenu(x, y, options = {}) {
     _closeSelectionMenu();
     if (linkBtn) {
       _linkSelectedText(linkBtn.dataset.logbookContextLink || 'person');
+      return;
+    }
+    if (dataBtn) {
+      _trackSelectedDataText(dataBtn.dataset.logbookContextData || 'food');
       return;
     }
     _unlinkSelectedText();
@@ -1986,10 +2222,16 @@ function _openSelectionContextMenu(event) {
 
 function _bindNavigatorEvents() {
   document.querySelectorAll('.logbook-nav [data-jump-date]').forEach(btn => {
-    btn.addEventListener('click', () => _loadDate(btn.dataset.jumpDate).catch(_showError));
+    btn.addEventListener('click', () => {
+      _browseOpen = false;
+      _loadDate(btn.dataset.jumpDate).catch(_showError);
+    });
   });
   document.querySelectorAll('.logbook-nav [data-date]').forEach(btn => {
-    btn.addEventListener('click', () => _loadDate(btn.dataset.date).catch(_showError));
+    btn.addEventListener('click', () => {
+      _browseOpen = false;
+      _loadDate(btn.dataset.date).catch(_showError);
+    });
   });
   document.getElementById('logbook-clear-filters')?.addEventListener('click', () => {
     _filterPerson = '';
@@ -2058,6 +2300,7 @@ function _bindDataEvents() {
 }
 
 function _bindPeoplePanelEvents() {
+  _bindFollowupEvents();
   _bindPeopleRowEvents();
   _bindAISuggestionEvents();
   _bindEntityLinkEvents();
@@ -2083,16 +2326,20 @@ function _bindAIEvents(root = document) {
     applyMood: _applyAIMood,
     bindEntityLinks: _bindEntityLinkEvents,
     bindSuggestions: _bindAISuggestionEvents,
+    backToWrite: _backToWrite,
     clearAI: () => {
       _aiPreview = null;
+      _aiDismissedSuggestions = new Set();
       _aiError = '';
       _renderAIAffectedPanels();
     },
     copyAI: _copyAI,
+    dismissAISuggestion: _dismissAISuggestion,
     extractFacts: _extractFacts,
     onError: _showError,
     runAI: _runAI,
     selectedMode: () => _aiSelectedMode,
+    restoreAISuggestions: _restoreAISuggestions,
     selectMode: _selectAIMode,
   });
 }
@@ -2390,6 +2637,7 @@ async function _openPerson(personId) {
     await atlas.openAtlas({ tab: 'people', personId });
   } catch (_) {
     _filterPerson = personId;
+    _browseOpen = false;
     _activeTab = 'people';
     await _loadEntries();
     _render();
@@ -2403,6 +2651,7 @@ async function _openLocation(locationId) {
     await atlas.openAtlas({ tab: 'locations', locationId });
   } catch (_) {
     _filterLocation = locationId;
+    _browseOpen = false;
     _activeTab = 'places';
     await _loadEntries();
     _render();
@@ -2469,6 +2718,13 @@ function _renderLocationsPanel() {
   _bindLocationsPanelEvents();
 }
 
+function _renderReviewPanel() {
+  const panel = document.querySelector('.logbook-panel[data-mobile-section="review"]');
+  if (!panel) return;
+  panel.innerHTML = _reviewHtml();
+  _bindReviewEvents(panel);
+}
+
 function _renderAIPanel() {
   const panel = document.querySelector('.logbook-panel[data-mobile-section="ai"]');
   if (!panel) return;
@@ -2492,7 +2748,7 @@ function _renderNavigator() {
 function _renderHistoryPanel() {
   const panel = document.getElementById('logbook-history-panel');
   if (!panel) return;
-  panel.outerHTML = _historyHtml();
+  panel.outerHTML = _historyHtml({ includeClose: _historyOpen });
   _bindHistoryEvents();
 }
 
@@ -2997,14 +3253,22 @@ function _linkSelectedText(kind) {
   const snapshot = _editorMode === 'raw' ? _rawSelectionSnapshot() : _richSelectionSnapshot();
   if (!snapshot?.text?.trim()) {
     _setStatus('Select text first');
-    return;
+    return false;
   }
   if (kind === 'person' || kind === 'location') {
-    if (!_showEntityLinkChooser(kind, snapshot)) _setStatus('Select text first');
-    return;
+    const shown = _showEntityLinkChooser(kind, snapshot);
+    if (!shown) _setStatus('Select text first');
+    return shown;
   }
   const linked = _replaceSelectionSnapshotWithLink(kind, snapshot);
   if (!linked) _setStatus('Select text first');
+  return linked;
+}
+
+function _trackSelectedDataText(kind = 'food') {
+  const tracked = _linkSelectedText(kind);
+  if (tracked) _setStatus(kind === 'food' ? 'Meal tracked' : 'Data tracked');
+  return tracked;
 }
 
 function _unlinkSelectedText() {
@@ -3124,19 +3388,20 @@ async function _createLocation() {
 }
 
 function _selectAIMode(mode) {
-  const nextMode = mode || 'structure_day';
+  const nextMode = mode || 'extract_all';
   if (_aiSelectedMode === nextMode) {
     _renderAIPanel();
     return;
   }
   _aiSelectedMode = nextMode;
   _aiError = '';
-  _renderAIPanel();
+  _aiDismissedSuggestions = new Set();
+  _renderAIAffectedPanels();
   _loadAIEstimate(_aiSelectedMode, { render: true }).catch(() => {});
 }
 
 async function _runAI(mode) {
-  _aiSelectedMode = mode || 'structure_day';
+  _aiSelectedMode = mode || 'extract_all';
   if (_aiStatus?.available !== true) {
     _aiError = _aiStatus?.reason || 'No LLM provider configured.';
     _renderAIPanel();
@@ -3146,6 +3411,7 @@ async function _runAI(mode) {
   _aiBusy = true;
   _aiError = '';
   _aiPreview = null;
+  _aiDismissedSuggestions = new Set();
   _syncEntryFromEditor();
   _renderAIAffectedPanels();
   const content = _entry?.content || '';
@@ -3158,6 +3424,7 @@ async function _runAI(mode) {
       current_entry: _entry || {},
     });
     _aiPreview = result;
+    _aiDismissedSuggestions = new Set();
     if (result?.usage?.estimate) {
       _aiEstimate = {
         ok: true,
@@ -3201,10 +3468,12 @@ async function _extractFacts() {
   if (!_entry?.id) return;
   _aiBusy = true;
   _aiError = '';
+  _aiDismissedSuggestions = new Set();
   _renderAIPanel();
   try {
     const result = await analyzeEntry(_entry.id);
     _aiPreview = result;
+    _aiDismissedSuggestions = new Set();
     if (result?.usage) {
       _aiEstimate = {
         ok: true,
@@ -3224,7 +3493,7 @@ async function _extractFacts() {
         month: result.usage.month,
       };
     }
-    await Promise.all([_loadPeople(), _loadConnections(), _loadEntries()]);
+    await Promise.all([_loadPeople(), _loadConnections(), _loadEntries(), _loadFollowups()]);
     await _loadAIUsageSummary();
   } catch (err) {
     _aiError = err.message || 'Extract facts failed.';
@@ -3250,35 +3519,61 @@ async function _addAIEntity(kind, index) {
     location_suggestions: isPerson ? [] : [item],
   });
   _entry = result.entry || _entry;
-  await Promise.all([_loadPeople(), _loadLocations(), _loadConnections(), _loadEntries()]);
+  _aiDismissedSuggestions.add(`${isPerson ? 'person' : 'location'}:${index}`);
+  await Promise.all([_loadPeople(), _loadLocations(), _loadConnections(), _loadEntries(), _loadFollowups(), _loadReview()]);
+  _browseOpen = false;
   _activeTab = isPerson ? 'people' : 'places';
   uiModule?.showToast?.(isPerson && knownPerson && hasFacts ? 'Person facts saved' : isPerson ? 'Person linked' : 'Place linked');
   _render();
 }
 
 function _applyAIContent() {
-  if (!_aiPreview?.preview_content) return;
+  if (!_aiPreview?.preview_content || _aiDismissedSuggestions.has('content')) return;
   const ta = document.getElementById('logbook-content');
   _entry.content = _aiPreview.preview_content;
   if (ta) ta.value = _entry.content;
   _refreshEditorContent();
+  _aiDismissedSuggestions.add('content');
   _markDirty();
+  _browseOpen = false;
   _activeTab = 'write';
   _render();
 }
 
 function _copyAI() {
   const p = _aiPreview || {};
-  const text = p.preview_content || p.summary || p.reflection || (p.questions || []).join('\n') || '';
+  const text = (!_aiDismissedSuggestions.has('content') && p.preview_content)
+    || (!_aiDismissedSuggestions.has('summary') && p.summary)
+    || (!_aiDismissedSuggestions.has('reflection') && p.reflection)
+    || (!_aiDismissedSuggestions.has('questions') && (p.questions || []).join('\n'))
+    || '';
   if (!text) return;
   navigator.clipboard?.writeText(text).then(() => uiModule?.showToast?.('Copied')).catch(() => {});
 }
 
-function _addAIData() {
+function _dismissAISuggestion(key) {
+  if (!key) return;
+  _aiDismissedSuggestions.add(key);
+  _renderAIAffectedPanels();
+}
+
+function _restoreAISuggestions() {
+  if (!_aiDismissedSuggestions.size) return;
+  _aiDismissedSuggestions = new Set();
+  _renderAIAffectedPanels();
+}
+
+function _addAIData(index = null) {
   const items = _aiPreview?.datapoint_suggestions || [];
   if (!items.length) return;
+  const singleIndex = Number.isInteger(index) ? index : null;
+  const selected = singleIndex == null
+    ? items.map((item, itemIndex) => ({ item, itemIndex }))
+      .filter(({ itemIndex }) => !_aiDismissedSuggestions.has(`data:${itemIndex}`))
+    : [{ item: items[singleIndex], itemIndex: singleIndex }].filter(({ item }) => item);
+  if (!selected.length) return;
   if (!_entry.datapoints) _entry.datapoints = [];
-  for (const item of items) {
+  for (const { item, itemIndex } of selected) {
     _entry.datapoints.push({
       key: _cleanKey(item.key || item.label),
       label: item.label || item.key || '',
@@ -3288,7 +3583,9 @@ function _addAIData() {
       value_json: item.value_json ?? null,
       sort_order: _entry.datapoints.length,
     });
+    _aiDismissedSuggestions.add(`data:${itemIndex}`);
   }
+  _browseOpen = false;
   _activeTab = 'data';
   _markDirty();
   _render();
@@ -3296,9 +3593,11 @@ function _addAIData() {
 
 function _applyAIMood() {
   const mood = _aiPreview?.mood_suggestion;
-  if (!mood) return;
+  if (!mood || _aiDismissedSuggestions.has('mood')) return;
   _entry.mood_label = mood.label || null;
   _entry.mood_score = mood.score ? Number(mood.score) : null;
+  _aiDismissedSuggestions.add('mood');
+  _browseOpen = false;
   _activeTab = 'mood';
   _markDirty();
   _render();
@@ -3306,8 +3605,17 @@ function _applyAIMood() {
 
 async function _connectionAction(id, action) {
   await updateConnection(id, action);
-  await Promise.all([_loadConnections(), _loadPeople()]);
+  await Promise.all([_loadConnections(), _loadPeople(), _loadFollowups(), _loadReview()]);
   _render();
+}
+
+async function _followupAction(personId, action) {
+  if (!personId) return;
+  const payload = action === 'snooze' ? { action, days: 14 } : { action };
+  await updatePersonFollowup(personId, payload);
+  await Promise.all([_loadPeople(), _loadFollowups(), _loadReview()]);
+  _renderPeoplePanel();
+  _renderReviewPanel();
 }
 
 function _showError(err) {

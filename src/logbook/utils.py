@@ -358,10 +358,43 @@ def _has_linked_contact(data: Dict[str, Any]) -> bool:
     return bool(snapshot.get("emails") or snapshot.get("phones"))
 
 
-def reconnect_suggestion(data: Dict[str, Any], stats: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+def _parse_followup_date(value: Any) -> Optional[datetime.date]:
+    if not value:
+        return None
+    text = str(value).strip()
+    if "T" in text:
+        text = text.split("T", 1)[0]
+    try:
+        return datetime.strptime(text[:10], "%Y-%m-%d").date()
+    except (TypeError, ValueError):
+        return None
+
+
+def followup_suppression(data: Dict[str, Any], stats: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    today = datetime.now().date()
+    snoozed_until = _parse_followup_date(data.get("followup_snoozed_until"))
+    if snoozed_until and snoozed_until >= today:
+        return {"type": "snoozed", "until": snoozed_until.isoformat()}
+
+    dismissed_at = _parse_followup_date(data.get("followup_dismissed_at"))
+    if dismissed_at:
+        last_mentioned = _parse_followup_date(stats.get("last_mentioned") or data.get("last_mentioned"))
+        if not last_mentioned or last_mentioned <= dismissed_at:
+            return {"type": "dismissed", "at": dismissed_at.isoformat()}
+    return None
+
+
+def reconnect_suggestion(
+    data: Dict[str, Any],
+    stats: Dict[str, Any],
+    *,
+    ignore_suppression: bool = False,
+) -> Optional[Dict[str, Any]]:
     last_mentioned = stats.get("last_mentioned") or data.get("last_mentioned")
     days = _days_since_entry_date(last_mentioned)
     if days is None or days < 21:
+        return None
+    if not ignore_suppression and followup_suppression(data, stats):
         return None
 
     name = str(data.get("display_name") or data.get("name") or "this person").strip() or "this person"
@@ -409,5 +442,6 @@ def with_stats(data: Dict[str, Any], stats: Dict[str, Any]) -> Dict[str, Any]:
         "days_since_mentioned": days,
     })
     if "relationship_label" in data or "contact_uid" in data or "contact_snapshot" in data:
+        data["followup_suppression"] = followup_suppression(data, stats)
         data["reconnect_suggestion"] = reconnect_suggestion(data, stats)
     return data

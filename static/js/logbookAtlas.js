@@ -30,6 +30,12 @@ import {
   updatePerson,
 } from './logbook/api.js';
 import { logbookIcon as _logbookIcon } from './logbook/icons.js';
+import {
+  connectionCardHtml as _sharedConnectionCardHtml,
+  connectionTypeLabel as _connectionTypeLabel,
+  factTypeLabel as _factTypeLabel,
+  safePersonImage as _safePersonImageLink,
+} from './logbook/people-ui.js';
 import { escapeHtml as _e } from './logbook/utils.js';
 
 const MODAL_ID = 'logbook-atlas-modal';
@@ -134,42 +140,6 @@ function _locationMapSearchLink(location) {
   return `<a class="cal-btn" href="${_e(url)}" target="_blank" rel="noopener noreferrer">Open map</a>`;
 }
 
-function _connectionTypeLabel(type) {
-  const value = String(type || 'connection').trim().toLowerCase();
-  const labels = {
-    co_mentioned: 'Co-mentioned',
-    family: 'Family',
-    friend: 'Friend',
-    work: 'Work',
-    training: 'Training',
-    conflict: 'Conflict',
-    unknown: 'Connection',
-  };
-  return labels[value] || value.replace(/_/g, ' ').replace(/\b\w/g, ch => ch.toUpperCase());
-}
-
-function _factTypeLabel(type) {
-  const value = String(type || 'fact').trim().toLowerCase();
-  const labels = {
-    workplace: 'Workplace',
-    relationship: 'Relationship',
-    role: 'Role',
-    location: 'Location',
-    preference: 'Preference',
-    note: 'Note',
-    unknown: 'Fact',
-  };
-  return labels[value] || value.replace(/_/g, ' ').replace(/\b\w/g, ch => ch.toUpperCase());
-}
-
-function _safePersonImageLink(src) {
-  const value = String(src || '').trim();
-  if (!value) return '';
-  if (/^https?:\/\//i.test(value) || value.startsWith('/')) return value;
-  if (/^data:image\/(?:png|jpe?g|gif|webp);base64,/i.test(value)) return value;
-  return '';
-}
-
 function _personImageLink(person) {
   const snapshot = person?.contact_snapshot || {};
   return String(snapshot.image_url || snapshot.photo || snapshot.avatar || snapshot.image || snapshot.picture || '').trim();
@@ -211,47 +181,16 @@ function _personFactTypeOptionsHtml(selected = 'note') {
   )).join('');
 }
 
-function _connectionPersonChip(person, fallback) {
-  const name = person?.display_name || fallback || 'Person';
-  const attrs = person?.id ? ` type="button" data-connection-person="${_e(person.id)}"` : '';
-  const tag = person?.id ? 'button' : 'span';
-  return `<${tag} class="logbook-connection-person"${attrs}>${_logbookIcon('person', 12)}<span>${_e(name)}</span></${tag}>`;
-}
-
-function _connectionEvidenceHtml(ev) {
-  if (!ev?.snippet) return '';
-  const date = ev.entry_date ? `<span class="logbook-evidence-date">${_e(ev.entry_date)}</span>` : '';
-  return `<div class="logbook-evidence">${date}<span>${_e(ev.snippet)}</span></div>`;
-}
-
 function _connectionCardHtml(conn) {
   const status = conn.status === 'accepted' ? 'accepted' : 'suggested';
-  const confidence = Math.max(0, Math.min(100, Number(conn.confidence || 0)));
-  const ev = Array.isArray(conn.evidence) && conn.evidence.length ? conn.evidence[conn.evidence.length - 1] : null;
   const editButton = `<button type="button" class="cal-btn" data-edit-connection="${_e(conn.id)}">Edit</button>`;
   const actions = status === 'suggested'
     ? `${editButton}<button type="button" class="cal-btn cal-btn-primary" data-accept-connection="${_e(conn.id)}">Accept</button><button type="button" class="cal-btn" data-hide-connection="${_e(conn.id)}">Hide</button>`
     : editButton;
-  return `
-    <div class="logbook-connection ${status}">
-      <div class="logbook-connection-head">
-        <div class="logbook-connection-people">
-          ${_connectionPersonChip(conn.person_a, 'Person A')}
-          <span class="logbook-connection-plus">+</span>
-          ${_connectionPersonChip(conn.person_b, 'Person B')}
-        </div>
-        <span class="logbook-connection-status ${status}">${status === 'accepted' ? 'Accepted' : 'Review'}</span>
-      </div>
-      <div class="logbook-connection-badges">
-        <span class="logbook-connection-badge">${_e(_connectionTypeLabel(conn.connection_type))}</span>
-        <span class="logbook-connection-badge">${confidence}% confidence</span>
-        ${conn.strength ? `<span class="logbook-connection-badge">strength ${_e(conn.strength)}</span>` : ''}
-      </div>
-      ${conn.description ? `<div class="logbook-connection-reason">${_e(conn.description)}</div>` : ''}
-      ${_connectionEvidenceHtml(ev)}
-      <div class="logbook-connection-actions">${actions}</div>
-    </div>
-  `;
+  return _sharedConnectionCardHtml(conn, {
+    personAttribute: 'data-connection-person',
+    actionsHtml: actions,
+  });
 }
 
 function _connectionById(connectionId) {

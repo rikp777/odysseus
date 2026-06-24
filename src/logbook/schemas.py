@@ -81,6 +81,12 @@ class LogbookPersonContactLink(BaseModel):
     contact_uid: str
 
 
+class LogbookFollowupUpdate(BaseModel):
+    action: str
+    days: Optional[int] = None
+    until: Optional[str] = None
+
+
 class LogbookPeopleMerge(BaseModel):
     source_person_id: str
     target_person_id: str

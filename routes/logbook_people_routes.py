@@ -9,10 +9,12 @@ from sqlalchemy import or_
 
 from core.database import LogbookMention, LogbookPerson, LogbookPersonConnection, SessionLocal
 from src.contacts import service as contacts_service
+from src.logbook import followups as logbook_followups
 from src.logbook import repository as logbook_repo
 from src.logbook import serializers as logbook_serializers
 from src.logbook import utils as logbook_utils
 from src.logbook.schemas import (
+    LogbookFollowupUpdate,
     LogbookPeopleMerge,
     LogbookPersonContactLink,
     LogbookPersonCreate,
@@ -136,6 +138,20 @@ def register_logbook_people_routes(
         finally:
             db.close()
 
+    @router.get("/followups")
+    def list_followups(request: Request, include_suppressed: bool = False, limit: int = 20):
+        owner = owner_func(request)
+        db = session_factory()
+        try:
+            return logbook_followups.build_followup_payload(
+                db,
+                owner,
+                include_suppressed=include_suppressed,
+                limit=limit,
+            )
+        finally:
+            db.close()
+
     @router.post("/people")
     def create_person(request: Request, body: LogbookPersonCreate):
         owner = owner_func(request)
@@ -186,6 +202,24 @@ def register_logbook_people_routes(
                 "connections": [logbook_serializers.connection_to_dict(conn) for conn in connections],
                 "facts": person_data["facts"],
             }
+        finally:
+            db.close()
+
+    @router.post("/people/{person_id}/followup")
+    def update_person_followup(request: Request, person_id: str, body: LogbookFollowupUpdate):
+        owner = owner_func(request)
+        db = session_factory()
+        try:
+            result = logbook_followups.update_followup_state(
+                db,
+                owner,
+                person_id,
+                action=body.action,
+                days=body.days,
+                until=body.until,
+            )
+            db.commit()
+            return result
         finally:
             db.close()
 
@@ -368,6 +402,10 @@ def register_logbook_people_routes(
                 target.contact_uid = source.contact_uid
                 target.contact_source = source.contact_source
                 target.contact_snapshot_json = source.contact_snapshot_json
+            if source.followup_snoozed_until and not target.followup_snoozed_until:
+                target.followup_snoozed_until = source.followup_snoozed_until
+            if source.followup_dismissed_at and not target.followup_dismissed_at:
+                target.followup_dismissed_at = source.followup_dismissed_at
             fact_merge = logbook_repo.merge_person_facts(db, owner, source.id, target)
             db.delete(source)
             db.commit()

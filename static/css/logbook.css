@@ -69,21 +69,26 @@
 }
 
 .logbook-mobile-tabs {
-  display: none;
+  display: flex;
+  overflow-x: auto;
+  overflow-y: hidden;
   gap: 6px;
   padding: 8px;
   border-bottom: 1px solid var(--border);
   background: var(--panel);
+  scrollbar-width: thin;
 }
 
 .logbook-tab {
   flex: 1 1 0;
+  white-space: nowrap;
   min-height: 34px;
   border: 1px solid var(--border);
   background: color-mix(in srgb, var(--fg) 6%, transparent);
   color: var(--fg);
   border-radius: 6px;
   font: inherit;
+  cursor: pointer;
 }
 
 .logbook-tab.active {
@@ -93,7 +98,7 @@
 
 .logbook-body {
   display: grid;
-  grid-template-columns: minmax(210px, 250px) minmax(390px, 1fr) minmax(360px, 430px);
+  grid-template-columns: minmax(210px, 250px) minmax(390px, 1fr);
   gap: 10px;
   padding: 10px;
   min-height: 0;
@@ -124,7 +129,7 @@
 
 .logbook-side {
   display: grid;
-  grid-template-rows: minmax(460px, 1.6fr) minmax(0, .85fr) minmax(0, .7fr);
+  grid-template-rows: minmax(420px, 1.35fr) minmax(0, .85fr) minmax(0, .7fr);
   gap: 10px;
 }
 
@@ -134,22 +139,113 @@
 }
 
 @media (min-width: 1480px) {
-  .logbook-body {
-    grid-template-columns: minmax(210px, 250px) minmax(430px, 1fr) minmax(680px, 760px);
+  .logbook-body[data-active-tab="write"],
+  .logbook-body[data-active-tab="mood"],
+  .logbook-body[data-active-tab="data"] {
+    grid-template-columns: minmax(210px, 250px) minmax(430px, 1fr);
   }
 
   .logbook-side {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    grid-template-rows: minmax(500px, 1.65fr) minmax(0, 1fr);
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(0, 1fr);
     overflow: hidden;
   }
 
   .logbook-side > .logbook-panel {
     min-width: 0;
   }
+}
 
-  .logbook-side > [data-mobile-section="ai"] {
-    grid-column: 1 / -1;
+@media (min-width: 981px) {
+  .logbook-body[data-active-tab="write"],
+  .logbook-body[data-active-tab="mood"],
+  .logbook-body[data-active-tab="data"] {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .logbook-body[data-active-tab="write"] .logbook-nav,
+  .logbook-body[data-active-tab="mood"] .logbook-nav,
+  .logbook-body[data-active-tab="data"] .logbook-nav {
+    display: none;
+  }
+
+  .logbook-body[data-active-tab="write"].browse-open {
+    grid-template-columns: minmax(210px, 250px) minmax(430px, 1fr);
+  }
+
+  .logbook-body[data-active-tab="write"].browse-open .logbook-nav {
+    display: block;
+  }
+
+  .logbook-body[data-active-tab="write"] .logbook-editor [data-mobile-section="mood"],
+  .logbook-body[data-active-tab="write"] .logbook-editor [data-mobile-section="data"],
+  .logbook-body[data-active-tab="mood"] .logbook-editor [data-mobile-section="write"],
+  .logbook-body[data-active-tab="mood"] .logbook-editor [data-mobile-section="data"],
+  .logbook-body[data-active-tab="data"] .logbook-editor [data-mobile-section="write"],
+  .logbook-body[data-active-tab="data"] .logbook-editor [data-mobile-section="mood"] {
+    display: none;
+  }
+
+  .logbook-body[data-active-tab="mood"] .logbook-editor-head,
+  .logbook-body[data-active-tab="mood"] #logbook-history-panel,
+  .logbook-body[data-active-tab="mood"] .logbook-link-toolbar,
+  .logbook-body[data-active-tab="data"] .logbook-editor-head,
+  .logbook-body[data-active-tab="data"] #logbook-history-panel,
+  .logbook-body[data-active-tab="data"] .logbook-link-toolbar {
+    display: none;
+  }
+
+  .logbook-body[data-active-tab="write"] .logbook-review-panel,
+  .logbook-body[data-active-tab="write"] .logbook-side,
+  .logbook-body[data-active-tab="mood"] .logbook-review-panel,
+  .logbook-body[data-active-tab="mood"] .logbook-side,
+  .logbook-body[data-active-tab="data"] .logbook-review-panel,
+  .logbook-body[data-active-tab="data"] .logbook-side {
+    display: none;
+  }
+
+  .logbook-body[data-active-tab="review"],
+  .logbook-body[data-active-tab="people"],
+  .logbook-body[data-active-tab="places"],
+  .logbook-body[data-active-tab="ai"] {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .logbook-body[data-active-tab="review"] .logbook-nav,
+  .logbook-body[data-active-tab="review"] .logbook-editor,
+  .logbook-body[data-active-tab="review"] .logbook-side,
+  .logbook-body[data-active-tab="people"] .logbook-nav,
+  .logbook-body[data-active-tab="people"] .logbook-editor,
+  .logbook-body[data-active-tab="people"] .logbook-review-panel,
+  .logbook-body[data-active-tab="places"] .logbook-nav,
+  .logbook-body[data-active-tab="places"] .logbook-editor,
+  .logbook-body[data-active-tab="places"] .logbook-review-panel,
+  .logbook-body[data-active-tab="ai"] .logbook-nav,
+  .logbook-body[data-active-tab="ai"] .logbook-editor,
+  .logbook-body[data-active-tab="ai"] .logbook-review-panel {
+    display: none;
+  }
+
+  .logbook-body[data-active-tab="review"] .logbook-review-panel {
+    display: grid;
+  }
+
+  .logbook-body[data-active-tab="people"] .logbook-side,
+  .logbook-body[data-active-tab="places"] .logbook-side,
+  .logbook-body[data-active-tab="ai"] .logbook-side {
+    display: block;
+  }
+
+  .logbook-body[data-active-tab="people"] .logbook-side > .logbook-panel,
+  .logbook-body[data-active-tab="places"] .logbook-side > .logbook-panel,
+  .logbook-body[data-active-tab="ai"] .logbook-side > .logbook-panel {
+    display: none;
+  }
+
+  .logbook-body[data-active-tab="people"] .logbook-side > [data-mobile-section="people"],
+  .logbook-body[data-active-tab="places"] .logbook-side > [data-mobile-section="places"],
+  .logbook-body[data-active-tab="ai"] .logbook-side > [data-mobile-section="ai"] {
+    display: block;
   }
 }
 
@@ -259,6 +355,7 @@
   display: flex;
   flex-direction: column;
   gap: 12px;
+  position: relative;
 }
 
 .logbook-editor-head,
@@ -308,11 +405,107 @@
   color: var(--accent-contrast, #fff);
 }
 
+.logbook-more-wrap {
+  position: relative;
+  display: inline-flex;
+}
+
+.logbook-write-more-menu {
+  position: absolute;
+  top: calc(100% + 7px);
+  right: 0;
+  z-index: 30;
+  width: min(360px, calc(100vw - 32px));
+  display: grid;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel, var(--bg));
+  color: var(--fg);
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.26);
+}
+
+.logbook-more-group {
+  display: grid;
+  gap: 6px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 78%, transparent);
+}
+
+.logbook-more-group:last-child {
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+
+.logbook-more-label {
+  font-size: 11px;
+  font-weight: 700;
+  opacity: 0.62;
+}
+
+.logbook-more-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.logbook-more-toolbar {
+  gap: 6px;
+}
+
+.logbook-more-toolbar .logbook-format-button {
+  width: 32px;
+  min-width: 32px;
+  min-height: 30px;
+}
+
+.logbook-write-toolbar-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.logbook-editor-mode-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 0 8px;
+  border: 1px solid color-mix(in srgb, var(--accent, var(--red)) 34%, var(--border));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent, var(--red)) 8%, transparent);
+  color: color-mix(in srgb, var(--fg) 82%, transparent);
+  font-size: 11px;
+  font-weight: 700;
+}
+
 .logbook-link-toolbar {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
   align-items: center;
+}
+
+.logbook-inline-format-toolbar {
+  align-self: flex-start;
+  max-width: 100%;
+  padding: 4px;
+  border: 1px solid color-mix(in srgb, var(--border) 82%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--fg) 3%, transparent);
+}
+
+.logbook-inline-format-toolbar .logbook-format-button,
+.logbook-inline-format-toolbar [data-logbook-link-selection],
+.logbook-inline-format-toolbar [data-logbook-data-selection],
+.logbook-inline-format-toolbar [data-logbook-unlink-selection] {
+  width: 32px;
+  min-width: 32px;
+  justify-content: center;
+  padding: 0;
 }
 
 .logbook-link-toolbar button {
@@ -380,6 +573,39 @@
   border: 1px solid var(--border);
   border-radius: 8px;
   background: color-mix(in srgb, var(--fg) 4%, transparent);
+}
+
+.logbook-history-drawer {
+  position: absolute;
+  top: 58px;
+  right: 10px;
+  bottom: 10px;
+  z-index: 24;
+  width: min(480px, calc(100% - 20px));
+  display: flex;
+  min-height: 0;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel, var(--bg));
+  color: var(--fg);
+  box-shadow: 0 18px 42px rgba(0, 0, 0, 0.3);
+}
+
+.logbook-history-drawer .logbook-history-panel {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.logbook-history-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
 }
 
 .logbook-history-row {
@@ -480,10 +706,13 @@
   position: relative;
   min-height: 260px;
   display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
 .logbook-content {
   width: 100%;
+  flex: 1 1 auto;
   min-height: 300px;
   resize: vertical;
   padding: 14px;
@@ -494,6 +723,7 @@
 
 .logbook-rich-content {
   width: 100%;
+  flex: 1 1 auto;
   min-height: 300px;
   padding: 14px;
   line-height: 1.58;
@@ -994,6 +1224,21 @@
   align-items: flex-start;
 }
 
+.logbook-ai-head-actions {
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
+}
+
+.logbook-ai-head-actions .cal-btn {
+  min-height: 24px;
+  padding: 0 9px;
+  white-space: nowrap;
+}
+
 .logbook-ai-model {
   max-width: 190px;
   min-height: 22px;
@@ -1012,6 +1257,8 @@
 
 .logbook-ai-actions {
   display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-items: start;
   gap: 10px;
   margin: 10px 0;
 }
@@ -1044,7 +1291,7 @@
 
 .logbook-ai-command {
   min-width: 0;
-  min-height: 48px;
+  min-height: 44px;
   display: grid;
   grid-template-columns: 24px minmax(0, 1fr);
   gap: 7px;
@@ -1204,13 +1451,13 @@
 
 .logbook-ai-meter-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 6px;
 }
 
 .logbook-ai-metric {
   min-width: 0;
-  min-height: 58px;
+  min-height: 50px;
   display: grid;
   align-content: center;
   gap: 2px;
@@ -1305,6 +1552,329 @@
   line-height: 1.45;
 }
 
+.logbook-followups-panel {
+  display: grid;
+  gap: 8px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 78%, transparent);
+}
+
+.logbook-followup-count {
+  font-size: 11px;
+  opacity: 0.66;
+}
+
+.logbook-followup-list {
+  display: grid;
+  gap: 7px;
+}
+
+.logbook-followup-card {
+  display: grid;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-left: 3px solid color-mix(in srgb, var(--accent, var(--red)) 58%, var(--border));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--fg) 4%, transparent);
+}
+
+.logbook-followup-card[data-level="overdue"] {
+  border-color: color-mix(in srgb, var(--accent-warning, #d99a1e) 62%, var(--border));
+  background: color-mix(in srgb, var(--accent-warning, #d99a1e) 8%, transparent);
+}
+
+.logbook-followup-card.snoozed,
+.logbook-followup-card.dismissed {
+  opacity: 0.78;
+}
+
+.logbook-followup-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: center;
+}
+
+.logbook-followup-head strong {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  line-height: 1.25;
+}
+
+.logbook-followup-head span {
+  flex: 0 0 auto;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+  font-size: 10px;
+  font-weight: 700;
+  opacity: 0.74;
+}
+
+.logbook-followup-card p {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.logbook-followup-meta {
+  font-size: 11px;
+  line-height: 1.35;
+  opacity: 0.66;
+}
+
+.logbook-followup-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.logbook-review-panel {
+  display: grid;
+  gap: 10px;
+}
+
+.logbook-section-head h5 {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.logbook-review-range {
+  font-size: 11px;
+  opacity: 0.66;
+}
+
+.logbook-review {
+  display: grid;
+  gap: 10px;
+}
+
+.logbook-review-stats,
+.logbook-review-scores {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.logbook-review-scores {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.logbook-review-stat,
+.logbook-review-score,
+.logbook-review-section,
+.logbook-review-row,
+.logbook-review-highlight,
+.logbook-review-insight,
+.logbook-review-evidence {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--fg) 4%, transparent);
+}
+
+.logbook-review-stat,
+.logbook-review-score {
+  min-width: 0;
+  padding: 7px;
+  display: grid;
+  gap: 2px;
+}
+
+.logbook-review-stat span,
+.logbook-review-score span,
+.logbook-review-stat em,
+.logbook-review-score em,
+.logbook-review-row span,
+.logbook-review-highlight em {
+  font-size: 11px;
+  opacity: 0.66;
+  font-style: normal;
+}
+
+.logbook-review-stat strong,
+.logbook-review-score strong {
+  font-size: 16px;
+  line-height: 1.2;
+}
+
+.logbook-review-insights {
+  display: grid;
+  gap: 6px;
+}
+
+.logbook-review-insight {
+  padding: 8px;
+  display: grid;
+  gap: 6px;
+  border-left: 3px solid color-mix(in srgb, var(--accent, var(--red)) 55%, var(--border));
+}
+
+.logbook-review-insight[data-level="warning"] {
+  border-color: color-mix(in srgb, var(--accent-warning, #d99a1e) 58%, var(--border));
+  background: color-mix(in srgb, var(--accent-warning, #d99a1e) 8%, transparent);
+}
+
+.logbook-review-insight[data-level="positive"] {
+  border-color: color-mix(in srgb, #2f9d68 55%, var(--border));
+  background: color-mix(in srgb, #2f9d68 8%, transparent);
+}
+
+.logbook-review-insight-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.logbook-review-insight-head strong {
+  font-size: 12px;
+  line-height: 1.25;
+}
+
+.logbook-review-insight-head span {
+  flex: 0 0 auto;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+  font-size: 10px;
+  font-weight: 700;
+  opacity: 0.76;
+}
+
+.logbook-review-insight p {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.4;
+  opacity: 0.82;
+}
+
+.logbook-review-evidence-list {
+  display: grid;
+  gap: 4px;
+}
+
+.logbook-review-evidence {
+  width: 100%;
+  min-width: 0;
+  padding: 6px;
+  color: var(--fg);
+  font: inherit;
+  text-align: left;
+  display: grid;
+  gap: 2px;
+}
+
+button.logbook-review-evidence {
+  cursor: pointer;
+}
+
+button.logbook-review-evidence:hover,
+button.logbook-review-evidence:focus {
+  border-color: var(--accent, var(--red));
+  background: color-mix(in srgb, var(--accent, var(--red)) 10%, transparent);
+  outline: none;
+}
+
+.logbook-review-evidence span,
+.logbook-review-evidence em {
+  font-size: 10px;
+  font-style: normal;
+  opacity: 0.66;
+}
+
+.logbook-review-evidence strong {
+  font-size: 11px;
+}
+
+.logbook-review-section {
+  padding: 8px;
+  display: grid;
+  gap: 6px;
+}
+
+.logbook-review-section h6 {
+  margin: 0;
+  font-size: 12px;
+}
+
+.logbook-review-split {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.logbook-review-row {
+  padding: 7px;
+  display: grid;
+  gap: 3px;
+}
+
+.logbook-review-row strong {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+
+.logbook-review-bar-row {
+  display: grid;
+  grid-template-columns: minmax(70px, .8fr) minmax(90px, 1fr) minmax(28px, auto);
+  gap: 6px;
+  align-items: center;
+  font-size: 12px;
+}
+
+.logbook-review-bar-row > div {
+  height: 7px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--fg) 9%, transparent);
+}
+
+.logbook-review-bar-row i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent, var(--red));
+}
+
+.logbook-review-bar-row strong {
+  text-align: right;
+}
+
+.logbook-review-highlights {
+  display: grid;
+  gap: 6px;
+}
+
+.logbook-review-highlight {
+  width: 100%;
+  padding: 7px;
+  color: var(--fg);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  display: grid;
+  gap: 4px;
+}
+
+.logbook-review-highlight > span:first-child {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.logbook-review-highlight > span:last-child {
+  font-size: 12px;
+  opacity: 0.8;
+  line-height: 1.35;
+}
+
 .logbook-ai-disabled {
   opacity: 1;
   border: 1px solid var(--border);
@@ -1338,6 +1908,18 @@
   border-radius: 8px;
   padding: 9px;
   background: color-mix(in srgb, var(--fg) 4%, transparent);
+}
+
+.logbook-preview-block-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.logbook-preview-block-head .logbook-subtitle {
+  margin: 0;
 }
 
 .logbook-preview-block pre {
@@ -1899,6 +2481,29 @@
   margin-bottom: 6px;
 }
 
+.logbook-suggestion-row.handled {
+  opacity: 0.66;
+  border-style: dashed;
+  background: color-mix(in srgb, var(--fg) 2%, transparent);
+}
+
+.logbook-suggestion-row.handled .cal-btn:disabled {
+  cursor: default;
+}
+
+.logbook-suggestion-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 3px;
+}
+
+.logbook-ai-dismiss {
+  min-height: 24px;
+  padding: 0 8px;
+  font-size: 11px;
+}
+
 .logbook-suggestion-row span,
 .logbook-connection-meta,
 .logbook-evidence {
@@ -2299,6 +2904,14 @@ button.logbook-connection-person:hover {
 
   .logbook-mobile-tabs {
     display: flex;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+  }
+
+  .logbook-tab {
+    flex: 0 0 auto;
+    min-width: 64px;
   }
 
   .logbook-body [data-mobile-section] {
@@ -2312,12 +2925,14 @@ button.logbook-connection-person:hover {
   .logbook-body[data-active-tab="write"] [data-mobile-section="write"],
   .logbook-body[data-active-tab="mood"] [data-mobile-section="mood"],
   .logbook-body[data-active-tab="data"] [data-mobile-section="data"],
+  .logbook-body[data-active-tab="review"] [data-mobile-section="review"],
   .logbook-body[data-active-tab="people"] [data-mobile-section="people"],
   .logbook-body[data-active-tab="places"] [data-mobile-section="places"],
   .logbook-body[data-active-tab="ai"] [data-mobile-section="ai"] {
     display: block;
   }
 
+  .logbook-body[data-active-tab="review"] .logbook-side,
   .logbook-body[data-active-tab="people"] .logbook-side,
   .logbook-body[data-active-tab="places"] .logbook-side,
   .logbook-body[data-active-tab="ai"] .logbook-side {
@@ -2326,6 +2941,14 @@ button.logbook-connection-person:hover {
 
   .logbook-nav[data-mobile-section="write"] {
     display: none !important;
+  }
+
+  .logbook-body[data-active-tab="write"].browse-open .logbook-nav[data-mobile-section="write"] {
+    display: block !important;
+  }
+
+  .logbook-body[data-active-tab="write"].browse-open .logbook-editor[data-mobile-section="write"] {
+    display: none;
   }
 
   .logbook-editor,
@@ -2337,6 +2960,22 @@ button.logbook-connection-person:hover {
 
   .logbook-editor {
     display: block;
+  }
+
+  .logbook-write-more-menu {
+    right: 0;
+    width: min(360px, calc(100vw - 40px));
+  }
+
+  .logbook-history-drawer {
+    position: fixed;
+    inset: 92px 16px 16px;
+    width: auto;
+  }
+
+  .logbook-ai-actions,
+  .logbook-ai-meter-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .logbook-side {
@@ -2388,6 +3027,10 @@ button.logbook-connection-person:hover {
     flex-direction: column;
   }
 
+  .logbook-history-drawer {
+    inset: 126px 10px 10px;
+  }
+
   .logbook-datapoint {
     grid-template-columns: 1fr 1fr 56px;
   }
@@ -2402,10 +3045,14 @@ button.logbook-connection-person:hover {
   }
 
   .logbook-graph-editor,
-  .logbook-connection-form-grid {
+  .logbook-connection-form-grid,
+  .logbook-review-split,
+  .logbook-review-stats,
+  .logbook-review-scores {
     grid-template-columns: 1fr;
   }
 
+  .logbook-ai-actions,
   .logbook-ai-command-grid,
   .logbook-ai-meter-grid {
     grid-template-columns: 1fr;
