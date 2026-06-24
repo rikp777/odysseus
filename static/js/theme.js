@@ -41,6 +41,7 @@ const FONT_MAP = {
   mono: "'Fira Code', monospace",
   sans: "system-ui, -apple-system, 'Segoe UI', sans-serif",
   serif: "Georgia, 'Times New Roman', serif",
+  inter: "'Inter', system-ui, sans-serif",
 };
 const DEFAULT_FONT = 'mono';
 const DEFAULT_DENSITY = 'comfortable';
@@ -82,6 +83,12 @@ const THEME_DEFAULT_INTENSITY = {
 // Default frosted-glass state per theme. Themes not listed default to false.
 const THEME_DEFAULT_FROSTED = {
   lavender:   true,
+};
+
+// Default font per theme. Themes not listed use DEFAULT_FONT.
+const THEME_DEFAULT_FONT = {
+  rpd: 'inter',
+  rpl: 'inter',
 };
 
 // ── Custom theme persistence ──
@@ -388,9 +395,20 @@ function _injectFontFace(familyName, variants) {
   _injectedFonts.add(familyName);
 }
 
+const _googleFontsLoaded = new Set();
+function _ensureGoogleFont(name, url) {
+  if (_googleFontsLoaded.has(name)) return;
+  _googleFontsLoaded.add(name);
+  const link = document.createElement('link');
+  link.rel = 'stylesheet';
+  link.href = url;
+  document.head.appendChild(link);
+}
+
 export function applyFontDensity(font, density) {
   const f = font || DEFAULT_FONT;
   const d = density || DEFAULT_DENSITY;
+  if (f === 'inter') _ensureGoogleFont('Inter', 'https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap');
   let family = FONT_MAP[f];
   if (!family && _customFonts[f]) {
     // It's a custom font from the local folder
@@ -710,7 +728,7 @@ export function initThemeUI() {
         sw.classList.add('active');
         syncPickers(colors);
         const ct = sw.dataset.custom ? customThemes[name] : null;
-        const f = ct && ct.font ? ct.font : DEFAULT_FONT;
+        const f = ct && ct.font ? ct.font : (THEME_DEFAULT_FONT[name] || DEFAULT_FONT);
         const d = ct && ct.density ? ct.density : DEFAULT_DENSITY;
         const p = ct && ct.bgPattern ? ct.bgPattern : (THEME_DEFAULT_PATTERN[name] || 'none');
         const ec = ct && ct.bgEffectColor ? ct.bgEffectColor : (THEME_DEFAULT_EFFECT_COLOR[name] || '');
@@ -1093,7 +1111,7 @@ export function initThemeUI() {
   syncResetButtons();
 
   // Font, density, background pattern controls
-  const _initFont = (saved && saved.font) || DEFAULT_FONT;
+  const _initFont = (saved && saved.font) || (saved && THEME_DEFAULT_FONT[saved.name]) || DEFAULT_FONT;
   const _initDensity = (saved && saved.density) || DEFAULT_DENSITY;
   const _initPattern = (saved && saved.bgPattern) || (saved && THEME_DEFAULT_PATTERN[saved.name]) || 'none';
   const _initEffectColor = (saved && saved.bgEffectColor) || (saved && THEME_DEFAULT_EFFECT_COLOR[saved.name]) || '';
