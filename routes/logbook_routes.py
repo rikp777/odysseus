@@ -185,6 +185,58 @@ def setup_logbook_routes() -> APIRouter:
         finally:
             db.close()
 
+    @router.get("/data/history")
+    def data_history(request: Request, days: int = 14):
+        owner = _owner(request)
+        days = max(1, min(int(days), 90))
+        from datetime import date, timedelta
+        end_date = date.today()
+        start_date = end_date - timedelta(days=days - 1)
+        db = SessionLocal()
+        try:
+            rows = (
+                db.query(LogbookDataPoint, LogbookEntry.entry_date)
+                .join(LogbookEntry, LogbookEntry.id == LogbookDataPoint.entry_id)
+                .filter(
+                    LogbookEntry.owner == owner,
+                    LogbookEntry.entry_date >= start_date.isoformat(),
+                    LogbookEntry.entry_date <= end_date.isoformat(),
+                )
+                .order_by(LogbookEntry.entry_date.asc(), LogbookDataPoint.sort_order.asc())
+                .all()
+            )
+        finally:
+            db.close()
+
+        # Group by key, collect per-date values
+        key_meta = {}
+        key_dates = {}
+        for dp, entry_date_val in rows:
+            key = dp.key or logbook_utils.clean_key(dp.label or '')
+            if not key:
+                continue
+            if key not in key_meta:
+                key_meta[key] = {'label': dp.label or key, 'unit': dp.unit or ''}
+            if key not in key_dates:
+                key_dates[key] = {}
+            val = dp.value_text or (str(dp.value_number) if dp.value_number is not None else None)
+            if val is not None:
+                date_str = entry_date_val if isinstance(entry_date_val, str) else entry_date_val.isoformat()
+                key_dates[key][date_str] = val + (f' {dp.unit}' if dp.unit else '')
+
+        dates = [(start_date + timedelta(days=i)).isoformat() for i in range(days)]
+        history = {}
+        for key, meta in key_meta.items():
+            history[key] = {
+                'label': meta['label'],
+                'unit': meta['unit'],
+                'values': [
+                    {'date': d, 'value': key_dates[key].get(d)}
+                    for d in dates
+                ],
+            }
+        return {'history': history, 'dates': dates}
+
     @router.get("/entry/{entry_date}")
     def get_entry_by_date(request: Request, entry_date: str):
         owner = _owner(request)

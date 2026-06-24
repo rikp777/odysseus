@@ -13,6 +13,7 @@ import {
   createLocation,
   estimateLogbookAI,
   getAIStatus,
+  getDataHistory,
   getEntry,
   getEntryRevision,
   getLogbookAIUsage,
@@ -132,6 +133,7 @@ let _review = null;
 let _reviewBusy = false;
 let _reviewError = '';
 let _reviewPeriod = 'week';
+let _dataHistory = null;
 let _search = '';
 let _filterPerson = '';
 let _filterLocation = '';
@@ -210,7 +212,7 @@ async function _saveNow({ silent = false } = {}) {
     _entitySignature = _entityListSignature(_entry.people || [], _entry.locations || []);
     _dirty = false;
     _setStatus('Saved');
-    await Promise.all([_loadPeople(), _loadLocations(), _loadConnections(), _loadEntries(), _loadFollowups(), _loadReview()]);
+    await Promise.all([_loadPeople(), _loadLocations(), _loadConnections(), _loadEntries(), _loadFollowups(), _loadReview(), _loadDataHistory()]);
     if (_historyOpen && _entry?.id) await _loadRevisions();
     _syncHistoryButtonState();
     _renderPeoplePanel();
@@ -343,6 +345,15 @@ async function _loadReview({ render = false } = {}) {
   }
 }
 
+async function _loadDataHistory() {
+  try {
+    const data = await getDataHistory(14);
+    _dataHistory = data.history || null;
+  } catch (_) {
+    _dataHistory = null;
+  }
+}
+
 async function _loadAIStatus() {
   try {
     _aiStatus = await getAIStatus();
@@ -419,7 +430,7 @@ async function _loadDate(date) {
   _aiDismissedSuggestions = new Set();
   _aiError = '';
   _aiEstimate = null;
-  await Promise.all([_loadEntry(_date), _loadPeople(), _loadLocations(), _loadConnections(), _loadEntries(), _loadFollowups(), _loadReview(), _loadAIStatus(), _loadAIUsageSummary()]);
+  await Promise.all([_loadEntry(_date), _loadPeople(), _loadLocations(), _loadConnections(), _loadEntries(), _loadFollowups(), _loadReview(), _loadDataHistory(), _loadAIStatus(), _loadAIUsageSummary()]);
   await _loadAIEstimate(_aiSelectedMode);
   _render();
 }
@@ -1172,6 +1183,7 @@ function _editorHtml() {
         ${QUICK_DATA.map(([key, label]) => `<button type="button" class="logbook-chip" data-quick-data="${_e(key)}" data-quick-label="${_e(label)}">${_e(label)}</button>`).join('')}
       </div>
       <div id="logbook-datapoints" class="logbook-datapoints">${_datapointsHtml()}</div>
+      ${_dataHistoryHtml()}
     </section>
   `;
 }
@@ -1258,6 +1270,30 @@ function _historyHtml({ includeClose = false } = {}) {
       ${rows || (!_historyBusy ? '<div class="logbook-empty">No saved versions yet.</div>' : '')}
     </section>
   `;
+}
+
+function _dataHistoryHtml() {
+  if (!_dataHistory) return '';
+  const keys = Object.keys(_dataHistory);
+  if (!keys.length) return '';
+  const today = _today();
+
+  const strips = keys.map(key => {
+    const track = _dataHistory[key];
+    const slots = (track.values || []).map(({ date, value }) => {
+      const isToday = date === today;
+      return `<span class="logbook-dp-hist-slot${isToday ? ' today' : ''}${value ? ' has-val' : ''}" title="${_e(date)}">${value ? _e(value) : '·'}</span>`;
+    });
+    return `<div class="logbook-dp-hist-row">
+      <span class="logbook-dp-hist-label">${_e(track.label || key)}</span>
+      <div class="logbook-dp-hist-slots">${slots.join('')}</div>
+    </div>`;
+  });
+
+  return `<div class="logbook-dp-history">
+    <div class="logbook-dp-hist-head">Last 14 days</div>
+    ${strips.join('')}
+  </div>`;
 }
 
 function _datapointsHtml() {
@@ -1582,7 +1618,7 @@ async function _restoreRevision(revisionId) {
     _entitySignature = _entityListSignature(_entry.people || [], _entry.locations || []);
     _dirty = false;
     _setStatus('Saved');
-    await Promise.all([_loadPeople(), _loadLocations(), _loadConnections(), _loadEntries(), _loadFollowups(), _loadReview()]);
+    await Promise.all([_loadPeople(), _loadLocations(), _loadConnections(), _loadEntries(), _loadFollowups(), _loadReview(), _loadDataHistory()]);
     if (_historyOpen && _entry?.id) await _loadRevisions();
     _historyBusy = false;
     _revisionPreview = null;
@@ -2776,9 +2812,13 @@ function _renderHistoryPanel() {
 
 function _renderDatapoints() {
   const root = document.getElementById('logbook-datapoints');
-  if (!root) return;
-  root.innerHTML = _datapointsHtml();
-  _bindDataEvents();
+  if (root) {
+    root.innerHTML = _datapointsHtml();
+    _bindDataEvents();
+  }
+  // Refresh history strip if present
+  const histRoot = document.querySelector('.logbook-dp-history');
+  if (histRoot) histRoot.outerHTML = _dataHistoryHtml();
 }
 
 function _addDatapoint(key = '', label = '') {
@@ -3542,7 +3582,7 @@ async function _addAIEntity(kind, index) {
   });
   _entry = result.entry || _entry;
   _aiDismissedSuggestions.add(`${isPerson ? 'person' : 'location'}:${index}`);
-  await Promise.all([_loadPeople(), _loadLocations(), _loadConnections(), _loadEntries(), _loadFollowups(), _loadReview()]);
+  await Promise.all([_loadPeople(), _loadLocations(), _loadConnections(), _loadEntries(), _loadFollowups(), _loadReview(), _loadDataHistory()]);
   _browseOpen = false;
   _activeTab = isPerson ? 'people' : 'places';
   uiModule?.showToast?.(isPerson && knownPerson && hasFacts ? 'Person facts saved' : isPerson ? 'Person linked' : 'Place linked');

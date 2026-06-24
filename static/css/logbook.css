@@ -1214,6 +1214,70 @@
   box-sizing: border-box;
 }
 
+.logbook-dp-history {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+  display: grid;
+  gap: 7px;
+}
+
+.logbook-dp-hist-head {
+  font-size: 11px;
+  font-weight: 700;
+  opacity: 0.55;
+  letter-spacing: 0.03em;
+}
+
+.logbook-dp-hist-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 22px;
+}
+
+.logbook-dp-hist-label {
+  font-size: 12px;
+  opacity: 0.7;
+  min-width: 72px;
+  flex-shrink: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.logbook-dp-hist-slots {
+  display: flex;
+  gap: 4px;
+  flex-wrap: nowrap;
+  overflow: hidden;
+}
+
+.logbook-dp-hist-slot {
+  font-size: 11px;
+  min-width: 28px;
+  text-align: center;
+  padding: 2px 3px;
+  border-radius: 4px;
+  opacity: 0.35;
+  white-space: nowrap;
+  cursor: default;
+}
+
+.logbook-dp-hist-slot.has-val {
+  opacity: 1;
+  background: color-mix(in srgb, var(--section-accent, var(--accent-primary)) 12%, transparent);
+  font-weight: 500;
+}
+
+.logbook-dp-hist-slot.today {
+  outline: 1px solid color-mix(in srgb, var(--section-accent, var(--accent-primary)) 40%, transparent);
+}
+
+.logbook-dp-hist-slot.today.has-val {
+  background: color-mix(in srgb, var(--section-accent, var(--accent-primary)) 22%, transparent);
+}
+
 .logbook-icon-btn {
   width: 30px;
   height: 30px;

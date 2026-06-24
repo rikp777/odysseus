@@ -226,6 +226,10 @@ export function updateConnection(connectionId, action) {
   });
 }
 
+export function getDataHistory(days = 14) {
+  return jsonFetch(`${API_BASE}/api/logbook/data/history?days=${days}`);
+}
+
 export function listEntryRevisions(entryId, limit = 20) {
   const params = new URLSearchParams({ limit: String(limit) });
   return jsonFetch(`${API_BASE}/api/logbook/entry/${encodeURIComponent(entryId)}/revisions?${params.toString()}`);
