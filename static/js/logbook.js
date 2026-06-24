@@ -1297,8 +1297,10 @@ function _moodHistoryHtml() {
   const hasStress = days.some(d => byDate[d]?.stress != null);
   if (!hasMood && !hasEnergy && !hasStress) return '';
 
-  const VW = 300, VH = 82;
-  const PL = 14, PR = 6, PT = 8, PB = 18;
+  // Wide viewBox so SVG fills container width at a reasonable height.
+  // No height attribute — CSS height:auto lets aspect ratio drive height.
+  const VW = 800, VH = 80;
+  const PL = 28, PR = 8, PT = 10, PB = 22;
   const plotW = VW - PL - PR;
   const plotH = VH - PT - PB;
   const n = days.length - 1;
@@ -1324,29 +1326,25 @@ function _moodHistoryHtml() {
       if (v == null) return '';
       const label = key === 'mood' ? (MOODS.find(m => m.score === v)?.label || v) : v;
       const isToday = date === today;
-      return `<circle cx="${xPos(i).toFixed(1)}" cy="${yPos(v).toFixed(1)}" r="${isToday ? 3.5 : 2.5}" fill="${color}" stroke="var(--panel)" stroke-width="1.2"><title>${date}: ${label}</title></circle>`;
+      return `<circle cx="${xPos(i).toFixed(1)}" cy="${yPos(v).toFixed(1)}" r="${isToday ? 5 : 3.5}" fill="${color}" stroke="var(--panel)" stroke-width="1.5"><title>${date}: ${label}</title></circle>`;
     }).join('');
   }
 
-  // Y gridlines at 1–5
+  // Y gridlines + labels (1=Bad, 3=Okay, 5=Great)
+  const Y_LABELS = { 1: 'Bad', 3: 'OK', 5: 'Great' };
   const grid = [1,2,3,4,5].map(v => {
     const y = yPos(v).toFixed(1);
-    return `<line x1="${PL}" y1="${y}" x2="${VW - PR}" y2="${y}" stroke="var(--border)" stroke-width="0.6" opacity="0.6"/>`;
+    const label = Y_LABELS[v] ? `<text x="${PL - 4}" y="${y}" text-anchor="end" dominant-baseline="middle" font-size="9" fill="var(--fg)" opacity="0.38">${Y_LABELS[v]}</text>` : '';
+    return `<line x1="${PL}" y1="${y}" x2="${VW - PR}" y2="${y}" stroke="var(--border)" stroke-width="${v % 2 === 1 ? 1 : 0.5}" opacity="${v % 2 === 1 ? 0.5 : 0.25}"/>${label}`;
   }).join('');
 
-  // Y labels
-  const yLabels = ['1','','3','','5'].map((l, i) => {
-    if (!l) return '';
-    const v = i + 1;
-    return `<text x="${PL - 3}" y="${yPos(v).toFixed(1)}" text-anchor="end" dominant-baseline="middle" font-size="7" fill="var(--fg)" opacity="0.38">${l}</text>`;
-  }).join('');
-
-  // X labels — show Mon/Thu anchors
+  // X labels — Mon/Thu + first/last
   const DOW = ['Su','Mo','Tu','We','Th','Fr','Sa'];
   const xLabels = days.map((d, i) => {
     const dow = new Date(d + 'T00:00:00').getDay();
     if (dow !== 1 && dow !== 4 && i !== 0 && i !== n) return '';
-    return `<text x="${xPos(i).toFixed(1)}" y="${VH - 3}" text-anchor="middle" font-size="7" fill="var(--fg)" opacity="0.38">${DOW[dow]}</text>`;
+    const dayNum = d.slice(8); // DD from YYYY-MM-DD
+    return `<text x="${xPos(i).toFixed(1)}" y="${VH - 3}" text-anchor="middle" font-size="9" fill="var(--fg)" opacity="0.38">${DOW[dow]} ${dayNum}</text>`;
   }).join('');
 
   const MOOD_C   = 'var(--accent)';
@@ -1354,20 +1352,20 @@ function _moodHistoryHtml() {
   const STRESS_C = 'var(--red)';
 
   let paths = '', dots = '';
-  if (hasMood)   { paths += `<path d="${buildPath('mood')}" fill="none" stroke="${MOOD_C}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>`; dots += buildDots('mood', MOOD_C); }
-  if (hasEnergy) { paths += `<path d="${buildPath('energy')}" fill="none" stroke="${ENERGY_C}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>`; dots += buildDots('energy', ENERGY_C); }
-  if (hasStress) { paths += `<path d="${buildPath('stress')}" fill="none" stroke="${STRESS_C}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>`; dots += buildDots('stress', STRESS_C); }
+  if (hasMood)   { paths += `<path d="${buildPath('mood')}" fill="none" stroke="${MOOD_C}" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>`; dots += buildDots('mood', MOOD_C); }
+  if (hasEnergy) { paths += `<path d="${buildPath('energy')}" fill="none" stroke="${ENERGY_C}" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>`; dots += buildDots('energy', ENERGY_C); }
+  if (hasStress) { paths += `<path d="${buildPath('stress')}" fill="none" stroke="${STRESS_C}" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>`; dots += buildDots('stress', STRESS_C); }
 
   const legendItems = [
-    hasMood   && `<span class="lmcl-item"><svg width="12" height="3" style="overflow:visible"><line x1="0" y1="1.5" x2="12" y2="1.5" stroke="${MOOD_C}" stroke-width="2" stroke-linecap="round"/></svg>Mood</span>`,
-    hasEnergy && `<span class="lmcl-item"><svg width="12" height="3" style="overflow:visible"><line x1="0" y1="1.5" x2="12" y2="1.5" stroke="${ENERGY_C}" stroke-width="2" stroke-linecap="round"/></svg>Energy</span>`,
-    hasStress && `<span class="lmcl-item"><svg width="12" height="3" style="overflow:visible"><line x1="0" y1="1.5" x2="12" y2="1.5" stroke="${STRESS_C}" stroke-width="2" stroke-linecap="round"/></svg>Stress</span>`,
+    hasMood   && `<span class="lmcl-item"><svg width="16" height="4" style="overflow:visible"><line x1="0" y1="2" x2="16" y2="2" stroke="${MOOD_C}" stroke-width="2.5" stroke-linecap="round"/></svg>Mood</span>`,
+    hasEnergy && `<span class="lmcl-item"><svg width="16" height="4" style="overflow:visible"><line x1="0" y1="2" x2="16" y2="2" stroke="${ENERGY_C}" stroke-width="2.5" stroke-linecap="round"/></svg>Energy</span>`,
+    hasStress && `<span class="lmcl-item"><svg width="16" height="4" style="overflow:visible"><line x1="0" y1="2" x2="16" y2="2" stroke="${STRESS_C}" stroke-width="2.5" stroke-linecap="round"/></svg>Stress</span>`,
   ].filter(Boolean).join('');
 
   return `<div class="logbook-mood-chart">
     <div class="logbook-mood-chart-head"><span class="logbook-dp-hist-head">Last 14 days</span><span class="logbook-mood-chart-legend">${legendItems}</span></div>
-    <svg viewBox="0 0 ${VW} ${VH}" width="100%" height="${VH}" class="logbook-mood-chart-svg" aria-label="Mood chart">
-      ${grid}${yLabels}${paths}${dots}${xLabels}
+    <svg viewBox="0 0 ${VW} ${VH}" width="100%" class="logbook-mood-chart-svg" aria-label="Mood chart">
+      ${grid}${paths}${dots}${xLabels}
     </svg>
   </div>`;
 }

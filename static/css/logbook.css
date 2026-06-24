@@ -1164,6 +1164,19 @@
   cursor: pointer;
 }
 
+/* Per-mood chip colors */
+.logbook-chip[data-mood="bad"]   { color: #e57373; border-color: color-mix(in srgb, #e57373 35%, transparent); }
+.logbook-chip[data-mood="meh"]   { color: #fb8c00; border-color: color-mix(in srgb, #fb8c00 35%, transparent); }
+.logbook-chip[data-mood="okay"]  { color: color-mix(in srgb, var(--fg) 72%, transparent); }
+.logbook-chip[data-mood="good"]  { color: #66bb6a; border-color: color-mix(in srgb, #66bb6a 35%, transparent); }
+.logbook-chip[data-mood="great"] { color: #43a047; border-color: color-mix(in srgb, #43a047 40%, transparent); }
+
+.logbook-chip[data-mood="bad"].active   { background: color-mix(in srgb, #e57373 16%, transparent); }
+.logbook-chip[data-mood="meh"].active   { background: color-mix(in srgb, #fb8c00 16%, transparent); }
+.logbook-chip[data-mood="okay"].active  { background: color-mix(in srgb, var(--fg) 12%, transparent); }
+.logbook-chip[data-mood="good"].active  { background: color-mix(in srgb, #66bb6a 16%, transparent); }
+.logbook-chip[data-mood="great"].active { background: color-mix(in srgb, #43a047 18%, transparent); }
+
 .logbook-chip.active,
 .logbook-score.active {
   border-color: var(--accent, var(--red));
@@ -1173,7 +1186,6 @@
 .logbook-score-row {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 10px;
   min-height: 34px;
 }
@@ -1181,6 +1193,8 @@
 .logbook-score-row > span {
   font-size: 12px;
   opacity: 0.76;
+  min-width: 52px;
+  flex-shrink: 0;
 }
 
 .logbook-score-row > div {
@@ -1244,6 +1258,8 @@
 
 .logbook-mood-chart-svg {
   display: block;
+  width: 100%;
+  height: auto;
   overflow: visible;
 }
 
